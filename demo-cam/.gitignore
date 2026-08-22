@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+*venv/
+*.log
+
+# Model weights (shared by v1 and v2)
+models/
+
+# v1 demo recordings
+v1/videos/
+v1/metrics/
