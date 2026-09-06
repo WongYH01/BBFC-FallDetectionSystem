@@ -158,6 +158,7 @@
     .stat-value { font-size: 12px; color: #ccc; font-family: monospace; }
     .stat-value.good { color: #81c784; }
     .stat-value.bad  { color: #ef9a9a; }
+    .stat-value.warn { color: #ffb74d; }
 
     .connect-btn {
       width: 100%;
@@ -363,6 +364,19 @@
         <span class="stat-label">Duration</span>
         <span class="stat-value bad" id="fall-duration">—</span>
       </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Auto fall-clip capture</div>
+      <div class="stat-row">
+        <span class="stat-label">Status</span>
+        <span class="stat-value" id="clip-state">—</span>
+      </div>
+      <div class="stat-row" id="clip-elapsed-row" style="display:none">
+        <span class="stat-label">Elapsed</span>
+        <span class="stat-value bad" id="clip-elapsed">—</span>
+      </div>
+      <div class="rec-info" id="clip-info"></div>
     </div>
 
     <div class="sidebar-section">
@@ -695,6 +709,68 @@
   }
   pollFall();
   setInterval(pollFall, 500);
+
+  // ---------------------------------------------------------------------
+  // Automatic fall-clip capture (fall_recorder.py) — separate from the
+  // manual Record button above. Polled at the same 500ms cadence as the
+  // fall alert so "Recording" / "Cooldown Xs" track the backend closely.
+  // ---------------------------------------------------------------------
+  function paintFallClip(d) {
+    const state = document.getElementById("clip-state");
+    const elRow = document.getElementById("clip-elapsed-row");
+    const el    = document.getElementById("clip-elapsed");
+    const info  = document.getElementById("clip-info");
+
+    if (!d) {
+      state.textContent = "—";
+      state.className = "stat-value";
+      elRow.style.display = "none";
+      info.innerHTML = "";
+      return;
+    }
+
+    if (d.recording) {
+      state.textContent = "● Recording";
+      state.className = "stat-value bad";
+      elRow.style.display = "flex";
+      el.textContent = d.elapsed_sec + "s";
+      info.innerHTML = d.filename
+        ? '<span class="rec-file">' + d.filename + "</span>"
+        : "";
+    } else if (d.converting) {
+      state.textContent = "Converting\u2026";
+      state.className = "stat-value warn";
+      elRow.style.display = "none";
+      info.innerHTML = d.last_clip_filename
+        ? '<span class="rec-note">Processing: </span><span class="rec-file">' + d.last_clip_filename + "</span>"
+        : "";
+    } else if (d.cooldown_remaining_sec > 0) {
+      state.textContent = "Cooldown " + Math.ceil(d.cooldown_remaining_sec) + "s";
+      state.className = "stat-value warn";
+      elRow.style.display = "none";
+      info.innerHTML = d.last_clip_filename
+        ? '<span class="rec-note">Last: </span><span class="rec-file">' + d.last_clip_filename + "</span>"
+        : "";
+    } else {
+      state.textContent = "Idle";
+      state.className = "stat-value good";
+      elRow.style.display = "none";
+      info.innerHTML = d.last_clip_filename
+        ? '<span class="rec-note">Last: </span><span class="rec-file">' + d.last_clip_filename + "</span>"
+        : '<span class="rec-note">No clips yet</span>';
+    }
+  }
+
+  async function pollFallClip() {
+    try {
+      const resp = await fetch("/fall_clips/status");
+      paintFallClip(resp.ok ? await resp.json() : null);
+    } catch (err) {
+      paintFallClip(null);
+    }
+  }
+  pollFallClip();
+  setInterval(pollFallClip, 500);
 
   // Sync recording button state on load in case a recording is already
   // running from a previous page load.

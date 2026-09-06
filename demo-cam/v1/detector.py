@@ -7,6 +7,7 @@ frames as an MJPEG stream for the Flask `/video_feed` route.
 Quick-and-dirty: model loads once at import, single shared generator.
 """
 import os
+import queue
 import threading
 import time
 from datetime import datetime
@@ -24,6 +25,7 @@ from ultralytics import YOLO
 from huggingface_hub import hf_hub_download
 
 import metrics as _metrics
+import fall_recorder
 
 # ---------------------------------------------------------------------------
 # Config — reuse the same env vars the Flask app already reads
@@ -77,7 +79,14 @@ FALL_DEBUG        = os.environ.get("FALL_DEBUG", "") not in ("", "0")
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
 _recording = False
-_writer: "cv2.VideoWriter | None" = None
+# Actual cv2.VideoWriter.write() calls happen on background threads, fed
+# through these queues -- see _writer_worker(). A slow encode must never
+# block gen_frames()'s frame-reading loop: that loop is also what's
+# draining the RTSP source, so stalling it can back up the connection all
+# the way to the camera/Pi. (This project briefly used H.264 here, which
+# was heavy enough in software to cause exactly that -- back to mp4v; see
+# the fourcc comment below.)
+_write_queue: "queue.Queue | None" = None
 _filename = None
 _filepath = None
 _start_time = None
@@ -85,9 +94,24 @@ _start_time = None
 # Skeleton-only companion file: the same frames with the pose drawn on a blank
 # canvas instead of the camera image. Written alongside the side-by-side, never
 # in place of it.
-_writer_skel: "cv2.VideoWriter | None" = None
+_write_queue_skel: "queue.Queue | None" = None
 _filename_skel = None
 _filepath_skel = None
+
+
+def _writer_worker(writer: "cv2.VideoWriter", q: "queue.Queue") -> None:
+    """Runs on its own thread for the life of one recording.
+
+    Pulls frames off `q` and writes them -- this is where the (possibly
+    slow) encode actually happens, off the frame-reading thread. A `None`
+    on the queue is the signal that recording stopped: drain, then release.
+    """
+    while True:
+        frame = q.get()
+        if frame is None:
+            break
+        writer.write(frame)
+    writer.release()
 
 # Measurement mode. A run with this set writes NO video at all — see metrics.py
 # for why that is the point rather than a shortcut.
@@ -102,8 +126,8 @@ def start_recording(metrics: bool = False) -> dict:
     and *.csv and no video, a normal recording produces the two mp4s and no
     metrics.
     """
-    global _recording, _writer, _filename, _filepath, _start_time
-    global _writer_skel, _filename_skel, _filepath_skel, _metrics_mode, _run
+    global _recording, _write_queue, _filename, _filepath, _start_time
+    global _write_queue_skel, _filename_skel, _filepath_skel, _metrics_mode, _run
     with _lock:
         if _recording:
             return {"recording": True, "metrics": _metrics_mode,
@@ -114,7 +138,7 @@ def start_recording(metrics: bool = False) -> dict:
             _run = _metrics.Run(ts, _metrics.provenance_of(model, IMGSZ))
             _metrics_mode = True
             _filename = _filename_skel = _filepath = _filepath_skel = None
-            _writer = _writer_skel = None
+            _write_queue = _write_queue_skel = None
             _start_time = time.time()
             _recording = True
             return {"recording": True, "metrics": True,
@@ -133,8 +157,8 @@ def start_recording(metrics: bool = False) -> dict:
         _filepath_skel = os.path.join(VIDEOS_DIR, _filename_skel)
         # Both opened lazily in gen_frames() once frame sizes are known — they
         # differ (2560x720 side-by-side vs 1280x720 skeleton).
-        _writer = None
-        _writer_skel = None
+        _write_queue = None
+        _write_queue_skel = None
         _start_time = time.time()
         _recording = True
         return {"recording": True, "metrics": False, "filename": _filename,
@@ -143,17 +167,23 @@ def start_recording(metrics: bool = False) -> dict:
 
 def stop_recording() -> dict:
     """Stop the run and finalize whichever artefacts it was producing."""
-    global _recording, _writer, _filename, _start_time, _writer_skel, _filename_skel
+    global _recording, _write_queue, _filename, _start_time, _write_queue_skel, _filename_skel
     global _metrics_mode, _run
     with _lock:
         duration = round(time.time() - _start_time, 1) if _start_time else 0
         was_metrics, run = _metrics_mode, _run
-        if _writer is not None:
-            _writer.release()
-            _writer = None
-        if _writer_skel is not None:
-            _writer_skel.release()
-            _writer_skel = None
+        # Signal the worker threads rather than releasing here directly: the
+        # queues may still hold unwritten frames, and encoding those (then
+        # calling release()) can take a moment -- doing it inline here would
+        # block this Flask request thread, not the frame-reading loop, but
+        # it's still better kept off any hot path. Finishes in the
+        # background; the files are complete once each worker exits.
+        if _write_queue is not None:
+            _write_queue.put(None)
+            _write_queue = None
+        if _write_queue_skel is not None:
+            _write_queue_skel.put(None)
+            _write_queue_skel = None
         _recording = False
         _metrics_mode = False
         _run = None
@@ -376,6 +406,11 @@ def get_fall_status() -> dict:
         }
 
 
+def get_fall_clip_status() -> dict:
+    """Status of the automatic pre-buffered fall-clip recorder (fall_recorder.py)."""
+    return fall_recorder.get_status()
+
+
 def _rtsp_url() -> str:
     """Build rtsp://user:pass@host:port/path from env, URL-encoding creds."""
     if STREAM_USERNAME:
@@ -396,7 +431,7 @@ def gen_frames():
     (`track(..., stream=True)`) so people keep stable IDs across frames.
     On any stream error we pause briefly and reconnect — good enough for a demo.
     """
-    global _writer, _writer_skel
+    global _write_queue, _write_queue_skel
     rtsp_url = _rtsp_url()
     while True:
         try:
@@ -426,10 +461,17 @@ def gen_frames():
                 _draw_falls(frame, people)
 
                 # A measurement run must never touch a VideoWriter — the encode
-                # is most of what it would otherwise be measuring.
-                if _recording and not _metrics_mode:
-                    combined = np.hstack([result.orig_img, frame])
-
+                # is most of what it would otherwise be measuring. Everything
+                # below (manual recording AND the automatic fall-clip capture)
+                # is skipped during a metrics run for the same reason.
+                #
+                # need_skel: build the skeleton canvas only when something will
+                # actually use it. Set FALL_CLIPS_ENABLED=0 in .env to drop the
+                # auto-capture side of this if the stream is struggling — that
+                # removes an extra full result.plot() call from every frame
+                # instead of only the ones being manually recorded.
+                need_skel = _recording or fall_recorder.ENABLED
+                if not _metrics_mode and need_skel:
                     # Same annotations, blank canvas. plot() draws onto whatever
                     # `img` it is handed (it deep-copies it first, so `blank` is
                     # untouched), and boxes/labels/conf off leaves only the pose.
@@ -440,24 +482,68 @@ def gen_frames():
                                        conf=False)
                     _draw_falls(skel, people)  # same list, second canvas
 
-                    with _lock:
-                        if _recording:  # re-check inside the lock
-                            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                            if _writer is None:
-                                h, w = combined.shape[:2]
-                                _writer = cv2.VideoWriter(
-                                    _filepath, fourcc, RECORD_FPS, (w, h)
-                                )
-                            if _writer_skel is None:
-                                h, w = skel.shape[:2]
-                                _writer_skel = cv2.VideoWriter(
-                                    _filepath_skel, fourcc, RECORD_FPS, (w, h)
-                                )
-                            # Both writes in the one locked block, so the two
-                            # files always receive the same frames and stay
-                            # aligned frame-for-frame.
-                            _writer.write(combined)
-                            _writer_skel.write(skel)
+                    # Computed every frame (not just while manually recording)
+                    # because fall_recorder needs a continuous skeleton feed to
+                    # keep its rolling pre-event buffer current — see
+                    # fall_recorder.py for the automatic capture logic.
+                    if fall_recorder.ENABLED:
+                        any_fallen = any(p["fallen"] for p in people)
+                        fall_recorder.push_frame(skel, any_fallen)
+
+                    if _recording:
+                        combined = np.hstack([result.orig_img, frame])
+                        with _lock:
+                            if _recording:  # re-check inside the lock
+                                # "mp4v" -- back from H.264, which was heavy
+                                # enough in software to be part of why the
+                                # camera stream was freezing during a
+                                # recording. mp4v plays fine in VLC but not
+                                # Telegram (frozen first frame); the plan is
+                                # to convert a finished clip separately
+                                # instead of encoding it live.
+                                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                                if _write_queue is None:
+                                    h, w = combined.shape[:2]
+                                    writer = cv2.VideoWriter(
+                                        _filepath, fourcc, RECORD_FPS, (w, h)
+                                    )
+                                    if not writer.isOpened():
+                                        print(f"[detector] WARNING: could not "
+                                              f"open a video writer for "
+                                              f"{_filepath} -- no video "
+                                              f"will be written for this "
+                                              f"recording.")
+                                    _write_queue = queue.Queue()
+                                    threading.Thread(
+                                        target=_writer_worker,
+                                        args=(writer, _write_queue),
+                                        daemon=True,
+                                    ).start()
+                                if _write_queue_skel is None:
+                                    h, w = skel.shape[:2]
+                                    writer_skel = cv2.VideoWriter(
+                                        _filepath_skel, fourcc, RECORD_FPS, (w, h)
+                                    )
+                                    if not writer_skel.isOpened():
+                                        print(f"[detector] WARNING: could not "
+                                              f"open a video writer for "
+                                              f"{_filepath_skel} -- no video "
+                                              f"will be written for this "
+                                              f"recording.")
+                                    _write_queue_skel = queue.Queue()
+                                    threading.Thread(
+                                        target=_writer_worker,
+                                        args=(writer_skel, _write_queue_skel),
+                                        daemon=True,
+                                    ).start()
+                                # Both frames queued in the one locked block,
+                                # so the two files always receive the same
+                                # frames and stay aligned frame-for-frame --
+                                # the actual (possibly slow) encode happens
+                                # later, on each queue's own worker thread,
+                                # never blocking this loop.
+                                _write_queue.put(combined)
+                                _write_queue_skel.put(skel)
 
                 ok, buf = cv2.imencode(".jpg", frame)
 
