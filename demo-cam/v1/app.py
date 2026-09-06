@@ -9,6 +9,7 @@ app = Flask(__name__)
 # Imported after load_dotenv() so the model + RTSP config read the .env values.
 from detector import (  # noqa: E402
     gen_frames, start_recording, stop_recording, get_status, get_fall_status,
+    get_fall_clip_status,
 )
 
 # ---------------------------------------------------------------------------
@@ -64,9 +65,14 @@ def fall_status():
     """Current fall state — polled by the sidebar alert panel."""
     return jsonify(get_fall_status())
 
+@app.route("/fall_clips/status")
+def fall_clips_status():
+    """Status of the automatic pre-buffered fall-clip recorder."""
+    return jsonify(get_fall_clip_status())
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # threaded=True so the page and the long-lived MJPEG connection coexist.
-    app.run(host="0.0.0.0", port=5000, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=5005, debug=True, threaded=True)
