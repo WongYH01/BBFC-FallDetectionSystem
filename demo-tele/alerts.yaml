@@ -1,0 +1,129 @@
+# ===========================================================================
+#  demo-tele — alert configuration
+#
+#  This file is the source of truth for what the alert says and where it goes.
+#  The web UI is an editor over it: saving from the UI rewrites this file, and
+#  editing this file in your editor is picked up on the next preview or send
+#  (hot reload, no restart).
+#
+#  NOTE: the UI rewrites this file with a YAML dumper, which does not preserve
+#  comments below this banner. Keep prose in README.md, not in here.
+#
+#  Schema
+#  ------
+#  messages.<key>.label        human name shown in the UI
+#  messages.<key>.parse_mode   HTML or none  (see README: why not MarkdownV2)
+#  messages.<key>.text         Jinja2 template, rendered against `event`
+#  messages.<key>.buttons      inline keyboard: [{text, action}]
+#                              action is one of: ack, false_alarm
+#
+#  targets.<key>.label         human name shown in the UI
+#  targets.<key>.chat_id       Telegram chat id. A group or supergroup is
+#                              NEGATIVE (supergroups look like -100…); only a
+#                              1:1 chat with a person is positive. Add the bot
+#                              to the group, then read the id off the Chats
+#                              panel in the UI — see README, "Finding the
+#                              group's chat id".
+#  targets.<key>.message       which messages.<key> to render for this target
+#  targets.<key>.escalate_to   target to re-issue to on escalation (optional;
+#                              omit to re-issue to the same chat)
+#  targets.<key>.message_thread_id
+#                              forum-group topic to post into (optional; plain
+#                              groups ignore it, so leave it out unless the
+#                              ward group has Topics turned on)
+#
+#  rooms.<room_id>             target key an event from that room routes to
+#
+#  dispatch.default_target     used when the room has no explicit route
+#  dispatch.escalation_seconds seconds to wait for an ack before re-issuing
+#  dispatch.max_escalations    how many times to re-issue before giving up
+#
+#  Template variables — see sample_events.yaml for the full shape:
+#    event.event_id          FE-20260905-0031
+#    event.room              Block A · Room 12       (display name)
+#    event.room_id           room-12
+#    event.time              03:42                   (local HH:MM)
+#    event.date              5 Sep 2026
+#    event.confidence        0.87
+#    event.confidence_pct    87
+#    event.confidence_band   High / Medium / Low
+#    event.detection_type    Fall — confirmed after 8 s immobility
+#    event.immobility_s      8
+#    event.detector_version  rules-v1.2
+#    event.ts_trigger        2026-09-05T03:42:11+08:00
+#    event.ts_confirmed      2026-09-05T03:42:19+08:00
+#    event.escalation_level  0 on first dispatch, 1+ on each re-issue
+# ===========================================================================
+
+messages:
+  standard:
+    label: Standard fall alert
+    parse_mode: HTML
+    text: |-
+      🚨 <b>FALL DETECTED</b>
+
+      <b>Room</b>       {{ event.room }}
+      <b>Time</b>       {{ event.time }}
+      <b>Confidence</b> {{ event.confidence_band }} ({{ '%.2f'|format(event.confidence) }})
+
+      {{ event.detection_type }}
+
+      <i>Ref {{ event.event_id }} · {{ event.detector_version }}</i>
+    buttons:
+    - text: ✅ Acknowledge
+      action: ack
+    - text: 🚫 False alarm
+      action: false_alarm
+  escalation:
+    label: Escalation re-issue
+    parse_mode: HTML
+    text: |-
+      ⚠️ <b>UNACKNOWLEDGED FALL — ESCALATION {{ event.escalation_level }}</b>
+
+      <b>Room</b>       {{ event.room }}
+      <b>Time</b>       {{ event.time }}
+      <b>Confidence</b> {{ event.confidence_band }} ({{ '%.2f'|format(event.confidence) }})
+
+      No one has acknowledged this alert.
+
+      <i>Ref {{ event.event_id }} · {{ event.detector_version }}</i>
+    buttons:
+    - text: ✅ Acknowledge
+      action: ack
+    - text: 🚫 False alarm
+      action: false_alarm
+  terse:
+    label: Terse (one line)
+    parse_mode: HTML
+    text: 🚨 Fall · <b>{{ event.room }}</b> · {{ event.time }} · {{ event.confidence_band }}
+    buttons:
+    - text: ✅ Acknowledge
+      action: ack
+  yup:
+    label: Terse (one line)
+    parse_mode: HTML
+    text: YF TOUCH KIDS
+    buttons:
+    - text: ✅ Acknowledge
+      action: ack
+targets:
+  ward-a-night:
+    label: Ward A · night staff group
+    chat_id: '-1000000000000'
+    message: standard
+    escalate_to: shift-lead
+  shift-lead:
+    label: Shift lead · direct
+    chat_id: '000000000'
+    message: escalation
+  test-group:
+    label: Test group (your own)
+    chat_id: '-5244612939'
+    message: standard
+rooms:
+  room-12: ward-a-night
+  room-14: ward-a-night
+dispatch:
+  default_target: test-group
+  escalation_seconds: 20
+  max_escalations: 2
