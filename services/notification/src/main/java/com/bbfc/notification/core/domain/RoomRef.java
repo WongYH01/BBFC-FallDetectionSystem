@@ -1,4 +1,4 @@
-package com.bbfc.notification.domain;
+package com.bbfc.notification.core.domain;
 
 public record RoomRef(String roomId, String displayName) {
     public RoomRef{

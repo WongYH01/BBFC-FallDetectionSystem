@@ -1,4 +1,4 @@
-package com.bbfc.notification.domain;
+package com.bbfc.notification.core.domain;
 
 public class IllegalAlertTransitionException extends RuntimeException {
     public IllegalAlertTransitionException(AlertState alertFrom, AlertState alertTo){

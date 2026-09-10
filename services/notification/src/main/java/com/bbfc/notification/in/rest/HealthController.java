@@ -1,12 +1,11 @@
-package com.bbfc.notification.controller;
+package com.bbfc.notification.in.rest;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 
 @RestController
