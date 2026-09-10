@@ -34,3 +34,6 @@ build/
 
 ### Markdown Plans ###
 *.md
+
+.env
+*.bat

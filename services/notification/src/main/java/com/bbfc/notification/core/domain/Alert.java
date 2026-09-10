@@ -26,6 +26,17 @@ public final class Alert {
         return new Alert(eventId, room, confidence);
     }
 
+    public static Alert load(EventId eventId, RoomRef roomRef, Confidence confidence,AlertState alertState, String acknowledgedBy, Instant acknowledgedAt,Instant escalatedAt, Outcome outcome, Instant outcomeAt) {
+        Alert alert = new Alert(eventId, roomRef, confidence);
+        alert.alertState = alertState;
+        alert.acknowledgedBy = acknowledgedBy;
+        alert.acknowledgedAt = acknowledgedAt;
+        alert.escalatedAt = escalatedAt;
+        alert.outcome = outcome;
+        alert.outcomeAt = outcomeAt;
+        return alert;
+    }
+
     private void transitionTo(AlertState targetState) {
         if (!alertState.canTransitionTo(targetState)) {
             throw new IllegalAlertTransitionException(alertState, targetState);
@@ -66,6 +77,18 @@ public final class Alert {
 
     public Optional<Outcome> outcome() {
         return Optional.ofNullable(outcome);
+    }
+
+    public Optional<Instant> acknowledgedAt() {
+        return Optional.ofNullable(acknowledgedAt);
+    }
+
+    public Optional<Instant> escalatedAt() {
+        return Optional.ofNullable(escalatedAt);
+    }
+
+    public Optional<Instant> outcomeAt() {
+        return Optional.ofNullable(outcomeAt);
     }
 
     public EventId eventId() {
