@@ -17,20 +17,29 @@ of `final_yolo26n`, `hn10_full_hn_s99`, `hn10_coords_hn_s99` and
 with a hysteresis latch. Notebook 17 measured this rule; `replay.py` below is
 the offline twin of the live path.
 
-## Setup
+## Deploy on a new machine
 
-The venv is uv-managed (no pip):
+The venv is uv-managed (no pip). From the repo root:
 
 ```
-uv pip install --python demo-cam\.venv\Scripts\python.exe onnxruntime pandas scikit-learn
-uv pip install --python demo-cam\.venv\Scripts\python.exe -e .
+uv venv demo-cam/.venv
+uv pip install --python demo-cam/.venv/Scripts/python.exe -r demo-cam/requirements.txt
+uv pip install --python demo-cam/.venv/Scripts/python.exe -e .
+python scripts/fetch_weights.py              # ONNX pose + 4 classifiers
+copy demo-cam\.env.example demo-cam\.env     # fill in MediaMTX host/credentials
+cd demo-cam && .venv\Scripts\python.exe v2\app.py
 ```
 
-The last command puts `fallcore` on the demo venv's path (run it from the repo
-root). The pose export and checkpoints are not committed; produce them with
-notebook 18 (`runs/onnx/yolo26n-pose-imgsz640.onnx`) and notebooks 02/10/14
-(`runs/checkpoints/*.pt`), or copy them under `demo-cam/models/`. Weights under
-`models/` are gitignored.
+`fetch_weights.py` pulls the five weight files from
+`junyuu/fall-detection-bbfc` — pinned to a revision, each verified against its
+SHA-256 — and writes them to the paths the detector resolves by default:
+`demo-cam/models/yolo26n-pose.onnx` and `runs/checkpoints/*.pt`. The Hub repo is
+private, so run `hf auth login` once on the machine or set `HF_TOKEN` (a read
+token is enough). `--check` verifies without downloading; `--force`
+re-downloads.
+
+Regenerating instead of fetching: notebook 18 exports the ONNX and notebooks
+02/10/14 train the checkpoints. Weights under `models/` are gitignored.
 
 ## Run
 
