@@ -33,10 +33,21 @@ cd demo-cam && .venv\Scripts\python.exe v2\app.py
 `fetch_weights.py` pulls the five weight files from
 `junyuu/fall-detection-bbfc` — pinned to a revision, each verified against its
 SHA-256 — and writes them to the paths the detector resolves by default:
-`demo-cam/models/yolo26n-pose.onnx` and `runs/checkpoints/*.pt`. The Hub repo is
-private, so run `hf auth login` once on the machine or set `HF_TOKEN` (a read
-token is enough). `--check` verifies without downloading; `--force`
-re-downloads.
+`demo-cam/models/yolo26n-pose.onnx` and `runs/checkpoints/*.pt`.
+
+The Hub repo is private and the fetch script authenticates **only** through
+`demo-cam/.env`. Add a read token from
+https://huggingface.co/settings/tokens to the file you already created from
+`.env.example`:
+
+```
+# demo-cam/.env
+FALL_WEIGHTS_TOKEN=hf_xxx
+```
+
+There is no CLI flag, process-environment or stored-login fallback — one place
+to put the secret. `--check` verifies the local files without a token;
+`--force` re-downloads.
 
 Regenerating instead of fetching: notebook 18 exports the ONNX and notebooks
 02/10/14 train the checkpoints. Weights under `models/` are gitignored.
