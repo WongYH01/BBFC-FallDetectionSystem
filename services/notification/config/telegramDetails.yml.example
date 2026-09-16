@@ -1,0 +1,4 @@
+telegram:
+  bot-token: BOT_TOKEN_HERE
+  chat-group-id: CHAT_ID_HERE
+  message-template: TEMPLATE_HERE

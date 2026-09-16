@@ -37,3 +37,4 @@ build/
 
 .env
 *.bat
+config/telegramDetails.yml
