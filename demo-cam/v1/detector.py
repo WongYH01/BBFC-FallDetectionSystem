@@ -17,7 +17,17 @@ from urllib.parse import quote
 # Force RTSP over TCP before OpenCV's FFmpeg backend loads — UDP drops packets
 # and stalls frame delivery ("Waiting for stream"). Must be set before cv2 opens
 # the capture.
-os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+#
+# The rest are latency options, and they matter for the "reader is too slow"
+# warnings MediaMTX logs about us: nobuffer/low_delay stop FFmpeg holding frames
+# back for smoothness we do not want, and reorder_queue_size;0 disables the
+# packet-reordering buffer, which over a TCP transport can only ever add delay.
+# Together they keep this client's own backlog near zero, so whatever lag shows
+# up is real network or real CPU rather than buffering we asked for.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|reorder_queue_size;0",
+)
 
 import cv2
 import numpy as np
@@ -42,6 +52,36 @@ MODEL_NAME = os.environ.get("POSE_MODEL", str(MODELS_DIR / "yolo26n-pose.pt"))
 # MODEL_NAME = hf_hub_download(repo_id="melihuzunoglu/human-fall-detection", filename="best.pt")
 
 IMGSZ      = int(os.environ.get("POSE_IMGSZ", "640"))  # drop to 480 if slow
+
+# Decode-and-score one frame in every VID_STRIDE. The RTSP socket is still
+# drained at full rate — Ultralytics' loader grabs every frame and only fully
+# retrieves every Nth — so this buys CPU back WITHOUT making MediaMTX call us a
+# slow reader. At 2 on a 15 fps stream the fall debounce still gets ~7 samples a
+# second, which is well inside FALL_MIN_FRAMES territory.
+VID_STRIDE = max(1, int(os.environ.get("VID_STRIDE", "1")))
+
+# JPEG quality for the MJPEG fan-out. OpenCV defaults to 95, which is a lot of
+# bytes and a lot of encode time for a monitoring feed nobody is pixel-peeping.
+JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
+
+# No decoded frame for this long means the stream is wedged rather than slow.
+# The Pi's hardware encoder dying mid-stream (the ioctl(VIDIOC_QBUF) failures in
+# the MediaMTX journal) looks exactly like this from here: the TCP connection
+# stays up and nothing ever arrives again. Tear it down and reconnect instead of
+# waiting forever on a socket that will never speak.
+STREAM_STALL_SEC = float(os.environ.get("STREAM_STALL_SEC", "8"))
+
+# The same guard for a connection that comes up but never delivers a first
+# frame — a path that exists on MediaMTX with a dead publisher behind it looks
+# exactly like that. Longer than STREAM_STALL_SEC because this window also has
+# to cover Ultralytics building its predictor and the RTSP handshake itself.
+STREAM_CONNECT_SEC = float(os.environ.get("STREAM_CONNECT_SEC",
+                                          str(STREAM_STALL_SEC * 3)))
+
+# Seconds after the last viewer leaves before the RTSP connection is dropped.
+# Ignored while automatic fall clips are enabled or a recording is running —
+# detection is the point, a browser being open is not.
+IDLE_STOP_SEC = float(os.environ.get("IDLE_STOP_SEC", "30"))
 
 VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "videos")
 RECORD_FPS = int(os.environ.get("RECORD_FPS", "10"))  # nominal, not measured
@@ -141,6 +181,7 @@ def start_recording(metrics: bool = False) -> dict:
             _write_queue = _write_queue_skel = None
             _start_time = time.time()
             _recording = True
+            start_worker()   # a metrics run with no browser open still needs frames
             return {"recording": True, "metrics": True,
                     "filename": None, "filename_skeleton": None}
 
@@ -155,12 +196,13 @@ def start_recording(metrics: bool = False) -> dict:
         _filepath = os.path.join(VIDEOS_DIR, _filename)
         _filename_skel = f"pose_{ts}_skeleton.mp4"
         _filepath_skel = os.path.join(VIDEOS_DIR, _filename_skel)
-        # Both opened lazily in gen_frames() once frame sizes are known — they
+        # Both opened lazily in the capture loop once frame sizes are known — they
         # differ (2560x720 side-by-side vs 1280x720 skeleton).
         _write_queue = None
         _write_queue_skel = None
         _start_time = time.time()
         _recording = True
+        start_worker()   # ditto: recording does not require a live viewer
         return {"recording": True, "metrics": False, "filename": _filename,
                 "filename_skeleton": _filename_skel}
 
@@ -424,23 +466,143 @@ def _rtsp_url() -> str:
 model = YOLO(MODEL_NAME)
 
 
-def gen_frames():
-    """Yield annotated JPEG frames as multipart MJPEG.
+# ---------------------------------------------------------------------------
+# One reader, many viewers
+#
+# This used to be a plain generator, and Flask called it once per request. Every
+# browser that opened /video_feed therefore got its OWN model.track(), which
+# opened its OWN RTSP connection to MediaMTX and ran its OWN YOLO loop. Two tabs
+# meant two readers on the Pi and two inference loops here fighting over the same
+# CPU — and a loop that is busy doing inference is a loop that is not draining
+# its socket, which is precisely what MediaMTX reports as
+#
+#     [RTSP] [session 1497e783] reader is too slow, discarding 469 frames
+#
+# Worse, closing the tab did not reliably end the session. Ultralytics' stream
+# loader keeps a background grab thread and a cv2.VideoCapture alive per source,
+# and dropping the generator does not stop either, so orphaned readers piled up
+# on the Pi across page reloads.
+#
+# So: exactly one capture+inference thread per process, started on first use,
+# publishing the newest annotated JPEG into a single slot. Viewers subscribe to
+# that slot. N viewers now cost one RTSP session and one inference pass, and a
+# viewer on a slow link simply misses frames instead of applying back-pressure
+# all the way to the camera.
+# ---------------------------------------------------------------------------
+_frame_cv = threading.Condition()
+_latest_jpeg: "bytes | None" = None
+_latest_seq = 0
 
-    Uses Ultralytics streaming inference with the built-in ByteTrack tracker
-    (`track(..., stream=True)`) so people keep stable IDs across frames.
-    On any stream error we pause briefly and reconnect — good enough for a demo.
+_worker_lock = threading.Lock()
+_worker: "threading.Thread | None" = None
+_worker_stop = threading.Event()
+
+_viewer_lock = threading.Lock()
+_viewers = 0
+_viewers_zero_since: "float | None" = None
+
+_stream_lock = threading.Lock()
+_stream_stats = {"connected": False, "frames": 0, "reconnects": 0,
+                 "last_frame": 0.0, "started": 0.0, "fps": 0.0,
+                 "last_error": None}
+
+_BOUNDARY = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+
+
+def get_stream_status() -> dict:
+    """What the single reader is doing — surfaced at /stream/status.
+
+    Worth watching `reconnects` specifically: a number that climbs while you are
+    not touching anything is the Pi dropping the path, not this end losing
+    interest.
     """
+    with _stream_lock:
+        s = dict(_stream_stats)
+    last = s.pop("last_frame")
+    s.pop("started")
+    s["fps"] = round(s["fps"], 1)
+    s["age_sec"] = round(time.time() - last, 1) if last else None
+    s["viewers"] = _viewers
+    s["running"] = _worker is not None and _worker.is_alive()
+    s["vid_stride"] = VID_STRIDE
+    return s
+
+
+def _close_stream(stream) -> None:
+    """End one track() run and, more importantly, its RTSP session.
+
+    This is the part that leaked. Ultralytics holds the VideoCapture inside
+    predictor.dataset and runs a grab thread beside it; garbage-collecting the
+    generator stops neither, so MediaMTX kept counting a closed tab as a live
+    reader. close() on the dataset is what actually releases the capture and
+    ends the session on the Pi.
+
+    Safe to call from another thread while the capture loop is mid-iteration:
+    the loader's threads stop, __next__ raises StopIteration, and the loop falls
+    through to its reconnect. That is exactly how the stall watchdog below
+    interrupts a wedged stream.
+    """
+    dataset = getattr(getattr(model, "predictor", None), "dataset", None)
+    for obj, what in ((dataset, "dataset"), (stream, "generator")):
+        close = getattr(obj, "close", None)
+        if close is None:
+            continue
+        try:
+            close()
+        except Exception as exc:  # noqa: BLE001 - teardown must never raise
+            print(f"[detector] closing the {what} failed: {exc!r}")
+
+
+def _publish(jpeg: bytes) -> None:
+    """Hand a finished frame to every waiting viewer and record the tick."""
+    global _latest_jpeg, _latest_seq
+    now = time.time()
+    with _frame_cv:
+        _latest_jpeg = jpeg
+        _latest_seq += 1
+        _frame_cv.notify_all()
+    with _stream_lock:
+        prev = _stream_stats["last_frame"]
+        _stream_stats["connected"] = True
+        _stream_stats["frames"] += 1
+        _stream_stats["last_frame"] = now
+        _stream_stats["last_error"] = None
+        dt = now - prev if prev else 0
+        if dt > 0:
+            inst = 1.0 / dt
+            # Smoothed, because the raw number jitters too much to read.
+            _stream_stats["fps"] = (0.9 * _stream_stats["fps"] + 0.1 * inst
+                                    if _stream_stats["fps"] else inst)
+
+
+def _capture_loop() -> None:
+    """The one thread that talks to the camera. Reconnects on anything."""
+    # Assigned below, in the recording branch lifted out of the old gen_frames.
     global _write_queue, _write_queue_skel
     rtsp_url = _rtsp_url()
-    while True:
+    jpeg_params = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+    first = True
+
+    while not _worker_stop.is_set():
+        if not first:
+            with _stream_lock:
+                _stream_stats["reconnects"] += 1
+        first = False
+        stream = None
+        with _stream_lock:
+            _stream_stats["started"] = time.time()
         try:
-            for result in model.track(
+            stream = model.track(
                 source=rtsp_url,
                 stream=True,
                 imgsz=IMGSZ,
+                vid_stride=VID_STRIDE,
                 verbose=False,
-            ):
+            )
+            for result in stream:
+                if _worker_stop.is_set():
+                    break
+
                 # Cheap identity check after the first frame. model.track()
                 # builds a fresh predictor and dataset on every reconnect and
                 # the tap does not survive one, so re-installing has to be
@@ -545,7 +707,7 @@ def gen_frames():
                                 _write_queue.put(combined)
                                 _write_queue_skel.put(skel)
 
-                ok, buf = cv2.imencode(".jpg", frame)
+                ok, buf = cv2.imencode(".jpg", frame, jpeg_params)
 
                 # Scored after the encode so latency_ms covers the whole path
                 # from frame arrival to a frame ready to send, and outside the
@@ -560,12 +722,129 @@ def gen_frames():
 
                 if not ok:
                     continue
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                    + buf.tobytes()
-                    + b"\r\n"
-                )
+                _publish(buf.tobytes())
+
         except Exception as exc:  # noqa: BLE001 - keep the feed alive
+            with _stream_lock:
+                _stream_stats["last_error"] = f"{type(exc).__name__}: {exc}"
             print(f"[detector] stream error: {exc!r}; reconnecting in 2s...")
-            time.sleep(2)
+        finally:
+            with _stream_lock:
+                _stream_stats["connected"] = False
+            _close_stream(stream)
+
+        # Doubles as the reconnect backoff: returns immediately once stopped.
+        _worker_stop.wait(2.0)
+
+    print("[detector] capture loop stopped")
+
+
+def _watchdog_loop() -> None:
+    """Force a reconnect on a wedged stream; hang up once nobody is watching."""
+    while not _worker_stop.wait(1.0):
+        now = time.time()
+        with _stream_lock:
+            connected = _stream_stats["connected"]
+            last = _stream_stats["last_frame"]
+            started = _stream_stats["started"]
+
+        # Two shapes of the same failure, both of which otherwise block in
+        # __next__ forever while the page freezes on its last frame — the worst
+        # possible failure for a fall monitor, because a frozen feed looks
+        # exactly like a quiet room.
+        stalled = connected and last and now - last > STREAM_STALL_SEC
+        never_started = (not connected and started
+                         and now - started > STREAM_CONNECT_SEC)
+        if stalled or never_started:
+            waited = now - (last if stalled else started)
+            print(f"[detector] "
+                  f"{'no frames' if stalled else 'no first frame'} for "
+                  f"{waited:.0f}s -- forcing a reconnect")
+            with _stream_lock:
+                _stream_stats["connected"] = False
+                _stream_stats["started"] = now   # do not re-fire while it retries
+            _close_stream(None)
+            continue
+
+        # Never hang up on work in progress.
+        if fall_recorder.ENABLED or _recording:
+            continue
+        zero_since = _viewers_zero_since
+        if _viewers == 0 and zero_since and now - zero_since > IDLE_STOP_SEC:
+            print("[detector] no viewers -- dropping the RTSP connection")
+            threading.Thread(target=stop_worker, daemon=True).start()
+            return
+
+
+def start_worker() -> None:
+    """Start the shared capture thread unless it is already running."""
+    global _worker
+    with _worker_lock:
+        if _worker is not None and _worker.is_alive():
+            return
+        _worker_stop.clear()
+        _worker = threading.Thread(target=_capture_loop,
+                                   name="detector-capture", daemon=True)
+        _worker.start()
+        threading.Thread(target=_watchdog_loop,
+                         name="detector-watchdog", daemon=True).start()
+
+
+def stop_worker(timeout: float = 10.0) -> None:
+    """Stop the capture thread and close the RTSP session behind it."""
+    global _worker
+    with _worker_lock:
+        worker, _worker = _worker, None
+        if worker is None:
+            return
+        _worker_stop.set()
+    # Unblocks the loop if it is sitting inside __next__ waiting on a socket.
+    _close_stream(None)
+    worker.join(timeout)
+
+
+def _viewer_enter() -> None:
+    global _viewers, _viewers_zero_since
+    with _viewer_lock:
+        _viewers += 1
+        _viewers_zero_since = None
+    start_worker()
+
+
+def _viewer_leave() -> None:
+    global _viewers, _viewers_zero_since
+    with _viewer_lock:
+        _viewers = max(0, _viewers - 1)
+        if _viewers == 0:
+            _viewers_zero_since = time.time()
+
+
+def gen_frames():
+    """Yield the shared annotated feed to one HTTP client as multipart MJPEG.
+
+    Subscribes to the capture worker rather than opening a connection of its
+    own, so the second and third viewer are free. Each viewer always waits for
+    the NEWEST frame and never queues: a browser that cannot keep up drops to a
+    lower frame rate on its own and the camera never hears about it.
+    """
+    _viewer_enter()
+    seen = -1
+    try:
+        while True:
+            with _frame_cv:
+                # The timeout is what keeps this responsive while the stream is
+                # down: no frames for 5s just means loop round and check again,
+                # holding the HTTP response open so the <img> does not error
+                # out and need a page reload once the camera comes back.
+                if not _frame_cv.wait_for(lambda: _latest_seq != seen,
+                                          timeout=5.0):
+                    continue
+                seen = _latest_seq
+                jpeg = _latest_jpeg
+            if jpeg:
+                yield _BOUNDARY + jpeg + b"\r\n"
+    finally:
+        # GeneratorExit lands here when the tab closes. The worker deliberately
+        # keeps running: other tabs may still be watching, and the watchdog
+        # hangs up on its own once the last viewer has been gone a while.
+        _viewer_leave()

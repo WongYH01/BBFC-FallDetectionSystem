@@ -1,7 +1,7 @@
 """Automatic pre-buffered clip capture on fall detection.
 
 Independent of the manual Record button (start_recording/stop_recording in
-detector.py). push_frame() is called once per frame from gen_frames()'s
+detector.py). push_frame() is called once per frame from the capture loop's
 single inference loop -- so it has to be cheap. Encoding a frame into an
 mp4 (cv2.VideoWriter.write()) is not always instant, and if that encode ran
 directly inside push_frame(), a slow one would stall the inference loop,
@@ -18,7 +18,7 @@ blocked waiting for a frame to finish encoding.
 
 FLOW
 ----
-Every frame, gen_frames() hands push_frame() the skeleton-only canvas (pose
+Every frame, the shared capture loop hands push_frame() the skeleton-only canvas (pose
 drawn on a blank background, no camera image -- same one detector.py already
 builds for the manual-recording companion file) plus whether anyone is
 currently latched as fallen.
@@ -67,7 +67,7 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 # own skeleton file is unaffected). Useful when troubleshooting stream
 # performance: disabling this skips an extra full result.plot() call on every
 # single frame, not just while a clip is actually being written -- see the
-# `need_skel` check in detector.py's gen_frames().
+# `need_skel` check in detector.py's _capture_loop().
 ENABLED = os.environ.get("FALL_CLIPS_ENABLED", "1") not in ("0", "")
 
 # Seconds of rolling pre-event footage kept before a fall and flushed into
@@ -163,7 +163,7 @@ def _convert_for_telegram(filepath: str) -> None:
     and closed the raw mp4v file -- so this never touches the live capture
     path. Worst case, encoding a ~10-15s low-motion skeleton clip with
     "veryfast" software libx264 takes a second or two, well after the fall
-    is over; the RTSP read loop and gen_frames() are completely unaffected
+    is over; the RTSP read loop and the MJPEG fan-out are completely unaffected
     either way.
 
     Uses the ffmpeg CLI rather than re-opening the file with a second

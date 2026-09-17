@@ -1,0 +1,75 @@
+# MediaMTX settings for the fall-detection camera Pi (wyhrp0).
+#
+# This is NOT a drop-in replacement for /usr/local/etc/mediamtx.yml — it is the
+# subset of keys that matter for the two failures in the journal, with the
+# reasoning attached. Copy the keys you need into the real file and restart:
+#
+#     sudo systemctl restart mediamtx.service
+#     sudo journalctl -u mediamtx.service -f
+#
+# ---------------------------------------------------------------------------
+# Failure 1: "reader is too slow, discarding N frames"
+# ---------------------------------------------------------------------------
+# MediaMTX gives every reader its own fixed-size write queue and never blocks
+# the publisher to wait for one. When a reader stops draining its socket the
+# queue fills and the oldest frames are dropped. The real fix is on the reader
+# side (demo-cam/v1/detector.py now shares one RTSP connection across all
+# viewers instead of opening one per browser tab); this only widens the shock
+# absorber so a brief hiccup does not become a visible discard.
+#
+# Must be a power of two. 1024 costs a few MB of RAM per reader; 2048 if the
+# link to the Mac is lumpy. It will NOT save you from a reader that is
+# permanently slower than real time — that just delays the same message.
+writeQueueSize: 2048
+
+# Log level. "info" also prints each reader connecting and disconnecting, which
+# is how you confirm the one-reader change actually took: opening the monitor
+# page in three tabs should now add one RTSP session, not three.
+logLevel: info
+
+# ---------------------------------------------------------------------------
+# Failure 2: encoder_hardware_h264_encode(): ioctl(VIDIOC_QBUF) failed
+# ---------------------------------------------------------------------------
+# That message comes from the mediamtx-rpicamera helper process, not from
+# mediamtx itself: it failed to queue a buffer to the Pi's hardware H.264
+# encoder. When it repeats every few milliseconds the helper is effectively
+# dead, the path drops, and every reader is torn down with it — which is what
+# "the stream keeps stopping" looks like from the Mac.
+#
+# There is no upstream fix (both issues were closed as not planned). Avoid it:
+#
+#   * Bitrate is the documented trigger. Starving the encoder and then giving
+#     it a full-frame change (someone walking past the lens, lights switching)
+#     is how people reproduce this. Do not run this below ~1 Mbps.
+#   * Resolution and frame rate are the other half. Fall detection does not
+#     need 1080p30 — the pose model is fed 640px anyway, and the fall heuristic
+#     debounces over 3 frames, which at 15 fps is still a fifth of a second.
+#
+paths:
+  cam:
+    source: rpiCamera
+
+    # 1280x720 @ 15 fps at 2 Mbps. Roughly a third of the encoder pressure and
+    # a third of the bytes on the Tailscale link compared with 1080p30, with no
+    # meaningful loss for this task.
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 15
+    rpiCameraBitrate: 2000000
+
+    # Keyframe every 2 seconds (30 frames at 15 fps). Matters for the raw
+    # recordings and for how fast a reconnecting client gets a picture; a long
+    # GOP makes every reconnect look like a several-second freeze.
+    rpiCameraIDRPeriod: 30
+
+    # Uncomment if the Pi is in a room where the lighting changes sharply and
+    # the encoder still complains. Capping the AE range stops the sudden
+    # whole-frame exposure swings that produce the worst-case encode spikes.
+    #rpiCameraExposure: normal
+    #rpiCameraAWB: auto
+
+    # Fires whenever the path loses its source. Useful as a breadcrumb: if the
+    # Mac reports reconnects at the same timestamps this logs, the Pi is the
+    # one dropping, not the network.
+    #runOnUnDemand:
+    #runOnNotReady: logger -t mediamtx "path $MTX_PATH went not-ready"
