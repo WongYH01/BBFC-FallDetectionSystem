@@ -34,6 +34,12 @@ public class AlertRepositoryAdapter implements AlertRepository {
     }
 
     @Override
+    public Optional<Alert> findByEventIdForUpdate(EventId eventId) {
+        return alertJpaRepository.findForUpdateByEventId(eventId.eventId())
+                .map(alertMapper::toDomain);
+    }
+
+    @Override
     public List<Alert> findDueForEscalation(Instant now, int limit){
         return alertJpaRepository.findDueForEscalation(now, limit).stream()
                 .map(alertMapper::toDomain)

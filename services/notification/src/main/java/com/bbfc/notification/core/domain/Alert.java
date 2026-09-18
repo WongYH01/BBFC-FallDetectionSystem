@@ -1,12 +1,15 @@
 package com.bbfc.notification.core.domain;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 
 public final class Alert {
     private final EventId eventId;
     private final RoomRef roomRef;
     private final Confidence confidence;
+    private final Instant createdAt;
 
     private AlertState alertState;
     private String acknowledgedBy;
@@ -16,22 +19,27 @@ public final class Alert {
     private Instant outcomeAt;
     private int repeatCount;
     private Instant nextEscalationAt;
+    private Long dispatchMessageId;
+    private final List<Long> escalationMessageIds = new ArrayList<>();
+    private Long followUpMessageId;
 
-    private Alert(EventId eventId, RoomRef roomRef, Confidence confidence) {
+    private Alert(EventId eventId, RoomRef roomRef, Confidence confidence, Instant createdAt) {
         this.eventId = eventId;
         this.roomRef = roomRef;
         this.confidence = confidence;
+        this.createdAt = createdAt;
         this.alertState = AlertState.DISPATCHED;
     }
 
-    public static Alert dispatch(EventId eventId, RoomRef room, Confidence confidence) {
-        return new Alert(eventId, room, confidence);
+    public static Alert dispatch(EventId eventId, RoomRef room, Confidence confidence, Instant createdAt) {
+        return new Alert(eventId, room, confidence, createdAt);
     }
 
     public static Alert load(
             EventId eventId,
             RoomRef roomRef,
             Confidence confidence,
+            Instant createdAt,
             AlertState alertState,
             String acknowledgedBy,
             Instant acknowledgedAt,
@@ -39,8 +47,11 @@ public final class Alert {
             Outcome outcome,
             Instant outcomeAt,
             int repeatCount,
-            Instant nextEscalationAt) {
-        Alert alert = new Alert(eventId, roomRef, confidence);
+            Instant nextEscalationAt,
+            Long dispatchMessageId,
+            List<Long> escalationMessageIds,
+            Long followUpMessageId) {
+        Alert alert = new Alert(eventId, roomRef, confidence, createdAt);
         alert.alertState = alertState;
         alert.acknowledgedBy = acknowledgedBy;
         alert.acknowledgedAt = acknowledgedAt;
@@ -49,6 +60,9 @@ public final class Alert {
         alert.outcomeAt = outcomeAt;
         alert.repeatCount = repeatCount;
         alert.nextEscalationAt = nextEscalationAt;
+        alert.dispatchMessageId = dispatchMessageId;
+        alert.escalationMessageIds.addAll(escalationMessageIds);
+        alert.followUpMessageId = followUpMessageId;
         return alert;
     }
 
@@ -58,7 +72,6 @@ public final class Alert {
         }
         this.alertState = targetState;
     }
-
 
     public void acknowledge(String by, Instant at) {
         transitionTo(AlertState.ACKNOWLEDGED);
@@ -88,6 +101,33 @@ public final class Alert {
         this.outcomeAt = at;
     }
 
+    public void recordDispatchMessage(long messageId) {
+        if (this.dispatchMessageId != null) {
+            throw new IllegalStateException("Dispatch message already recorded for " + eventId);
+        }
+        this.dispatchMessageId = messageId;
+    }
+
+    public void recordEscalationMessage(long messageId) {
+        this.escalationMessageIds.add(messageId);
+    }
+
+    public void recordFollowUpMessage(long messageId) {
+        if (this.followUpMessageId != null) {
+            throw new IllegalStateException("Follow-up message already recorded for " + eventId);
+        }
+        this.followUpMessageId = messageId;
+    }
+
+    /** Every message this alert has produced, in send order — the set to close out on acknowledgement. */
+    public List<Long> messageIds() {
+        List<Long> ids = new ArrayList<>();
+        if (dispatchMessageId != null) {
+            ids.add(dispatchMessageId);
+        }
+        ids.addAll(escalationMessageIds);
+        return List.copyOf(ids);
+    }
 
     public AlertState state() {
         return alertState;
@@ -119,6 +159,22 @@ public final class Alert {
 
     public Optional<Instant> nextEscalationAt() {
         return Optional.ofNullable(nextEscalationAt);
+    }
+
+    public Optional<Long> dispatchMessageId() {
+        return Optional.ofNullable(dispatchMessageId);
+    }
+
+    public List<Long> escalationMessageIds() {
+        return List.copyOf(escalationMessageIds);
+    }
+
+    public Optional<Long> followUpMessageId() {
+        return Optional.ofNullable(followUpMessageId);
+    }
+
+    public Instant createdAt() {
+        return createdAt;
     }
 
     public EventId eventId() {

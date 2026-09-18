@@ -62,17 +62,19 @@ class DedupAlertServiceTest {
         given(alertRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
         given(messageRenderer.render(any(), any())).willReturn("rendered message");
         given(escalationPolicy.window()).willReturn(java.time.Duration.ofSeconds(60));
+        given(notificationChannel.sendAlert(any(), any())).willReturn(501L);
 
         DedupAlertService.Result result = dedupAlertService.handleAlert(eventId, room, confidence);
 
         assertThat(result.created()).isTrue();
         assertThat(result.alert().eventId()).isEqualTo(eventId);
-        verify(notificationChannel).sendAlert("rendered message");
+        assertThat(result.alert().dispatchMessageId()).contains(501L);
+        verify(notificationChannel).sendAlert(eventId, "rendered message");
     }
 
     @Test
     void existingEventIdReturnsExistingWithoutSaving() {
-        Alert existing = Alert.dispatch(eventId, room, confidence);
+        Alert existing = Alert.dispatch(eventId, room, confidence, clock.instant());
         given(alertRepository.findByEventId(eventId)).willReturn(Optional.of(existing));
 
         DedupAlertService.Result result = dedupAlertService.handleAlert(eventId, room, confidence);
@@ -80,6 +82,6 @@ class DedupAlertServiceTest {
         assertThat(result.created()).isFalse();
         assertThat(result.alert()).isSameAs(existing);
         verify(alertRepository, never()).save(any());
-        verify(notificationChannel, never()).sendAlert(any());
+        verify(notificationChannel, never()).sendAlert(any(), any());
     }
 }

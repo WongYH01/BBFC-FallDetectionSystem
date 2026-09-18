@@ -2,6 +2,9 @@ package com.bbfc.notification.out.persistence;
 
 import java.time.Instant;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
 import com.bbfc.notification.core.domain.AlertState;
 import com.bbfc.notification.core.domain.Outcome;
 
@@ -11,15 +14,16 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-@Entity 
+@Entity
 @Table (name="alerts")
 public class AlertEntity {
-    @Id 
+    @Id
     private String eventId;
 
     private String roomId;
     private String roomName;
     private double confidence;
+    private Instant createdAt;
 
     @Enumerated(EnumType.STRING)
     private AlertState state;
@@ -35,17 +39,26 @@ public class AlertEntity {
     private int repeatCount;
     private Instant nextEscalationAt;
 
+    private Long dispatchMessageId;
+
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    private Long[] escalationMessageIds;
+
+    private Long followUpMessageId;
+
     protected AlertEntity(){}
 
     public AlertEntity(
             String eventId, String roomId, String roomName,
-            double confidence, AlertState state, String acknowledgedBy,
+            double confidence, Instant createdAt, AlertState state, String acknowledgedBy,
             Instant acknowledgedAt, Instant escalatedAt, Outcome outcome,
-            Instant outcomeAt, int repeatCount, Instant nextEscalationAt) {
+            Instant outcomeAt, int repeatCount, Instant nextEscalationAt,
+            Long dispatchMessageId, Long[] escalationMessageIds, Long followUpMessageId) {
         this.eventId = eventId;
         this.roomId = roomId;
         this.roomName = roomName;
         this.confidence = confidence;
+        this.createdAt = createdAt;
         this.state = state;
         this.acknowledgedBy = acknowledgedBy;
         this.acknowledgedAt = acknowledgedAt;
@@ -54,6 +67,9 @@ public class AlertEntity {
         this.outcomeAt = outcomeAt;
         this.repeatCount = repeatCount;
         this.nextEscalationAt = nextEscalationAt;
+        this.dispatchMessageId = dispatchMessageId;
+        this.escalationMessageIds = escalationMessageIds;
+        this.followUpMessageId = followUpMessageId;
     }
 
     public String getEventId() {
@@ -70,6 +86,10 @@ public class AlertEntity {
 
     public double getConfidence() {
         return confidence;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
     }
 
     public AlertState getState() {
@@ -103,5 +123,16 @@ public class AlertEntity {
     public Instant getNextEscalationAt() {
         return nextEscalationAt;
     }
-}
 
+    public Long getDispatchMessageId() {
+        return dispatchMessageId;
+    }
+
+    public Long[] getEscalationMessageIds() {
+        return escalationMessageIds;
+    }
+
+    public Long getFollowUpMessageId() {
+        return followUpMessageId;
+    }
+}

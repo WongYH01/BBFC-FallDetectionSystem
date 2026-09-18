@@ -2,6 +2,7 @@ package com.bbfc.notification.out.render;
 
 import com.bbfc.notification.config.TelegramConfig;
 import com.bbfc.notification.core.domain.Alert;
+import com.bbfc.notification.core.domain.Outcome;
 import com.bbfc.notification.core.port.MessageRenderer;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -29,6 +30,9 @@ public class TemplateMessageRenderer implements MessageRenderer {
             .appendPattern("d MMMM yyyy h:mm")
             .appendText(ChronoField.AMPM_OF_DAY, Map.of(0L, "am", 1L, "pm"))
             .toFormatter()
+            .withZone(ZoneId.systemDefault());
+
+    private static final DateTimeFormatter CLOCK_TIME = DateTimeFormatter.ofPattern("HH:mm")
             .withZone(ZoneId.systemDefault());
 
     private  static  void validateTemplate(String template){
@@ -64,5 +68,60 @@ public class TemplateMessageRenderer implements MessageRenderer {
                 .replace("{time}", time)
                 .replace("{confidence}", confidence)
                 .replace("{eventId}", eventId);
+    }
+
+    @Override
+    public String renderAcknowledged(Alert alert) {
+        return """
+                ✅ <b>FALL ALERT — HANDLED</b>
+                <b>Room</b> %s
+                <b>Detected</b> %s · <b>Handled</b> %s by %s
+                <i>Ref %s</i>"""
+                .formatted(
+                        HtmlUtils.htmlEscape(alert.room().displayName()),
+                        CLOCK_TIME.format(alert.createdAt()),
+                        alert.acknowledgedAt().map(CLOCK_TIME::format).orElse("—"),
+                        responder(alert),
+                        HtmlUtils.htmlEscape(alert.eventId().eventId()));
+    }
+
+    @Override
+    public String renderTriageQuestion(Alert alert) {
+        return """
+                <b>Ref %s</b> · %s
+                %s
+                <b>Was this a genuine fall?</b>"""
+                .formatted(
+                        HtmlUtils.htmlEscape(alert.eventId().eventId()),
+                        HtmlUtils.htmlEscape(alert.room().displayName()),
+                        handledLine(alert));
+    }
+
+    @Override
+    public String renderTriaged(Alert alert) {
+        String outcome = alert.outcome()
+                .map(o -> o == Outcome.GENUINE ? "👍 Recorded: Genuine fall" : "🚫 Recorded: False alarm")
+                .orElse("Recorded");
+        return """
+                <b>Ref %s</b> · %s
+                %s
+                %s"""
+                .formatted(
+                        HtmlUtils.htmlEscape(alert.eventId().eventId()),
+                        HtmlUtils.htmlEscape(alert.room().displayName()),
+                        handledLine(alert),
+                        outcome);
+    }
+
+    private static String handledLine(Alert alert) {
+        return "Fall detected %s, acknowledged %s by %s.".formatted(
+                CLOCK_TIME.format(alert.createdAt()),
+                alert.acknowledgedAt().map(CLOCK_TIME::format).orElse("—"),
+                responder(alert));
+    }
+
+    // Comes from a Telegram display name, so it is attacker-controlled and lands in a parse_mode=HTML body.
+    private static String responder(Alert alert) {
+        return HtmlUtils.htmlEscape(alert.acknowledgedBy().orElse("someone"));
     }
 }

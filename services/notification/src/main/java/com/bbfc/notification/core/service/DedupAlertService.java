@@ -39,10 +39,11 @@ public class DedupAlertService {
                 .map(existing -> new Result(existing, false))
                 .orElseGet(() -> {
                     Instant now = clock.instant();
-                    Alert alert = Alert.dispatch(eventId, roomRef, confidence);
+                    Alert alert = Alert.dispatch(eventId, roomRef, confidence, now);
                     alert.scheduleNextEscalation(now.plus(escalationPolicy.window()));
+                    long messageId = notificationChannel.sendAlert(eventId, messageRenderer.render(alert, now));
+                    alert.recordDispatchMessage(messageId);
                     Alert saved = alertRepository.save(alert);
-                    notificationChannel.sendAlert(messageRenderer.render(saved, now));
                     return new Result(saved, true);
                 });
     }

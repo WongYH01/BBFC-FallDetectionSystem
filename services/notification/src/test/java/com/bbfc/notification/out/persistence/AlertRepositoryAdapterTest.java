@@ -1,6 +1,7 @@
 package com.bbfc.notification.out.persistence;
 
 
+import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +44,8 @@ class AlertRepositoryAdapterTest {
         Alert alert = Alert.dispatch(
                 new EventId("FE-20260910-0001"),
                 new RoomRef("room-12", "Block A - Room 12"),
-                new Confidence(0.67)
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
         );
 
         alertRepositoryAdapter.save(alert);
@@ -55,6 +57,66 @@ class AlertRepositoryAdapterTest {
         assertThat(reloaded.get().room()).isEqualTo(alert.room());
         assertThat(reloaded.get().confidence()).isEqualTo(alert.confidence());
         assertThat(reloaded.get().state()).isEqualTo(alert.state());
+        assertThat(reloaded.get().createdAt()).isEqualTo(alert.createdAt());
+    }
+
+    @Test
+    void messageIdsSurviveARoundTrip() {
+        Alert alert = Alert.dispatch(
+                new EventId("FE-20260910-0002"),
+                new RoomRef("room-12", "Block A - Room 12"),
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
+        );
+        alert.recordDispatchMessage(501L);
+        alert.recordEscalationMessage(502L);
+        alert.recordEscalationMessage(503L);
+        alert.recordFollowUpMessage(504L);
+
+        alertRepositoryAdapter.save(alert);
+        Alert reloaded = alertRepositoryAdapter.findByEventId(new EventId("FE-20260910-0002")).orElseThrow();
+
+        assertThat(reloaded.dispatchMessageId()).contains(501L);
+        assertThat(reloaded.escalationMessageIds()).containsExactly(502L, 503L);
+        assertThat(reloaded.followUpMessageId()).contains(504L);
+    }
+
+    @Test
+    void findByEventIdForUpdateReturnsTheAlert() {
+        Alert alert = Alert.dispatch(
+                new EventId("FE-20260910-0004"),
+                new RoomRef("room-12", "Block A - Room 12"),
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
+        );
+        alertRepositoryAdapter.save(alert);
+
+        Optional<Alert> locked = alertRepositoryAdapter.findByEventIdForUpdate(new EventId("FE-20260910-0004"));
+
+        assertThat(locked).isPresent();
+        assertThat(locked.get().eventId()).isEqualTo(alert.eventId());
+    }
+
+    @Test
+    void findByEventIdForUpdateIsEmptyForUnknownEventId() {
+        assertThat(alertRepositoryAdapter.findByEventIdForUpdate(new EventId("FE-does-not-exist"))).isEmpty();
+    }
+
+    @Test
+    void emptyMessageIdArraySurvivesARoundTrip() {
+        Alert alert = Alert.dispatch(
+                new EventId("FE-20260910-0003"),
+                new RoomRef("room-12", "Block A - Room 12"),
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
+        );
+
+        alertRepositoryAdapter.save(alert);
+        Alert reloaded = alertRepositoryAdapter.findByEventId(new EventId("FE-20260910-0003")).orElseThrow();
+
+        assertThat(reloaded.dispatchMessageId()).isEmpty();
+        assertThat(reloaded.escalationMessageIds()).isEmpty();
+        assertThat(reloaded.followUpMessageId()).isEmpty();
     }
 
 }

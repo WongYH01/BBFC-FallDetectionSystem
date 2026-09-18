@@ -18,9 +18,10 @@ class AlertTest {
     @BeforeEach 
     void setUp(){
         alert = Alert.dispatch(
-            new EventId("EE-01"), 
-            new RoomRef("room-1", "Block A, Room 1"), 
-            new Confidence(0.9)
+            new EventId("EE-01"),
+            new RoomRef("room-1", "Block A, Room 1"),
+            new Confidence(0.9),
+            Instant.parse("2026-09-16T10:00:00Z")
         );
     }
 
@@ -85,12 +86,25 @@ class AlertTest {
         }
 
         @ParameterizedTest
-        @EnumSource(value = AlertState.class, names = {"EXHAUSTED", "TRIAGED"})
-        void terminalStatesRejectEveryTransition(AlertState terminal) {
-            assertThat(terminal.canTransitionTo(AlertState.ACKNOWLEDGED)).isFalse();
-            assertThat(terminal.canTransitionTo(AlertState.ESCALATING)).isFalse();
-            assertThat(terminal.canTransitionTo(AlertState.TRIAGED)).isFalse();
-            assertThat(terminal.canTransitionTo(AlertState.EXHAUSTED)).isFalse();
+        @EnumSource(AlertState.class)
+        void triagedRejectsEveryTransition(AlertState target) {
+            assertThat(AlertState.TRIAGED.canTransitionTo(target)).isFalse();
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = AlertState.class, names = {"ESCALATING", "TRIAGED", "EXHAUSTED"})
+        void exhaustedRejectsEverythingExceptALateAcknowledgement(AlertState target) {
+            assertThat(AlertState.EXHAUSTED.canTransitionTo(target)).isFalse();
+        }
+
+        @Test
+        void exhaustedAcceptsALateAcknowledgement() {
+            alert.escalate(Instant.now());
+            alert.exhaust(Instant.now());
+
+            alert.acknowledge("nurse-1", Instant.now());
+
+            assertThat(alert.state()).isEqualTo(AlertState.ACKNOWLEDGED);
         }
 
     }
@@ -132,6 +146,56 @@ class AlertTest {
             alert.scheduleNextEscalation(Instant.now());
             alert.acknowledge("nurse-1", Instant.now());
             assertThat(alert.nextEscalationAt()).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("message tracking")
+    class MessageTracking {
+
+        @Test
+        void newAlertHasNoMessagesRecorded() {
+            assertThat(alert.dispatchMessageId()).isEmpty();
+            assertThat(alert.escalationMessageIds()).isEmpty();
+            assertThat(alert.followUpMessageId()).isEmpty();
+            assertThat(alert.messageIds()).isEmpty();
+        }
+
+        @Test
+        void messageIdsReturnsDispatchThenEscalationsInSendOrder() {
+            alert.recordDispatchMessage(501L);
+            alert.recordEscalationMessage(502L);
+            alert.recordEscalationMessage(503L);
+            assertThat(alert.messageIds()).containsExactly(501L, 502L, 503L);
+        }
+
+        @Test
+        void followUpIsNotPartOfTheEditTargetSet() {
+            alert.recordDispatchMessage(501L);
+            alert.recordFollowUpMessage(504L);
+            assertThat(alert.followUpMessageId()).contains(504L);
+            assertThat(alert.messageIds()).containsExactly(501L);
+        }
+
+        @Test
+        void dispatchMessageCanOnlyBeRecordedOnce() {
+            alert.recordDispatchMessage(501L);
+            assertThatThrownBy(() -> alert.recordDispatchMessage(502L))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void followUpMessageCanOnlyBeRecordedOnce() {
+            alert.recordFollowUpMessage(504L);
+            assertThatThrownBy(() -> alert.recordFollowUpMessage(505L))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void escalationMessageIdsAreNotModifiableFromOutside() {
+            alert.recordEscalationMessage(502L);
+            assertThatThrownBy(() -> alert.escalationMessageIds().add(999L))
+                    .isInstanceOf(UnsupportedOperationException.class);
         }
     }
 

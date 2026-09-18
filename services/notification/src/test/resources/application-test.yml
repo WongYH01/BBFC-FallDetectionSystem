@@ -1,8 +1,0 @@
-spring:
-  jpa:
-    hibernate:
-      ddl-auto: validate
-  flyway:
-    schemas: alerts
-    default-schema: alerts
-    create-schemas: true

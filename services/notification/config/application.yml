@@ -1,0 +1,29 @@
+# Operator-editable settings. Nothing secret belongs in this file — it is committed.
+#
+# Spring picks this up from ./config automatically, at higher precedence than the
+# packaged application.properties. Edit and restart; no rebuild needed. In a container
+# this is bind-mounted, which is why it holds no credentials. See config/README.md.
+
+telegram:
+  base-url: https://api.telegram.org
+
+  # Placeholders: {roomName} {time} {confidence} {eventId}. An unknown one fails at
+  # startup — see TemplateMessageRenderer.validateTemplate.
+  message-template: "
+      🚨   <b>FALL DETECTED</b>\n\n
+      <b>Room</b> {roomName}\n
+      <b>Time</b> {time}\n
+      <b>Confidence</b> {confidence}\n\n
+      <i>Ref {eventId}</i>
+  "
+
+  # Receives button taps via getUpdates. Telegram allows one long-poller per bot token,
+  # so a second running instance gets 409 Conflict.
+  polling-enabled: true
+
+alerting:
+  escalation:
+    window: 60s
+    max-repeats: 3
+    scheduler-enabled: true
+

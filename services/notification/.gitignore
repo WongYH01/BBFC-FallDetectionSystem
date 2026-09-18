@@ -32,9 +32,12 @@ build/
 ### VS Code ###
 .vscode/
 
-### Markdown Plans ###
-*.md
+### Secrets ###
+.env*
+!.env.example
 
-.env
+# Local launcher scripts tend to hardcode passwords. Keep them out.
 *.bat
-config/telegramDetails.yml
+
+### .md files ###
+*.md

@@ -6,6 +6,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -32,7 +34,8 @@ class IngestControllerTest {
         Alert alert = Alert.dispatch(
                 new EventId("FE-1"),
                 new RoomRef("room-12", "Block A - Room 12"),
-                new Confidence(0.67)
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
         );
         given(dedupAlertService.handleAlert(any(), any(), any()))
                 .willReturn(new DedupAlertService.Result(alert, true));
@@ -57,7 +60,8 @@ class IngestControllerTest {
         Alert alert = Alert.dispatch(
                 new EventId("FE-1"),
                 new RoomRef("room-12", "Block A - Room 12"),
-                new Confidence(0.67)
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
         );
         given(dedupAlertService.handleAlert(any(), any(), any()))
                 .willReturn(new DedupAlertService.Result(alert, false));
