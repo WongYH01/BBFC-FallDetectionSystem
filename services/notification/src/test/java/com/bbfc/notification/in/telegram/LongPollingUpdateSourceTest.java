@@ -40,7 +40,7 @@ class LongPollingUpdateSourceTest {
     void setUp() {
         wireMock.resetAll();
         TelegramConfig config =
-                new TelegramConfig("test-token", "-100123", wireMock.baseUrl(), "{roomName}");
+                new TelegramConfig("test-token", "-100123", wireMock.baseUrl(), "{roomName}", "{roomName}");
         source = new LongPollingUpdateSource(config, RestClient.builder(), callbackQueryHandler);
     }
 

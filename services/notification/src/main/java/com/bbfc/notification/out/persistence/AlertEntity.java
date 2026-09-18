@@ -46,6 +46,11 @@ public class AlertEntity {
 
     private Long followUpMessageId;
 
+    private String clipStorageKey;
+    private Instant clipStoredAt;
+    private String clipTelegramFileId;
+    private Long clipMessageId;
+
     protected AlertEntity(){}
 
     public AlertEntity(
@@ -53,7 +58,9 @@ public class AlertEntity {
             double confidence, Instant createdAt, AlertState state, String acknowledgedBy,
             Instant acknowledgedAt, Instant escalatedAt, Outcome outcome,
             Instant outcomeAt, int repeatCount, Instant nextEscalationAt,
-            Long dispatchMessageId, Long[] escalationMessageIds, Long followUpMessageId) {
+            Long dispatchMessageId, Long[] escalationMessageIds, Long followUpMessageId,
+            String clipStorageKey, Instant clipStoredAt, String clipTelegramFileId,
+            Long clipMessageId) {
         this.eventId = eventId;
         this.roomId = roomId;
         this.roomName = roomName;
@@ -70,6 +77,10 @@ public class AlertEntity {
         this.dispatchMessageId = dispatchMessageId;
         this.escalationMessageIds = escalationMessageIds;
         this.followUpMessageId = followUpMessageId;
+        this.clipStorageKey = clipStorageKey;
+        this.clipStoredAt = clipStoredAt;
+        this.clipTelegramFileId = clipTelegramFileId;
+        this.clipMessageId = clipMessageId;
     }
 
     public String getEventId() {
@@ -134,5 +145,21 @@ public class AlertEntity {
 
     public Long getFollowUpMessageId() {
         return followUpMessageId;
+    }
+
+    public String getClipStorageKey() {
+        return clipStorageKey;
+    }
+
+    public Instant getClipStoredAt() {
+        return clipStoredAt;
+    }
+
+    public String getClipTelegramFileId() {
+        return clipTelegramFileId;
+    }
+
+    public Long getClipMessageId() {
+        return clipMessageId;
     }
 }

@@ -48,7 +48,7 @@ class CallbackQueryHandlerTest {
     @BeforeEach
     void setUp() {
         TelegramConfig config = new TelegramConfig(
-                "test-token", String.valueOf(WARD_GROUP), "http://localhost", "{roomName}");
+                "test-token", String.valueOf(WARD_GROUP), "http://localhost", "{roomName}", "{roomName}");
         handler = new CallbackQueryHandler(
                 acknowledgeAlertService, triageAlertService, notificationChannel, config,
                 Clock.fixed(NOW, ZoneOffset.UTC));

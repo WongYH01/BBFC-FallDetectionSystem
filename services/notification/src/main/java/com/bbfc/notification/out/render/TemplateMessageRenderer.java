@@ -23,8 +23,10 @@ public class TemplateMessageRenderer implements MessageRenderer {
 
     private static  final Pattern PLACEHOLDER = Pattern.compile("\\{(\\w+)}");
     private static  final Set<String> KNOWN_VALUES = Set.of("roomName","time","confidence","eventId");
+    private static final Set<String> TRIAGE_QUESTION_KNOWN_VALUES = Set.of("roomName","eventId","handledLine");
 
     private final String messageTemplate;
+    private final String triageQuestionTemplate;
 
     private static final DateTimeFormatter TIME_FORMAT = new DateTimeFormatterBuilder()
             .appendPattern("d MMMM yyyy h:mm")
@@ -35,13 +37,13 @@ public class TemplateMessageRenderer implements MessageRenderer {
     private static final DateTimeFormatter CLOCK_TIME = DateTimeFormatter.ofPattern("HH:mm")
             .withZone(ZoneId.systemDefault());
 
-    private  static  void validateTemplate(String template){
+    private static void validateTemplate(String template, Set<String> knownValues, String propertyName){
         Matcher matcher = PLACEHOLDER.matcher(template);
         while (matcher.find()){
             String name = matcher.group(1);
-            if (!KNOWN_VALUES.contains(name)){
+            if (!knownValues.contains(name)){
                 throw new IllegalStateException(
-                        "telegram.message-template references unknown placeholder {"+name+"}"
+                        "telegram."+propertyName+" references unknown placeholder {"+name+"}"
                 );
             }
         }
@@ -49,7 +51,9 @@ public class TemplateMessageRenderer implements MessageRenderer {
 
     public TemplateMessageRenderer(TelegramConfig telegramConfig){
         this.messageTemplate = telegramConfig.messageTemplate();
-        validateTemplate(messageTemplate);
+        validateTemplate(messageTemplate, KNOWN_VALUES, "message-template");
+        this.triageQuestionTemplate = telegramConfig.triageQuestionTemplate();
+        validateTemplate(triageQuestionTemplate, TRIAGE_QUESTION_KNOWN_VALUES, "triage-question-template");
     }
 
 
@@ -87,14 +91,10 @@ public class TemplateMessageRenderer implements MessageRenderer {
 
     @Override
     public String renderTriageQuestion(Alert alert) {
-        return """
-                <b>Ref %s</b> · %s
-                %s
-                <b>Was this a genuine fall?</b>"""
-                .formatted(
-                        HtmlUtils.htmlEscape(alert.eventId().eventId()),
-                        HtmlUtils.htmlEscape(alert.room().displayName()),
-                        handledLine(alert));
+        return triageQuestionTemplate
+                .replace("{eventId}", HtmlUtils.htmlEscape(alert.eventId().eventId()))
+                .replace("{roomName}", HtmlUtils.htmlEscape(alert.room().displayName()))
+                .replace("{handledLine}", handledLine(alert));
     }
 
     @Override

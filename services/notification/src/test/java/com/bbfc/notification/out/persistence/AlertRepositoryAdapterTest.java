@@ -20,6 +20,7 @@ import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.Confidence;
 import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.RoomRef;
+import com.bbfc.notification.core.domain.SkeletonClip;
 
 @DataJpaTest
 @Testcontainers
@@ -100,6 +101,43 @@ class AlertRepositoryAdapterTest {
     @Test
     void findByEventIdForUpdateIsEmptyForUnknownEventId() {
         assertThat(alertRepositoryAdapter.findByEventIdForUpdate(new EventId("FE-does-not-exist"))).isEmpty();
+    }
+
+    @Test
+    void clipSurvivesARoundTrip() {
+        Alert alert = Alert.dispatch(
+                new EventId("FE-20260910-0005"),
+                new RoomRef("room-12", "Block A - Room 12"),
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
+        );
+        alert.attachClip(SkeletonClip.stored("room-12/FE-20260910-0005.mp4", Instant.parse("2026-09-16T10:05:00Z")));
+        alert.recordClipDelivery("file-abc", 601L);
+
+        alertRepositoryAdapter.save(alert);
+        Alert reloaded = alertRepositoryAdapter.findByEventId(new EventId("FE-20260910-0005")).orElseThrow();
+
+        SkeletonClip clip = reloaded.clip().orElseThrow();
+        assertThat(clip.storageKey()).isEqualTo("room-12/FE-20260910-0005.mp4");
+        assertThat(clip.storedAt()).isEqualTo(Instant.parse("2026-09-16T10:05:00Z"));
+        assertThat(clip.telegramFileId()).isEqualTo("file-abc");
+        assertThat(clip.telegramMessageId()).isEqualTo(601L);
+    }
+
+    @Test
+    void clipStoredButNotDeliveredSurvivesARoundTrip() {
+        Alert alert = Alert.dispatch(
+                new EventId("FE-20260910-0006"),
+                new RoomRef("room-12", "Block A - Room 12"),
+                new Confidence(0.67),
+                Instant.parse("2026-09-16T10:00:00Z")
+        );
+        alert.attachClip(SkeletonClip.stored("room-12/FE-20260910-0006.mp4", Instant.parse("2026-09-16T10:05:00Z")));
+
+        alertRepositoryAdapter.save(alert);
+        Alert reloaded = alertRepositoryAdapter.findByEventId(new EventId("FE-20260910-0006")).orElseThrow();
+
+        assertThat(reloaded.clip().orElseThrow().isDelivered()).isFalse();
     }
 
     @Test

@@ -8,12 +8,14 @@ import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.Confidence;
 import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.RoomRef;
+import com.bbfc.notification.core.domain.SkeletonClip;
 
 @Component
 public class AlertMapper {
 
     // converts domain type to entity for DB calls
     public AlertEntity toEntity(Alert alert){
+        SkeletonClip clip = alert.clip().orElse(null);
         AlertEntity parsedAlertEntity = new AlertEntity(
                 alert.eventId().eventId(),
                 alert.room().roomId(),
@@ -30,7 +32,11 @@ public class AlertMapper {
                 alert.nextEscalationAt().orElse(null),
                 alert.dispatchMessageId().orElse(null),
                 alert.escalationMessageIds().toArray(new Long[0]),
-                alert.followUpMessageId().orElse(null)
+                alert.followUpMessageId().orElse(null),
+                clip == null ? null : clip.storageKey(),
+                clip == null ? null : clip.storedAt(),
+                clip == null ? null : clip.telegramFileId(),
+                clip == null ? null : clip.telegramMessageId()
         );
         return parsedAlertEntity;
     }
@@ -53,7 +59,12 @@ public class AlertMapper {
                 alertEntity.getNextEscalationAt(),
                 alertEntity.getDispatchMessageId(),
                 escalationMessageIds == null ? List.of() : List.of(escalationMessageIds),
-                alertEntity.getFollowUpMessageId()
+                alertEntity.getFollowUpMessageId(),
+                alertEntity.getClipStorageKey() == null ? null : new SkeletonClip(
+                        alertEntity.getClipStorageKey(),
+                        alertEntity.getClipStoredAt(),
+                        alertEntity.getClipTelegramFileId(),
+                        alertEntity.getClipMessageId())
         );
         return parsedAlertDomain;
     }

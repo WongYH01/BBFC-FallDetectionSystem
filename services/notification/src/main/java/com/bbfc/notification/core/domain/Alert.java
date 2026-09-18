@@ -22,6 +22,7 @@ public final class Alert {
     private Long dispatchMessageId;
     private final List<Long> escalationMessageIds = new ArrayList<>();
     private Long followUpMessageId;
+    private SkeletonClip clip;
 
     private Alert(EventId eventId, RoomRef roomRef, Confidence confidence, Instant createdAt) {
         this.eventId = eventId;
@@ -50,7 +51,8 @@ public final class Alert {
             Instant nextEscalationAt,
             Long dispatchMessageId,
             List<Long> escalationMessageIds,
-            Long followUpMessageId) {
+            Long followUpMessageId,
+            SkeletonClip clip) {
         Alert alert = new Alert(eventId, roomRef, confidence, createdAt);
         alert.alertState = alertState;
         alert.acknowledgedBy = acknowledgedBy;
@@ -63,6 +65,7 @@ public final class Alert {
         alert.dispatchMessageId = dispatchMessageId;
         alert.escalationMessageIds.addAll(escalationMessageIds);
         alert.followUpMessageId = followUpMessageId;
+        alert.clip = clip;
         return alert;
     }
 
@@ -119,7 +122,26 @@ public final class Alert {
         this.followUpMessageId = messageId;
     }
 
-    /** Every message this alert has produced, in send order — the set to close out on acknowledgement. */
+    public void attachClip(SkeletonClip clip) {
+        if (this.clip != null) {
+            throw new ClipAlreadyAttachedException(eventId);
+        }
+        this.clip = clip;
+    }
+
+    public void recordClipDelivery(String telegramFileId, long messageId) {
+        if (this.clip == null) {
+            throw new IllegalStateException("No clip attached for " + eventId.eventId());
+        }
+        this.clip = this.clip.delivered(telegramFileId, messageId);
+    }
+
+    /**
+     * Every message this alert has produced, in send order — the set to close out on acknowledgement.
+     *
+     * <p>Deliberately excludes the clip message: closing edits message text, which Telegram
+     * rejects on a media message.
+     */
     public List<Long> messageIds() {
         List<Long> ids = new ArrayList<>();
         if (dispatchMessageId != null) {
@@ -171,6 +193,10 @@ public final class Alert {
 
     public Optional<Long> followUpMessageId() {
         return Optional.ofNullable(followUpMessageId);
+    }
+
+    public Optional<SkeletonClip> clip() {
+        return Optional.ofNullable(clip);
     }
 
     public Instant createdAt() {

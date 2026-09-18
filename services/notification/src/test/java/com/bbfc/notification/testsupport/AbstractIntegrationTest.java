@@ -21,9 +21,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         // Closed port: anything that tries to call out fails fast instead of hanging.
         "telegram.base-url=http://127.0.0.1:1",
         "telegram.message-template=Fall in {roomName} at {time}, confidence {confidence} (Ref {eventId})",
+        "supabase.storage.url=http://127.0.0.1:1",
+        "supabase.storage.service-key=test-key",
         // Both background triggers off — tests drive the scheduler and the handler directly.
         "telegram.polling-enabled=false",
-        "alerting.escalation.scheduler-enabled=false"
+        "alerting.escalation.scheduler-enabled=false",
+        "supabase.storage.ensure-bucket=false"
 })
 @Testcontainers
 public abstract class AbstractIntegrationTest {

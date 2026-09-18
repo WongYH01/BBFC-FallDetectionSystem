@@ -2,15 +2,27 @@ package com.bbfc.notification.out.telegram;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+
+import java.util.Optional;
 
 import com.bbfc.notification.config.TelegramConfig;
 import com.bbfc.notification.core.domain.CallbackCommand;
 import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.Outcome;
+import com.bbfc.notification.core.port.ClipContent;
+import com.bbfc.notification.core.port.ClipDelivery;
 import com.bbfc.notification.core.port.NotificationChannel;
+import com.bbfc.notification.out.telegram.dto.SendAnimationResponse;
 import com.bbfc.notification.out.telegram.dto.SendMessageResponse;
 import com.bbfc.notification.out.telegram.dto.TelegramRequests.AnswerCallbackQuery;
 import com.bbfc.notification.out.telegram.dto.TelegramRequests.EditMessageText;
@@ -83,6 +95,59 @@ public class TelegramBotClient implements NotificationChannel {
         } catch (RuntimeException e) {
             log.warn("Could not answer callback {}", callbackQueryId, e);
         }
+    }
+
+    @Override
+    public Optional<ClipDelivery> sendClipReply(long replyToMessageId, ClipContent content) {
+        try {
+            MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+            parts.add("chat_id", chatGroupId);
+            parts.add("reply_to_message_id", String.valueOf(replyToMessageId));
+            // The alert message may have been deleted; the clip is still worth sending.
+            parts.add("allow_sending_without_reply", "true");
+            parts.add("animation", new HttpEntity<>(asResource(content), mp4PartHeaders()));
+
+            SendAnimationResponse response = restClient.post()
+                    .uri("/sendAnimation")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(parts)
+                    .retrieve()
+                    .body(SendAnimationResponse.class);
+
+            if (response == null || !response.ok() || response.result() == null) {
+                log.warn("Telegram rejected sendAnimation: {}", response);
+                return Optional.empty();
+            }
+            return Optional.of(new ClipDelivery(response.result().fileId(), response.result().messageId()));
+        } catch (RuntimeException e) {
+            log.warn("Could not send clip as a reply to message {}", replyToMessageId, e);
+            return Optional.empty();
+        }
+    }
+
+    private static HttpHeaders mp4PartHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.valueOf("video/mp4"));
+        return headers;
+    }
+
+    /**
+     * Both overrides matter. Without a filename Telegram reads the part as a file id rather than
+     * an upload, and without an explicit length the converter probes it by reading the stream —
+     * which would consume the clip before it is ever written.
+     */
+    private static Resource asResource(ClipContent content) {
+        return new InputStreamResource(content::open) {
+            @Override
+            public String getFilename() {
+                return content.filename();
+            }
+
+            @Override
+            public long contentLength() {
+                return content.sizeBytes();
+            }
+        };
     }
 
     private long send(String message, ReplyMarkup replyMarkup) {

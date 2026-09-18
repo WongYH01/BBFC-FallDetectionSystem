@@ -1,6 +1,9 @@
 package com.bbfc.notification.out.telegram;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aMultipart;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.binaryEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
@@ -15,7 +18,11 @@ import org.springframework.web.client.RestClient;
 
 import com.bbfc.notification.config.TelegramConfig;
 import com.bbfc.notification.core.domain.EventId;
+import com.bbfc.notification.core.port.ClipContent;
+import com.bbfc.notification.core.port.ClipDelivery;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
+
+import java.util.Optional;
 
 class TelegramBotClientTest {
 
@@ -31,12 +38,73 @@ class TelegramBotClientTest {
     @BeforeEach
     void setUp() {
         TelegramConfig properties =
-                new TelegramConfig("test-token", "12345", wireMock.baseUrl(), "{roomName}");
+                new TelegramConfig("test-token", "12345", wireMock.baseUrl(), "{roomName}", "{roomName}");
         client = new TelegramBotClient(properties, RestClient.builder());
     }
 
     private static String okWithMessageId(long messageId) {
         return "{\"ok\":true,\"result\":{\"message_id\":" + messageId + "}}";
+    }
+
+    private static final String ANIMATION = "/bottest-token/sendAnimation";
+    private static final byte[] CLIP_BYTES = "fake-mp4-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+    private static ClipContent clip() {
+        return new ClipContent("FE-1.mp4", "video/mp4", CLIP_BYTES.length,
+                () -> new java.io.ByteArrayInputStream(CLIP_BYTES));
+    }
+
+    @Test
+    void sendsTheClipAsAnAnimationReplyingToTheAlertMessage() {
+        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"ok\":true,\"result\":{\"message_id\":601,"
+                        + "\"animation\":{\"file_id\":\"file-abc\"}}}")));
+
+        Optional<ClipDelivery> delivery = client.sendClipReply(501L, clip());
+
+        assertThat(delivery).isPresent();
+        assertThat(delivery.orElseThrow().fileId()).isEqualTo("file-abc");
+        assertThat(delivery.orElseThrow().messageId()).isEqualTo(601L);
+
+        wireMock.verify(postRequestedFor(urlEqualTo(ANIMATION))
+                .withRequestBodyPart(aMultipart().withName("chat_id")
+                        .withBody(equalTo("12345")).build())
+                .withRequestBodyPart(aMultipart().withName("reply_to_message_id")
+                        .withBody(equalTo("501")).build())
+                .withRequestBodyPart(aMultipart().withName("allow_sending_without_reply")
+                        .withBody(equalTo("true")).build())
+                .withRequestBodyPart(aMultipart().withName("animation")
+                        .withBody(binaryEqualTo(CLIP_BYTES)).build()));
+    }
+
+    @Test
+    void fallsBackToTheDocumentFileIdWhenTelegramDoesNotTreatItAsAnAnimation() {
+        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"ok\":true,\"result\":{\"message_id\":602,"
+                        + "\"document\":{\"file_id\":\"doc-xyz\"}}}")));
+
+        assertThat(client.sendClipReply(501L, clip()).orElseThrow().fileId()).isEqualTo("doc-xyz");
+    }
+
+    @Test
+    void clipSendIsBestEffortAndReturnsEmptyOnFailure() {
+        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse().withStatus(500)));
+
+        assertThat(client.sendClipReply(501L, clip())).isEmpty();
+    }
+
+    @Test
+    void clipSendReturnsEmptyWhenTelegramReportsNotOk() {
+        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"ok\":false}")));
+
+        assertThat(client.sendClipReply(501L, clip())).isEmpty();
     }
 
     @Test

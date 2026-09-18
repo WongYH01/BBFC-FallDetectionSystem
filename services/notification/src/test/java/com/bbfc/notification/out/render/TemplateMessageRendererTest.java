@@ -17,7 +17,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TemplateMessageRendererTest {
     private static TelegramConfig properties(String template) {
-        return new TelegramConfig("token", "chat-id", "http://localhost", template);
+        return new TelegramConfig("token", "chat-id", "http://localhost", template,
+                "<b>Ref {eventId}</b> · {roomName}\n{handledLine}\n<b>Was this a genuine fall?</b>");
     }
 
     @Test

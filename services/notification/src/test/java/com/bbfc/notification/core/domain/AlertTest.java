@@ -199,4 +199,62 @@ class AlertTest {
         }
     }
 
+    @Nested
+    @DisplayName("clip attachment")
+    class ClipAttachment {
+
+        private static final Instant STORED_AT = Instant.parse("2026-09-16T10:05:00Z");
+
+        @Test
+        void newAlertHasNoClip() {
+            assertThat(alert.clip()).isEmpty();
+        }
+
+        @Test
+        void attachingAClipRecordsItAsStoredButNotDelivered() {
+            alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", STORED_AT));
+
+            assertThat(alert.clip()).isPresent();
+            assertThat(alert.clip().orElseThrow().storageKey()).isEqualTo("room-12/FE-1.mp4");
+            assertThat(alert.clip().orElseThrow().isDelivered()).isFalse();
+        }
+
+        @Test
+        void clipCanOnlyBeAttachedOnce() {
+            alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", STORED_AT));
+
+            assertThatThrownBy(() -> alert.attachClip(SkeletonClip.stored("room-12/other.mp4", STORED_AT)))
+                    .isInstanceOf(ClipAlreadyAttachedException.class);
+        }
+
+        @Test
+        void recordingDeliveryKeepsTheStoredCopyAndAddsTheTelegramIds() {
+            alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", STORED_AT));
+
+            alert.recordClipDelivery("file-abc", 601L);
+
+            SkeletonClip clip = alert.clip().orElseThrow();
+            assertThat(clip.storageKey()).isEqualTo("room-12/FE-1.mp4");
+            assertThat(clip.storedAt()).isEqualTo(STORED_AT);
+            assertThat(clip.telegramFileId()).isEqualTo("file-abc");
+            assertThat(clip.telegramMessageId()).isEqualTo(601L);
+            assertThat(clip.isDelivered()).isTrue();
+        }
+
+        @Test
+        void deliveryCannotBeRecordedWithoutAClip() {
+            assertThatThrownBy(() -> alert.recordClipDelivery("file-abc", 601L))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void clipMessageIsNotPartOfTheEditTargetSet() {
+            alert.recordDispatchMessage(501L);
+            alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", STORED_AT));
+            alert.recordClipDelivery("file-abc", 601L);
+
+            assertThat(alert.messageIds()).containsExactly(501L);
+        }
+    }
+
 }
