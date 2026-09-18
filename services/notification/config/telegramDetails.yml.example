@@ -2,3 +2,8 @@ telegram:
   bot-token: BOT_TOKEN_HERE
   chat-group-id: CHAT_ID_HERE
   message-template: TEMPLATE_HERE
+
+alerting:
+  escalation:
+    window: <NUMBER_OF_SECONDS_HERE>s
+    max-repeats: NUMBER_OF_REPEATS_HERE

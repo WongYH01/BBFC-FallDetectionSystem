@@ -32,9 +32,16 @@ public class AlertEntity {
     private Outcome outcome;
     private Instant outcomeAt;
 
+    private int repeatCount;
+    private Instant nextEscalationAt;
+
     protected AlertEntity(){}
 
-    public AlertEntity(String eventId, String roomId, String roomName, double confidence, AlertState state, String acknowledgedBy, Instant acknowledgedAt, Instant escalatedAt, Outcome outcome, Instant outcomeAt) {
+    public AlertEntity(
+            String eventId, String roomId, String roomName,
+            double confidence, AlertState state, String acknowledgedBy,
+            Instant acknowledgedAt, Instant escalatedAt, Outcome outcome,
+            Instant outcomeAt, int repeatCount, Instant nextEscalationAt) {
         this.eventId = eventId;
         this.roomId = roomId;
         this.roomName = roomName;
@@ -45,6 +52,8 @@ public class AlertEntity {
         this.escalatedAt = escalatedAt;
         this.outcome = outcome;
         this.outcomeAt = outcomeAt;
+        this.repeatCount = repeatCount;
+        this.nextEscalationAt = nextEscalationAt;
     }
 
     public String getEventId() {
@@ -85,6 +94,14 @@ public class AlertEntity {
 
     public Instant getOutcomeAt() {
         return outcomeAt;
+    }
+
+    public int getRepeatCount() {
+        return repeatCount;
+    }
+
+    public Instant getNextEscalationAt() {
+        return nextEscalationAt;
     }
 }
 

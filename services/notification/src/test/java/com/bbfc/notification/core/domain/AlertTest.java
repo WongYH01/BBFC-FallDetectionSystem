@@ -94,4 +94,45 @@ class AlertTest {
         }
 
     }
+
+    @Nested
+    @DisplayName("escalation scheduling")
+    class EscalationScheduling {
+
+        @Test
+        void newAlertHasNoEscalationScheduledByDefault() {
+            assertThat(alert.nextEscalationAt()).isEmpty();
+            assertThat(alert.repeatCount()).isZero();
+        }
+
+        @Test
+        void scheduleNextEscalationSetsTheDueTime() {
+            Instant due = Instant.parse("2026-09-16T10:01:00Z");
+            alert.scheduleNextEscalation(due);
+            assertThat(alert.nextEscalationAt()).contains(due);
+        }
+
+        @Test
+        void escalateIncrementsRepeatCount() {
+            alert.escalate(Instant.now());
+            alert.escalate(Instant.now());
+            assertThat(alert.repeatCount()).isEqualTo(2);
+        }
+
+        @Test
+        void exhaustClearsNextEscalation() {
+            alert.scheduleNextEscalation(Instant.now());
+            alert.escalate(Instant.now());
+            alert.exhaust(Instant.now());
+            assertThat(alert.nextEscalationAt()).isEmpty();
+        }
+
+        @Test
+        void acknowledgeClearsNextEscalation() {
+            alert.scheduleNextEscalation(Instant.now());
+            alert.acknowledge("nurse-1", Instant.now());
+            assertThat(alert.nextEscalationAt()).isEmpty();
+        }
+    }
+
 }

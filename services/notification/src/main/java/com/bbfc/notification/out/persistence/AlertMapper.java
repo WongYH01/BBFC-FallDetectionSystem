@@ -22,7 +22,9 @@ public class AlertMapper {
                 alert.acknowledgedAt().orElse(null),
                 alert.escalatedAt().orElse(null),
                 alert.outcome().orElse(null),
-                alert.outcomeAt().orElse(null)
+                alert.outcomeAt().orElse(null),
+                alert.repeatCount(),
+                alert.nextEscalationAt().orElse(null)
         );
         return parsedAlertEntity;
     }
@@ -38,7 +40,9 @@ public class AlertMapper {
                 alertEntity.getAcknowledgedAt(),
                 alertEntity.getEscalatedAt(),
                 alertEntity.getOutcome(),
-                alertEntity.getOutcomeAt()
+                alertEntity.getOutcomeAt(),
+                alertEntity.getRepeatCount(),
+                alertEntity.getNextEscalationAt()
         );
         return parsedAlertDomain;
     }

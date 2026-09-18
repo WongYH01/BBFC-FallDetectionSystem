@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 
+import com.bbfc.notification.core.domain.*;
 import com.bbfc.notification.core.port.MessageRenderer;
 import com.bbfc.notification.core.port.NotificationChannel;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,10 +20,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.bbfc.notification.core.domain.Alert;
-import com.bbfc.notification.core.domain.Confidence;
-import com.bbfc.notification.core.domain.EventId;
-import com.bbfc.notification.core.domain.RoomRef;
 import com.bbfc.notification.core.port.AlertRepository;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,6 +34,9 @@ class DedupAlertServiceTest {
     @Mock
     private MessageRenderer messageRenderer;
 
+    @Mock
+    private EscalationPolicy escalationPolicy;
+
     private final Clock clock = Clock.fixed(Instant.parse("2026-09-16T10:00:00Z"), ZoneOffset.UTC);
 
     private DedupAlertService dedupAlertService;
@@ -46,7 +46,10 @@ class DedupAlertServiceTest {
 
     @BeforeEach
     void setUp() {
-        dedupAlertService = new DedupAlertService(alertRepository, notificationChannel, messageRenderer, clock);
+        dedupAlertService = new DedupAlertService(
+                alertRepository, notificationChannel,
+                escalationPolicy, messageRenderer,
+                clock);
         eventId = new EventId("FE-1");
         room = new RoomRef("room-12", "Block A - Room 12");
         confidence = new Confidence(0.67);
@@ -58,6 +61,7 @@ class DedupAlertServiceTest {
         given(alertRepository.findByEventId(eventId)).willReturn(Optional.empty());
         given(alertRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
         given(messageRenderer.render(any(), any())).willReturn("rendered message");
+        given(escalationPolicy.window()).willReturn(java.time.Duration.ofSeconds(60));
 
         DedupAlertService.Result result = dedupAlertService.handleAlert(eventId, room, confidence);
 

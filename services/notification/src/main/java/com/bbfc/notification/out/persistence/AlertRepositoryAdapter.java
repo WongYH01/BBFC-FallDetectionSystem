@@ -1,5 +1,7 @@
 package com.bbfc.notification.out.persistence;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.stereotype.Component;
@@ -30,5 +32,13 @@ public class AlertRepositoryAdapter implements AlertRepository {
         return alertJpaRepository.findById(eventId.eventId())
         .map(alertMapper::toDomain);
     }
-    
+
+    @Override
+    public List<Alert> findDueForEscalation(Instant now, int limit){
+        return alertJpaRepository.findDueForEscalation(now, limit).stream()
+                .map(alertMapper::toDomain)
+                .toList();
+    }
+
+
 }

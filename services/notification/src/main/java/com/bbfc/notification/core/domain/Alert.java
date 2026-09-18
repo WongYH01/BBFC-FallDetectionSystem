@@ -14,6 +14,8 @@ public final class Alert {
     private Instant escalatedAt;
     private Outcome outcome;
     private Instant outcomeAt;
+    private int repeatCount;
+    private Instant nextEscalationAt;
 
     private Alert(EventId eventId, RoomRef roomRef, Confidence confidence) {
         this.eventId = eventId;
@@ -26,7 +28,18 @@ public final class Alert {
         return new Alert(eventId, room, confidence);
     }
 
-    public static Alert load(EventId eventId, RoomRef roomRef, Confidence confidence,AlertState alertState, String acknowledgedBy, Instant acknowledgedAt,Instant escalatedAt, Outcome outcome, Instant outcomeAt) {
+    public static Alert load(
+            EventId eventId,
+            RoomRef roomRef,
+            Confidence confidence,
+            AlertState alertState,
+            String acknowledgedBy,
+            Instant acknowledgedAt,
+            Instant escalatedAt,
+            Outcome outcome,
+            Instant outcomeAt,
+            int repeatCount,
+            Instant nextEscalationAt) {
         Alert alert = new Alert(eventId, roomRef, confidence);
         alert.alertState = alertState;
         alert.acknowledgedBy = acknowledgedBy;
@@ -34,6 +47,8 @@ public final class Alert {
         alert.escalatedAt = escalatedAt;
         alert.outcome = outcome;
         alert.outcomeAt = outcomeAt;
+        alert.repeatCount = repeatCount;
+        alert.nextEscalationAt = nextEscalationAt;
         return alert;
     }
 
@@ -49,15 +64,22 @@ public final class Alert {
         transitionTo(AlertState.ACKNOWLEDGED);
         this.acknowledgedBy = by;
         this.acknowledgedAt = at;
+        this.nextEscalationAt = null;
     }
 
     public void escalate(Instant at){
         transitionTo(AlertState.ESCALATING);
         this.escalatedAt = at;
+        this.repeatCount++;
     }
 
     public void exhaust(Instant at){
         transitionTo(AlertState.EXHAUSTED);
+        this.nextEscalationAt = null;
+    }
+
+    public void scheduleNextEscalation(Instant at){
+        this.nextEscalationAt = at;
     }
 
     public void triage(Outcome outcome, Instant at) {
@@ -89,6 +111,14 @@ public final class Alert {
 
     public Optional<Instant> outcomeAt() {
         return Optional.ofNullable(outcomeAt);
+    }
+
+    public int repeatCount(){
+        return repeatCount;
+    }
+
+    public Optional<Instant> nextEscalationAt() {
+        return Optional.ofNullable(nextEscalationAt);
     }
 
     public EventId eventId() {
