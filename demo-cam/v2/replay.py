@@ -29,14 +29,19 @@ from fallcore import extract as fextract
 from fallcore.stream import EnsembleStream
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Same default as detector.py: the calibrated pair (one backbone + the head
+# fitted on this room). Keep them in step -- the offline replay is what makes a
+# live number believable.
 DEFAULT_CKPTS = [
     str(REPO_ROOT / "runs" / "checkpoints" / n)
-    for n in ("final_yolo26n.pt", "hn10_full_hn_s99.pt",
-              "hn10_coords_hn_s99.pt", "omnifall_cs_full.pt")
+    for n in ("augnone_ms_coords_hn_s99.pt",)
 ]
+DEFAULT_HEAD = str(REPO_ROOT / "runs" / "checkpoints"
+                   / "probe_augnone_ms_coords_hn_s99.npz")
+POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
 _DEFAULT_ONNX = [
-    Path(__file__).resolve().parents[1] / "models" / "yolo26n-pose.onnx",
-    REPO_ROOT / "runs" / "onnx" / "yolo26n-pose-imgsz640.onnx",
+    Path(__file__).resolve().parents[1] / "models" / f"{POSE_SCALE}-pose.onnx",
+    REPO_ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz640.onnx",
 ]
 
 
@@ -68,10 +73,19 @@ def main() -> int:
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--checkpoints", default=os.pathsep.join(DEFAULT_CKPTS),
                     help="os.pathsep-separated model paths")
+    ap.add_argument("--head", default=DEFAULT_HEAD,
+                    help="logistic head fitted on this room's clips, or '' for "
+                         "the checkpoint's own classifier")
     ap.add_argument("--buffer", type=int, default=4)
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--clear-below", type=float, default=0.2)
     ap.add_argument("--clear-windows", type=int, default=2)
+    ap.add_argument("--frame-stride", type=int,
+                    default=int(os.environ.get(
+                        "STREAM_FRAME_STRIDE",
+                        str(fcfg.PREPROCESS.frame_stride))),
+                    help="rows between window samples; 2 matches ~30 fps "
+                         "training data, use 1 when the pose rate is ~15 fps")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--json", action="store_true", help="print machine-readable events")
     args = ap.parse_args()
@@ -90,17 +104,23 @@ def main() -> int:
     if missing:
         print("missing checkpoint(s): " + ", ".join(missing))
         return 1
+    head = Path(args.head) if args.head else None
+    if head is not None and not head.exists():
+        print(f"missing head: {head}")
+        return 1
     if str(args.pose).endswith(".onnx") and not Path(args.pose).exists():
         print(f"pose model not found: {args.pose}")
         return 1
 
     pose = YOLO(str(args.pose))
-    ensemble = EnsembleStream(ckpts, buffer=args.buffer,
+    ensemble = EnsembleStream(ckpts, heads=[head], buffer=args.buffer,
                               threshold=args.threshold,
                               clear_below=args.clear_below,
-                              clear_windows=args.clear_windows, device="cpu")
+                              clear_windows=args.clear_windows,
+                              frame_stride=args.frame_stride, device="cpu")
     print(f"pose {Path(args.pose).name} | models {ensemble.classifier.names} | "
-          f"buffer {args.buffer} | threshold {args.threshold}")
+          f"buffer {args.buffer} | threshold {args.threshold} | "
+          f"frame_stride {args.frame_stride}")
     print(f"file {video.name} @ {fps:.1f} fps")
 
     events, frame_no = [], 0

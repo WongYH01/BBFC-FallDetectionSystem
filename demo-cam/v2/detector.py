@@ -1,20 +1,32 @@
-"""Server-side pose tracking + rolling ensemble fall detection (v2).
+"""Server-side pose tracking + rolling calibrated-model fall detection (v2).
 
 Pulls frames from the MediaMTX RTSP feed, runs the frozen YOLO26-pose backbone
 (the ONNX export by default, so ONNX Runtime carries it on CPU), tracks people
 with ByteTrack, and draws the skeleton for the Flask `/video_feed` MJPEG route.
 
-The fall alarm is the four-checkpoint ensemble from notebook 17: the largest
-person's keypoints fill a 4 s ring buffer, every second a window is scored by
-the four checkpoints (`final_yolo26n`, `hn10_full_hn_s99`, `hn10_coords_hn_s99`,
-`omnifall_cs_full`), their mean goes into a rolling buffer of `BUFFER_LEN`
-windows, and the alarm latches when the rolling mean clears `FALL_THRESHOLD`.
-`fallcore.stream` owns that arithmetic; this file is the camera plumbing.
+The fall alarm is the **calibrated model**: the largest person's keypoints fill a
+4 s ring buffer, every second a window is scored by the backbone and read by a
+logistic head fitted on THIS room's own clips
+(`probe_augnone_ms_coords_hn_s99.npz`, scripts/fit_calibration_head.py), and that
+score goes into a rolling buffer of `BUFFER_LEN` windows; the alarm latches when
+the rolling mean clears `FALL_THRESHOLD`. `fallcore.stream` owns the arithmetic
+and `fallcore.calibrate` owns the head. Held-out estimate on the camera's five
+subjects: window AUC 0.992, rolling F1 0.967 (1 false alarm, 1 miss), against
+0.836 for the best single checkpoint and 0.853 for the four-model ensemble.
+
+`CALIBRATION_HEAD` empty falls back to the checkpoint's own classifier;
+`ENSEMBLE_CKPTS` takes an os.pathsep list to run several checkpoints (the old
+four-model mean) instead. Either way the head is bound to one backbone, and a
+mismatch raises rather than returning confident nonsense.
+
+The pose scale is part of that pairing: the head was fitted on yolo26n keypoints
+at 640, so `POSE_SCALE=yolo26n` is the configuration that was measured. Another
+scale feeds the head an input distribution it has never seen.
 
 The v1 box width/height rule still runs, but only as a debug overlay
-(`FALL_DEBUG=1`) -- the ensemble decides.
+(`FALL_DEBUG=1`) -- the calibrated model decides.
 
-Quick-and-dirty: models load once at import, single shared generator.
+Quick-and-dirty: models load once at import, one shared capture thread.
 """
 import os
 import queue
@@ -37,6 +49,7 @@ from ultralytics import YOLO
 
 from fallcore import config as fcfg
 from fallcore import extract as fextract
+from fallcore import onnxpose as fonnx
 from fallcore.stream import EnsembleStream
 
 # ---------------------------------------------------------------------------
@@ -52,17 +65,30 @@ STREAM_PATH     = os.environ.get("STREAM_PATH", "cam")
 # demo-cam/models copy or the one under the repo's runs/onnx/. Ultralytics
 # dispatches .onnx to ONNX Runtime when it is installed; set POSE_MODEL to a
 # .pt path to fall back to torch.
+#
+# POSE_SCALE selects the backbone size (yolo26n/s/m/...). It is yolo26n because
+# that is the scale the keypoint caches were extracted at and the scale the
+# fitted head was trained against -- at any other scale the head reads an input
+# distribution it never saw (and m costs ~83 ms/frame here against ~23 for n).
+IMGSZ      = int(os.environ.get("POSE_IMGSZ", "640"))  # drop to 480 if slow
+POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
+
+# ONNX Runtime thread pool for the pose graph. Ultralytics builds its session
+# with no session options at all -- every core, spinning between operators --
+# which burns CPU without buying wall time: measured at 640 raw, 8.4 ms wall /
+# 70 ms CPU per frame at the default, against 16.4 / 33 with two threads. 0
+# leaves ONNX Runtime's default. Only applies to the ONNX backend.
+POSE_THREADS = int(os.environ.get("POSE_THREADS", "2"))
+
 REPO_ROOT  = Path(__file__).resolve().parents[2]
 MODELS_DIR = Path(__file__).resolve().parents[1] / "models"
 _POSE_CANDIDATES = [
-    MODELS_DIR / "yolo26n-pose.onnx",
-    REPO_ROOT / "runs" / "onnx" / "yolo26n-pose-imgsz640.onnx",
+    MODELS_DIR / f"{POSE_SCALE}-pose.onnx",
+    REPO_ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz{IMGSZ}.onnx",
 ]
 MODEL_NAME = os.environ.get("POSE_MODEL") or str(
     next((p for p in _POSE_CANDIDATES if p.exists()), _POSE_CANDIDATES[0]))
 POSE_BACKEND = "onnx" if str(MODEL_NAME).lower().endswith(".onnx") else "torch"
-
-IMGSZ      = int(os.environ.get("POSE_IMGSZ", "640"))  # drop to 480 if slow
 
 VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "videos")
 RECORD_FPS = int(os.environ.get("RECORD_FPS", "10"))  # nominal, not measured
@@ -73,26 +99,90 @@ RECORD_FPS = int(os.environ.get("RECORD_FPS", "10"))  # nominal, not measured
 SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 
 # ---------------------------------------------------------------------------
-# The ensemble decision (fallcore.stream owns the arithmetic)
+# The fall decision: one backbone + a head fitted on this room
+# (fallcore.stream owns the arithmetic, fallcore.calibrate the head)
 #
-# The four checkpoints notebook 17 measured, all zero-shot on this camera. The
-# window is the training sampling: 60 rows 2 frames apart = 4 s. One new window
-# per second; the rolling mean over the last BUFFER_LEN windows is the decision
-# score, latched with hysteresis so it does not strobe as the buffer slides
-# past the event.
+# The window is the training sampling: 60 rows 2 frames apart = 4 s. One new
+# window per second; the rolling mean over the last BUFFER_LEN windows is the
+# decision score, latched with hysteresis so it does not strobe as the buffer
+# slides past the event.
+#
+# The default is the calibrated pair: `augnone_ms_coords_hn_s99.pt` (multi-scale
+# pose augmentation, `coords` features, CAUCAFall hard negatives) with the
+# logistic head fitted on this camera's own 60 clips. Held out on the camera's
+# five subjects that is rolling F1 0.967 against 0.836 for the best single
+# checkpoint and 0.853 for the four-model ensemble, at one forward pass per
+# window instead of four (~0.7 ms against ~3.2 ms, and 6 MB of weights against
+# 29). The head needs the room's own falls and ADLs -- it is a commissioning
+# artefact, not a pretrained one, so a new room needs one fitted there.
 # ---------------------------------------------------------------------------
-_CKPT_NAMES = ("final_yolo26n.pt", "hn10_full_hn_s99.pt",
-               "hn10_coords_hn_s99.pt", "omnifall_cs_full.pt")
+_CKPT_NAMES = ("augnone_ms_coords_hn_s99.pt",)
+_HEAD_NAME = "probe_augnone_ms_coords_hn_s99.npz"
 _CKPT_DIR = REPO_ROOT / "runs" / "checkpoints"
 ENSEMBLE_CKPTS = (
     [Path(p) for p in os.environ["ENSEMBLE_CKPTS"].split(os.pathsep)]
     if os.environ.get("ENSEMBLE_CKPTS")
     else [_CKPT_DIR / n for n in _CKPT_NAMES]
 )
+# One head per checkpoint, or None to use that checkpoint's own classifier.
+# `CALIBRATION_HEAD=` (empty) in .env runs the checkpoints uncalibrated;
+# pointing it at another room's probe is refused rather than silently applied,
+# because a head is a function of one backbone's embedding space.
+_CALIBRATION_HEAD = os.environ.get("CALIBRATION_HEAD",
+                                   str(_CKPT_DIR / _HEAD_NAME)).strip()
+HEADS = ([Path(_CALIBRATION_HEAD)] if _CALIBRATION_HEAD else
+         [None] * len(ENSEMBLE_CKPTS))
 BUFFER_LEN         = int(os.environ.get("BUFFER_LEN", "4"))
 FALL_THRESHOLD     = float(os.environ.get("FALL_THRESHOLD", "0.5"))
 FALL_CLEAR_BELOW   = float(os.environ.get("FALL_CLEAR_BELOW", "0.2"))
 FALL_CLEAR_WINDOWS = int(os.environ.get("FALL_CLEAR_WINDOWS", "2"))
+
+# Frames between the rows that build a classifier window. The default 2 matches
+# training (every 2nd frame of ~30 fps = ~67 ms per row). If the pose backbone
+# cannot run at ~30 fps and the loader is effectively decimating for you (the
+# yolo26m CPU path runs ~14 fps, ~73 ms per row), set this to 1: the rows then
+# arrive at roughly the trained spacing and a 60-row window still covers ~4 s.
+# Leaving it at 2 there would stretch the window to ~9 s of wall clock.
+STREAM_FRAME_STRIDE = int(os.environ.get(
+    "STREAM_FRAME_STRIDE", str(fcfg.PREPROCESS.frame_stride)))
+
+# Decode-and-score one frame in every VID_STRIDE. Ultralytics' loader still
+# grabs every frame and only fully retrieves every Nth, so this buys CPU back
+# WITHOUT making us a slow reader -- which is what MediaMTX calls a client that
+# stops pulling frames off its socket. At 2, rows arrive at ~15 fps, exactly the
+# spacing the caches were built with (every 2nd frame of 30 fps, ~67 ms), so
+# pair it with STREAM_FRAME_STRIDE=1. Measured: posing every 2nd frame
+# reproduces the full-rate rows bit-for-bit.
+VID_STRIDE = max(1, int(os.environ.get("VID_STRIDE", "1")))
+
+# Device for the pose model. Empty means "pick from the model": an ONNX export
+# runs on ONNX Runtime, and asking Ultralytics for CUDA while the session is on
+# CPU fails with "no data transfer registered for copying tensors from
+# Device:[DeviceType:1] to Device:[DeviceType:0]" on the first frame. A GPU
+# deployment with an onnxruntime-gpu build sets POSE_DEVICE=cuda.
+POSE_DEVICE = os.environ.get("POSE_DEVICE", "")
+
+# JPEG quality for the MJPEG fan-out. OpenCV defaults to 95, which is a lot of
+# bytes and a lot of encode time for a monitoring feed nobody is pixel-peeping.
+JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "75"))
+
+# No decoded frame for this long means the stream is wedged rather than slow.
+# The Pi's hardware encoder dying mid-stream (the ioctl(VIDIOC_QBUF) failures in
+# the MediaMTX journal) looks exactly like this from here: the TCP connection
+# stays up and nothing ever arrives again. Tear it down and reconnect instead of
+# waiting forever on a socket that will never speak.
+STREAM_STALL_SEC = float(os.environ.get("STREAM_STALL_SEC", "8"))
+
+# The same guard for a connection that comes up but never delivers a first
+# frame. Longer, because this window also covers Ultralytics building its
+# predictor and the RTSP handshake itself.
+STREAM_CONNECT_SEC = float(os.environ.get("STREAM_CONNECT_SEC",
+                                          str(STREAM_STALL_SEC * 3)))
+
+# Seconds after the last viewer leaves before the RTSP connection is dropped.
+# Ignored while fall clips are enabled or a recording is running -- detection is
+# the point, a browser being open is not.
+IDLE_STOP_SEC = float(os.environ.get("IDLE_STOP_SEC", "30"))
 
 # Debug only: the v1 box width/height ratio, drawn next to each box when
 # FALL_DEBUG=1. It no longer drives the alarm.
@@ -406,37 +496,297 @@ if MODEL_NAME.lower().endswith(".onnx") and not Path(MODEL_NAME).exists():
         f"pose model {MODEL_NAME!r} not found. Export it with notebook 18 "
         f"(runs/onnx/) or copy it into demo-cam/models/, or set POSE_MODEL.")
 _missing = [str(p) for p in ENSEMBLE_CKPTS if not Path(p).exists()]
+_missing += [str(h) for h in HEADS if h is not None and not Path(h).exists()]
 if _missing:
     raise FileNotFoundError(
-        "ensemble checkpoint(s) missing: " + ", ".join(_missing) +
-        ". Run notebooks 02/10/14 to produce them, or set ENSEMBLE_CKPTS.")
+        "model file(s) missing: " + ", ".join(_missing) +
+        ". Run notebooks 02/10 to produce the checkpoints and "
+        "scripts/fit_calibration_head.py for the head, or set "
+        "ENSEMBLE_CKPTS / CALIBRATION_HEAD (empty = uncalibrated).")
+
+if POSE_BACKEND == "onnx" and POSE_THREADS > 0:
+    # Before the session exists: Ultralytics builds it with no session options,
+    # so this is the only seam that sets the thread pool.
+    fonnx.use_tuned_sessions(threads=POSE_THREADS, spinning=False)
 
 model = YOLO(MODEL_NAME)
-_stream = EnsembleStream(ENSEMBLE_CKPTS, buffer=BUFFER_LEN,
+_stream = EnsembleStream(ENSEMBLE_CKPTS, heads=HEADS, buffer=BUFFER_LEN,
                          threshold=FALL_THRESHOLD, clear_below=FALL_CLEAR_BELOW,
-                         clear_windows=FALL_CLEAR_WINDOWS, device="cpu")
-print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}), "
-      f"ensemble {_stream.classifier.names} buffer={BUFFER_LEN} "
-      f"threshold={FALL_THRESHOLD}")
+                         clear_windows=FALL_CLEAR_WINDOWS,
+                         frame_stride=STREAM_FRAME_STRIDE, device="cpu")
+print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}, "
+      f"threads={POSE_THREADS or 'ORT default'}), decision "
+      f"{_stream.classifier.names} buffer={BUFFER_LEN} "
+      f"threshold={FALL_THRESHOLD} frame_stride={STREAM_FRAME_STRIDE} "
+      f"vid_stride={VID_STRIDE}")
+
+
+# ---------------------------------------------------------------------------
+# One reader, many viewers
+#
+# This used to be a plain generator, and Flask called it once per request. Every
+# browser that opened /video_feed therefore got its OWN model.track(), which
+# opened its OWN RTSP connection to MediaMTX and ran its OWN pose loop here. Two
+# tabs meant two readers on the Pi and two inference loops fighting over the same
+# CPU -- and a loop that is busy doing inference is a loop that is not draining
+# its socket, which is precisely what MediaMTX reports as
+#
+#     [RTSP] [session 1497e783] reader is too slow, discarding 469 frames
+#
+# Worse, closing the tab did not reliably end the session. Ultralytics' stream
+# loader keeps a background grab thread and a cv2.VideoCapture alive per source,
+# and dropping the generator does not stop either, so orphaned readers piled up
+# on the Pi across page reloads.
+#
+# So: exactly one capture+inference thread per process, started on first use,
+# publishing the newest annotated JPEG into a single slot. Viewers subscribe to
+# that slot. N viewers now cost one RTSP session and one inference pass, and a
+# viewer on a slow link simply misses frames instead of applying back-pressure
+# all the way to the camera.
+#
+# Ported from the v1 fix (`fix stream getting frozen issue`, Fall-Recording),
+# keeping v2's own decisions: ONNX/torch pose via `model.track`, the four-model
+# ensemble, the recorder, the metrics tap and the fall-clip buffer.
+# ---------------------------------------------------------------------------
+_frame_cv = threading.Condition()
+_latest_jpeg: "bytes | None" = None
+_latest_seq = 0
+
+_worker_lock = threading.Lock()
+_worker: "threading.Thread | None" = None
+_worker_stop = threading.Event()
+
+_viewer_lock = threading.Lock()
+_viewers = 0
+_viewers_zero_since: "float | None" = None
+
+_stream_lock = threading.Lock()
+_stream_stats = {"connected": False, "frames": 0, "reconnects": 0,
+                 "last_frame": 0.0, "started": 0.0, "fps": 0.0,
+                 "last_error": None}
+
+_BOUNDARY = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
+
+
+def get_stream_status() -> dict:
+    """What the single reader is doing — surfaced at /stream/status.
+
+    Worth watching `reconnects` specifically: a number that climbs while you are
+    not touching anything is the Pi dropping the path, not this end losing
+    interest. `age_sec` over STREAM_STALL_SEC means the watchdog is about to
+    force a reconnect.
+    """
+    with _stream_lock:
+        s = dict(_stream_stats)
+    last = s.pop("last_frame")
+    s.pop("started")
+    s["fps"] = round(s["fps"], 1)
+    s["age_sec"] = round(time.time() - last, 1) if last else None
+    s["viewers"] = _viewers
+    s["running"] = _worker is not None and _worker.is_alive()
+    s["vid_stride"] = VID_STRIDE
+    s["frame_stride"] = STREAM_FRAME_STRIDE
+    s["jpeg_quality"] = JPEG_QUALITY
+    s["pose_backend"] = POSE_BACKEND
+    s["stall_sec"] = STREAM_STALL_SEC
+    s["idle_stop_sec"] = IDLE_STOP_SEC
+    return s
+
+
+def _close_stream(stream) -> None:
+    """End one track() run and, more importantly, its RTSP session.
+
+    This is the part that leaked. Ultralytics holds the VideoCapture inside
+    predictor.dataset and runs a grab thread beside it; garbage-collecting the
+    generator stops neither, so MediaMTX kept counting a closed tab as a live
+    reader. close() on the dataset is what actually releases the capture and
+    ends the session on the Pi.
+
+    Safe to call from another thread while the capture loop is mid-iteration:
+    the loader's threads stop, __next__ raises StopIteration, and the loop falls
+    through to its reconnect. That is exactly how the stall watchdog interrupts
+    a wedged stream.
+    """
+    dataset = getattr(getattr(model, "predictor", None), "dataset", None)
+    for obj, what in ((dataset, "dataset"), (stream, "generator")):
+        close = getattr(obj, "close", None)
+        if close is None:
+            continue
+        try:
+            close()
+        except Exception as exc:  # noqa: BLE001 - teardown must never raise
+            print(f"[detector] closing the {what} failed: {exc!r}")
+
+
+def _publish(jpeg: bytes) -> None:
+    """Hand a finished frame to every waiting viewer and record the tick."""
+    global _latest_jpeg, _latest_seq
+    now = time.time()
+    with _frame_cv:
+        _latest_jpeg = jpeg
+        _latest_seq += 1
+        _frame_cv.notify_all()
+    with _stream_lock:
+        prev = _stream_stats["last_frame"]
+        _stream_stats["connected"] = True
+        _stream_stats["frames"] += 1
+        _stream_stats["last_frame"] = now
+        _stream_stats["last_error"] = None
+        dt = now - prev if prev else 0
+        if dt > 0:
+            inst = 1.0 / dt
+            # Smoothed, because the raw number jitters too much to read.
+            _stream_stats["fps"] = (0.9 * _stream_stats["fps"] + 0.1 * inst
+                                    if _stream_stats["fps"] else inst)
 
 
 def gen_frames():
-    """Yield annotated JPEG frames as multipart MJPEG.
+    """Yield the shared annotated feed to one HTTP client as multipart MJPEG.
 
-    Uses Ultralytics streaming inference with the built-in ByteTrack tracker
-    (`track(..., stream=True)`) so people keep stable IDs across frames.
-    On any stream error we pause briefly and reconnect — good enough for a demo.
+    Subscribes to the capture worker rather than opening a connection of its
+    own, so the second and third viewer are free. Each viewer always waits for
+    the NEWEST frame and never queues: a browser that cannot keep up drops to a
+    lower frame rate on its own and the camera never hears about it.
+    """
+    _viewer_enter()
+    seen = -1
+    try:
+        while True:
+            with _frame_cv:
+                # The timeout is what keeps this responsive while the stream is
+                # down: no frames for 5s just means loop round and check again,
+                # holding the HTTP response open so the <img> does not error
+                # out and need a page reload once the camera comes back.
+                if not _frame_cv.wait_for(lambda: _latest_seq != seen,
+                                          timeout=5.0):
+                    continue
+                seen = _latest_seq
+                jpeg = _latest_jpeg
+            if jpeg:
+                yield _BOUNDARY + jpeg + b"\r\n"
+    finally:
+        # GeneratorExit lands here when the tab closes. The worker deliberately
+        # keeps running: other tabs may still be watching, and the watchdog
+        # hangs up on its own once the last viewer has been gone a while.
+        _viewer_leave()
+
+
+def _viewer_enter() -> None:
+    global _viewers, _viewers_zero_since
+    with _viewer_lock:
+        _viewers += 1
+        _viewers_zero_since = None
+    start_worker()
+
+
+def _viewer_leave() -> None:
+    global _viewers, _viewers_zero_since
+    with _viewer_lock:
+        _viewers = max(0, _viewers - 1)
+        if _viewers == 0:
+            _viewers_zero_since = time.time()
+
+
+def start_worker() -> None:
+    """Start the shared capture thread unless it is already running."""
+    global _worker
+    with _worker_lock:
+        if _worker is not None and _worker.is_alive():
+            return
+        _worker_stop.clear()
+        _worker = threading.Thread(target=_capture_loop,
+                                   name="detector-capture", daemon=True)
+        _worker.start()
+        threading.Thread(target=_watchdog_loop,
+                         name="detector-watchdog", daemon=True).start()
+
+
+def stop_worker(timeout: float = 10.0) -> None:
+    """Stop the capture thread and close the RTSP session behind it."""
+    global _worker
+    with _worker_lock:
+        worker, _worker = _worker, None
+        if worker is None:
+            return
+        _worker_stop.set()
+    # Unblocks the loop if it is sitting inside __next__ waiting on a socket.
+    _close_stream(None)
+    worker.join(timeout)
+
+
+def _watchdog_loop() -> None:
+    """Force a reconnect on a wedged stream; hang up once nobody is watching."""
+    while not _worker_stop.wait(1.0):
+        now = time.time()
+        with _stream_lock:
+            connected = _stream_stats["connected"]
+            last = _stream_stats["last_frame"]
+            started = _stream_stats["started"]
+
+        # Two shapes of the same failure, both of which otherwise block in
+        # __next__ forever while the page freezes on its last frame -- the worst
+        # possible failure for a fall monitor, because a frozen feed looks
+        # exactly like a quiet room.
+        stalled = connected and last and now - last > STREAM_STALL_SEC
+        never_started = (not connected and started
+                         and now - started > STREAM_CONNECT_SEC)
+        if stalled or never_started:
+            waited = now - (last if stalled else started)
+            print(f"[detector] "
+                  f"{'no frames' if stalled else 'no first frame'} for "
+                  f"{waited:.0f}s -- forcing a reconnect")
+            with _stream_lock:
+                _stream_stats["connected"] = False
+                _stream_stats["started"] = now   # do not re-fire while it retries
+            _close_stream(None)
+            continue
+
+        # Never hang up on work in progress.
+        if fall_recorder.ENABLED or _recording:
+            continue
+        zero_since = _viewers_zero_since
+        if _viewers == 0 and zero_since and now - zero_since > IDLE_STOP_SEC:
+            print("[detector] no viewers -- dropping the RTSP connection")
+            threading.Thread(target=stop_worker, daemon=True).start()
+            return
+
+
+def _capture_loop() -> None:
+    """The one thread that talks to the camera. Reconnects on anything.
+
+    Everything v2 needs per frame happens here: the pose pass, the tap the
+    metrics run reads, the ensemble decision, the drawings, the recorder queues
+    and the publish into the viewer slot. This thread is also what drains the
+    RTSP socket, so nothing slow may run inline -- the encoders stay on their own
+    worker threads (see _writer_worker).
     """
     global _write_queue, _write_queue_skel
     rtsp_url = _rtsp_url()
-    while True:
+    device = POSE_DEVICE or ("cpu" if POSE_BACKEND == "onnx" else None)
+    track_kwargs = {"device": device} if device else {}
+    jpeg_params = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+    first = True
+
+    while not _worker_stop.is_set():
+        if not first:
+            with _stream_lock:
+                _stream_stats["reconnects"] += 1
+        first = False
+        stream = None
+        with _stream_lock:
+            _stream_stats["started"] = time.time()
         try:
-            for result in model.track(
+            stream = model.track(
                 source=rtsp_url,
                 stream=True,
                 imgsz=IMGSZ,
+                vid_stride=VID_STRIDE,
                 verbose=False,
-            ):
+                **track_kwargs,
+            )
+            for result in stream:
+                if _worker_stop.is_set():
+                    break
                 # Cheap identity check after the first frame. model.track()
                 # builds a fresh predictor and dataset on every reconnect and
                 # the tap does not survive one, so re-installing has to be
@@ -541,7 +891,7 @@ def gen_frames():
                                 _write_queue.put(combined)
                                 _write_queue_skel.put(skel)
 
-                ok, buf = cv2.imencode(".jpg", frame)
+                ok, buf = cv2.imencode(".jpg", frame, jpeg_params)
 
                 # Scored after the encode so latency_ms covers the whole path
                 # from frame arrival to a frame ready to send, and outside the
@@ -556,17 +906,23 @@ def gen_frames():
 
                 if not ok:
                     continue
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                    + buf.tobytes()
-                    + b"\r\n"
-                )
+                _publish(buf.tobytes())
+
         except Exception as exc:  # noqa: BLE001 - keep the feed alive
+            with _stream_lock:
+                _stream_stats["last_error"] = f"{type(exc).__name__}: {exc}"
             print(f"[detector] stream error: {exc!r}; reconnecting in 2s...")
             # The buffered keypoints span the outage, so the next window must
             # be built from fresh frames. A latched alarm survives -- an
             # outage is not evidence that the person got up.
             with _fall_lock:
                 _stream.reset_buffer()
-            time.sleep(2)
+        finally:
+            with _stream_lock:
+                _stream_stats["connected"] = False
+            _close_stream(stream)
+
+        # Doubles as the reconnect backoff: returns immediately once stopped.
+        _worker_stop.wait(2.0)
+
+    print("[detector] capture loop stopped")

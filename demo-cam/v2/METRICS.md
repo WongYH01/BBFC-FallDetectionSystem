@@ -15,7 +15,7 @@ request, so nothing is measured if nobody is watching the feed.
 
 ---
 
-## v2 additions: the ensemble decision
+## v2 additions: the calibrated-model decision
 
 Each CSV row now carries the fall decision as it stood on that frame:
 
@@ -27,7 +27,8 @@ Each CSV row now carries the fall decision as it stood on that frame:
 | `alarm` | the latched decision on that frame (1 = alarm engaged) |
 
 These repeat between window scores, which is correct: the decision only changes
-once per second. The summary gains a `fall_detection` block (ensemble members,
+once per second. The summary gains a `fall_detection` block (model members -
+now one backbone plus its room-fitted head,
 buffer length, threshold, windows scored, mean probabilities, frames alarmed)
 and the provenance block now names the **pose backend** (onnx or torch) and the
 exact checkpoint paths — a pt run and an ONNX run are not comparable, and two

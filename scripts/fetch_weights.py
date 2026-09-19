@@ -1,18 +1,26 @@
 """Fetch the deployment weights from the project's Hugging Face model repo.
 
-The five files the stream deployment needs -- the ONNX pose backbone and the
-four fall classifier checkpoints -- are artifacts, not source, so they are not
-in git. This script downloads them from
+The three files the stream deployment needs -- the ONNX pose backbone and the
+calibrated fall model (one transformer checkpoint plus the logistic head fitted
+on the deployment camera) -- are artifacts, not source, so they are not in git.
+This script downloads them from
 
     junyuu/fall-detection-bbfc
 
 into exactly the paths `demo-cam/v2` resolves by default:
 
     demo-cam/models/yolo26n-pose.onnx
-    runs/checkpoints/final_yolo26n.pt
-    runs/checkpoints/hn10_full_hn_s99.pt
-    runs/checkpoints/hn10_coords_hn_s99.pt
-    runs/checkpoints/omnifall_cs_full.pt
+    runs/checkpoints/augnone_ms_coords_hn_s99.pt
+    runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz
+
+The checkpoint without its head still runs (`CALIBRATION_HEAD=` empty) and
+scores lower; the head without its checkpoint is refused. The four
+single-corpus checkpoints the ensemble used to average
+(`final_yolo26n`, `hn10_full_hn_s99`, `hn10_coords_hn_s99`,
+`omnifall_cs_full`) were removed from the release when the calibrated model
+replaced them -- they remain downloadable from the previous revision
+`06984e6ecf35a46a92d220f803dd1ce4850f4e14` if the old ensemble is ever wanted
+back.
 
 Every file is checked against the SHA-256 recorded in the model card; a mismatch
 is an error, not a warning. The revision is pinned to the commit those hashes
@@ -50,27 +58,22 @@ from pathlib import Path
 TOKEN_VAR = "FALL_WEIGHTS_TOKEN"
 
 DEFAULT_REPO = "junyuu/fall-detection-bbfc"
-#: The commit the SHA-256s below were taken from. Move it forward only when the
-#: model card in the repo is updated with new hashes.
-DEFAULT_REVISION = "06984e6ecf35a46a92d220f803dd1ce4850f4e14"
+#: The commit the SHA-256s below were taken from -- the one that replaced the
+#: four single-corpus checkpoints with the calibrated pair. Move it forward only
+#: when the model card in the repo is updated with new hashes.
+DEFAULT_REVISION = "09c33ba5d37d0bf38ab3f42d4be631732daaef00"
 
 #: remote path in the repo -> (path under the target root, sha256)
 FILES = {
     "pose/yolo26n-pose-imgsz640.onnx": (
         "demo-cam/models/yolo26n-pose.onnx",
         "ea6b37044a5784d279dd93837b2fd89aaa2e0db720ad0928b4de2d78ad1f5c57"),
-    "checkpoints/final_yolo26n.pt": (
-        "runs/checkpoints/final_yolo26n.pt",
-        "c046520aa4dba9d2472a0ae8c821a816f4df802948755f91a00144e7960d9ee7"),
-    "checkpoints/hn10_full_hn_s99.pt": (
-        "runs/checkpoints/hn10_full_hn_s99.pt",
-        "19408d2d8845fc5a0382d3822363a2e18ced4f03f9a1022fba457ee0beabdb35"),
-    "checkpoints/hn10_coords_hn_s99.pt": (
-        "runs/checkpoints/hn10_coords_hn_s99.pt",
-        "c25300c0723efa5a541ffca4f69db64da05145d42aed4a3eabff48870aeba63c"),
-    "checkpoints/omnifall_cs_full.pt": (
-        "runs/checkpoints/omnifall_cs_full.pt",
-        "588320a91722500df43c74dc3a949cdd90708f5989ebf2ff7eae2acdea945ae5"),
+    "checkpoints/augnone_ms_coords_hn_s99.pt": (
+        "runs/checkpoints/augnone_ms_coords_hn_s99.pt",
+        "b65d8a35668a57a711660eeb2d584db34bd0cbc1f1aedbc78134b3a290f7d36a"),
+    "checkpoints/probe_augnone_ms_coords_hn_s99.npz": (
+        "runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz",
+        "6a97474e133b019ccbdf82c048251a33c7cb4dbcb8ae36d3520e0ac55cd0dc92"),
 }
 
 
