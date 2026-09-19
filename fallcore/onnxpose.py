@@ -74,6 +74,87 @@ def load_onnx_model(path: str | Path):
     return YOLO(str(path))
 
 
+def load_pose(scale: str = "yolo26n", imgsz: int = 640):
+    """The exported ONNX pose model, ready to hand to `extract_video`/`run_pose`.
+
+    Same interface as `extract.load_pose_model`, so it drops into
+    `infer.analyse(..., pose_model=...)` unchanged; the only difference is the
+    backend. Note the input size is baked into the graph -- the `imgsz` here
+    must be the one the file was exported at, which is why the size is in the
+    filename.
+
+    Measured on a Ryzen 7 9800X3D, CPU, single frame (`runs/metrics/
+    pose_onnx_cheap.csv`): 640 fp32 ~10 ms raw / ~12 ms through the Ultralytics
+    pipeline, 480 ~6/7 ms, 320 ~3/4 ms; dynamically quantized INT8 builds are
+    *slower* than fp32 here (24 ms at 640) and move keypoints, so do not use
+    them as a speedup. Threads scale the raw forward roughly linearly below the
+    core count, and `session.intra_op.allow_spinning=0` removes the busy-wait
+    for ~nothing in latency when the box has other work to do.
+    """
+    path = onnx_path(scale, imgsz)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} does not exist -- export it first: "
+            f"onnxpose.export_pose('{scale}', {imgsz}) (notebook 18 exports "
+            f"640/480/320)")
+    return load_onnx_model(path)
+
+
+def tuned_session_options(threads: int | None = None,
+                          spinning: bool = False):
+    """ONNX Runtime session options with the thread count made explicit.
+
+    Measured at 640 fp32 on a 16-core Ryzen 7 9800X3D, raw graph, per frame:
+
+        threads      wall ms   cpu ms   cores busy
+        default(8)      8.4     69.7      8.3
+        4              10.3      ~         ~
+        2              16.4     32.6      2.0
+        1              31.5      ~         ~
+
+    CPU time per frame is roughly constant and even *falls* with fewer threads
+    (the busy-wait between ops is what costs: 70 ms at default, 33 ms at two
+    threads), while wall time is that work divided across the pool. So the knob
+    is a budget, not a speedup: pick the smallest pool that still meets your
+    per-frame deadline and leave the rest of the box alone. `spinning=False`
+    stops the busy-wait; it costs ~4 ms of latency at 640 and cuts CPU burn
+    (12.7 ms wall / 59 ms CPU against 8.4 / 70).
+    """
+    import onnxruntime as ort
+
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    if threads is not None:
+        so.intra_op_num_threads = int(threads)
+        so.inter_op_num_threads = 1          # one frame at a time is the use case
+    if not spinning:
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    return so
+
+
+def use_tuned_sessions(threads: int | None = None, spinning: bool = False) -> None:
+    """Make Ultralytics build ONNX sessions with `tuned_session_options`.
+
+    Ultralytics calls `onnxruntime.InferenceSession(weight, providers=...)` with
+    no session options (verified in 8.4.104, `nn/backends/onnx.py`), so an ONNX
+    pose model in the demo grabs every core for every frame. Wrapping the
+    constructor is the only seam it offers; call this before loading the model.
+    Idempotent -- wrapping twice does not stack.
+    """
+    import onnxruntime as ort
+
+    if getattr(ort.InferenceSession, "_bbfc_tuned", False):
+        return
+    original = ort.InferenceSession
+
+    def patched(path, sess_options=None, **kwargs):
+        so = sess_options or tuned_session_options(threads, spinning)
+        return original(path, sess_options=so, **kwargs)
+
+    patched._bbfc_tuned = True
+    ort.InferenceSession = patched
+
+
 def session_summary(path: str | Path) -> dict:
     """Providers, I/O signature and file size of an ONNX graph, for the record."""
     import onnxruntime as ort

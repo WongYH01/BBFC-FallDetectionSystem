@@ -291,6 +291,14 @@ def take_window(
     window is the whole sequence and the "random" crop is a no-op. We reproduce
     that faithfully by default. Raising PREPROCESS.max_frames restores genuine
     random cropping at T=60, which is a documented departure, not the paper.
+
+    The padding is common -- 72% of training windows, 84% of Fall windows with a
+    median 30 of 60 rows frozen -- and a live stream never produces it, so it
+    was tested as a possible shortcut (`runs/metrics/padding_check.csv`). It is
+    not one: on unpadded test clips, a frozen tail and a tail held with realistic
+    estimator jitter score within 0.002 P(fall) of each other on all seven
+    checkpoints tried. What moves the score is the real movement that padding
+    replaces, not the stillness of the padding itself.
     """
     T = seq.shape[0]
 

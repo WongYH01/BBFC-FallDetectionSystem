@@ -97,26 +97,62 @@ class EnsembleClassifier:
     than assumed. Returns the per-model probabilities alongside the mean --
     the demo shows the mean, but the spread is what tells an operator whether
     the members agree.
+
+    `heads` optionally replaces the pretrained classifier of a checkpoint with a
+    room-fitted logistic head (`fallcore.calibrate.ProbeHead`), one entry per
+    checkpoint or `None` to keep the pretrained head there. A head consumes the
+    pooled embedding rather than the feature matrix, so the forward pass stops
+    one step earlier (`encoder(embed(x))` then `_pool`); that is the whole
+    difference, and it is the path `scripts/fit_calibration_head.py` measured.
     """
 
-    def __init__(self, checkpoints, device: str = "cpu"):
+    def __init__(self, checkpoints, device: str = "cpu", heads=None):
+        from .calibrate import ProbeHead
+
         self.device = device
+        if heads is None:
+            heads = [None] * len(checkpoints)
+        heads = list(heads)
+        if len(heads) != len(checkpoints):
+            raise ValueError(f"{len(heads)} heads for {len(checkpoints)} "
+                             f"checkpoints -- they are aligned one to one")
         self.names: list[str] = []
         self._members: list[tuple] = []
-        for path in checkpoints:
+        for path, head in zip(checkpoints, heads):
+            if isinstance(head, (str, Path)):
+                head = ProbeHead.load(head)
             model, model_cfg = load_checkpoint(path, device=device)[:2]
-            self._members.append((model, model_cfg))
-            self.names.append(Path(path).stem)
+            if head is not None and head.features != model_cfg.features:
+                raise ValueError(
+                    f"head calibrated for {head.features!r} features cannot "
+                    f"score {Path(path).name}, which reads {model_cfg.features!r}")
+            if (head is not None and head.backbone
+                    and Path(head.backbone).name != Path(path).name):
+                # A head is a function of one backbone's embedding space; on
+                # another checkpoint it is a random linear map that still
+                # returns confident-looking numbers.
+                raise ValueError(
+                    f"head was fitted for {Path(head.backbone).name}, not "
+                    f"{Path(path).name} -- refit it "
+                    f"(scripts/fit_calibration_head.py)")
+            self._members.append((model, model_cfg, head))
+            self.names.append(Path(path).stem + ("+head" if head is not None else ""))
+        self.heads = [m[2] for m in self._members]
 
     def proba(self, window: np.ndarray) -> tuple[float, list[float]]:
         """(mean P(fall), per-checkpoint probabilities) for one window."""
         probs = []
-        for model, model_cfg in self._members:
+        for model, model_cfg, head in self._members:
             x = build_features(window, model_cfg.features)
             with torch.no_grad():
-                logit = model(torch.from_numpy(np.ascontiguousarray(x))
-                              .float().unsqueeze(0).to(self.device))
-            probs.append(float(torch.sigmoid(logit).item()))
+                xt = (torch.from_numpy(np.ascontiguousarray(x))
+                      .float().unsqueeze(0).to(self.device))
+                if head is None:
+                    logit = model(xt)
+                    probs.append(float(torch.sigmoid(logit).item()))
+                else:
+                    pooled = model._pool(model.encoder(model.embed(xt)))
+                    probs.append(float(head.proba(pooled.cpu().numpy())[0]))
         return float(np.mean(probs)), probs
 
 
@@ -204,8 +240,10 @@ class EnsembleStream:
                  clear_below: float = 0.2, clear_windows: int = 2,
                  seq_len: int = cfg.FINAL_TRAIN.seq_len,
                  frame_stride: int = cfg.PREPROCESS.frame_stride,
-                 step: int = cfg.EVAL.sliding_stride, device: str = "cpu"):
-        self.classifier = EnsembleClassifier(checkpoints, device=device)
+                 step: int = cfg.EVAL.sliding_stride, device: str = "cpu",
+                 heads=None):
+        self.classifier = EnsembleClassifier(checkpoints, device=device,
+                                             heads=heads)
         self.buffer = KeypointBuffer(seq_len, frame_stride, step)
         self.decision = RollingDecision(buffer, threshold, clear_below,
                                         clear_windows)

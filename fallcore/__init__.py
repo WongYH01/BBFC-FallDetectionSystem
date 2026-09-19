@@ -12,12 +12,12 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
-from . import (bench, caucafall, config, data, evaluate, extract, gmdcsa,
-               infer, interpret, le2i, manifest, model, omnifall, rulebased,
-               train, viz)
+from . import (bench, calibrate, caucafall, config, data, decide, evaluate, extract,
+               gmdcsa, infer, interpret, le2i, manifest, model, omnifall, picam,
+               rulebased, stream, train, viz)
 
 __all__ = [
-    "bench", "caucafall", "config", "data", "evaluate", "extract",
-    "gmdcsa", "infer", "interpret", "le2i", "manifest", "model",
-    "omnifall", "rulebased", "train", "viz",
+    "bench", "calibrate", "caucafall", "config", "data", "decide", "evaluate",
+    "extract", "gmdcsa", "infer", "interpret", "le2i", "manifest", "model",
+    "omnifall", "picam", "rulebased", "stream", "train", "viz",
 ]

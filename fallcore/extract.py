@@ -77,6 +77,27 @@ def _largest_person(result) -> int | None:
     return int(np.argmax(areas))
 
 
+def pose_device(model, device: str = "cuda") -> str:
+    """The device to run an Ultralytics model on, given what that model is.
+
+    An ONNX file is executed by ONNX Runtime, and Ultralytics re-binds the input
+    tensor onto whatever `device` says -- so `cuda` for a CPU-only ONNX session
+    fails with "no data transfer registered for copying tensors from
+    Device:[DeviceType:1] to Device:[DeviceType:0]".
+
+    Always CPU for ONNX here, deliberately. Whether ONNX Runtime even advertises
+    `CUDAExecutionProvider` depends on import order in the same process (it is
+    absent if `onnxruntime` is imported before torch has loaded its CUDA DLLs),
+    so "is CUDA available" is not a safe question to ask at this point -- and
+    the exports in `runs/onnx/` are CPU graphs running on a CPU deployment. A
+    GPU deployment should pass the device explicitly.
+    """
+    names = [getattr(model, a, None) for a in ("ckpt", "ckpt_path", "model_name", "pt_path")]
+    if any(str(n).lower().endswith(".onnx") for n in names if n):
+        return "cpu"
+    return device
+
+
 def extract_video(
     model,
     video_path: "str | Path | Sequence[str | Path]",
@@ -106,7 +127,7 @@ def extract_video(
         source=source,
         stream=True,
         imgsz=imgsz,
-        device=device,
+        device=pose_device(model, device),
         verbose=False,
     )
 
