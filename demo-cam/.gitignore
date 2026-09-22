@@ -16,3 +16,6 @@ v1/fall_clips/
 v2/videos/
 v2/metrics/
 v2/fall_clips/
+
+# manual recorder clips (record.py)
+recordings/

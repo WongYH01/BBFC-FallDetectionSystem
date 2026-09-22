@@ -1,0 +1,10 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Metadata from `pip install -e .`
+*.egg-info/
+
+# Model weights: fetched from Hugging Face by scripts/fetch_weights.py
+*.pt
+*.npz

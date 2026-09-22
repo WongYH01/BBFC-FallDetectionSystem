@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi Recorder</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262a33; --text: #e6e8ec;
+    --muted: #8b919c; --accent: #4f8cff; --rec: #e5484d; --ok: #30a46c; --warn: #f5a524;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+           border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+          border-radius: 999px; font-size: 12px; background: #20242d; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.live .dot { background: var(--ok); }
+  .pill.bad .dot { background: var(--warn); }
+
+  #banner { margin: 16px 20px 0; padding: 12px 14px; border-radius: 8px;
+            background: #2a1f10; border: 1px solid #5c4210; color: #f3d9a4; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; padding: 20px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  .stage { position: relative; background: #000; border-radius: 10px; overflow: hidden;
+           aspect-ratio: 16 / 9; max-height: calc(100vh - 110px); width: 100%;
+           border: 1px solid var(--line); }
+  .stage video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #placeholder { position: absolute; inset: 0; display: flex; align-items: center;
+                 justify-content: center; color: var(--muted); }
+  #rec-badge { position: absolute; top: 12px; left: 12px; display: flex; align-items: center;
+               gap: 8px; padding: 5px 10px; border-radius: 6px; background: rgba(0,0,0,.6);
+               font-weight: 600; font-variant-numeric: tabular-nums; }
+  #rec-badge .dot { background: var(--rec); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .stage.recording { outline: 3px solid var(--rec); outline-offset: -3px; }
+
+  aside { display: flex; flex-direction: column; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .card h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+             color: var(--muted); margin: 0 0 12px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line);
+          background: #0f1115; color: var(--text); font: inherit; }
+  input:focus { outline: none; border-color: var(--accent); }
+  input:disabled { opacity: .6; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); border-radius: 8px;
+           background: #20242d; color: var(--text); padding: 6px 12px; }
+  #rec-btn { width: 100%; margin-top: 12px; padding: 12px; font-weight: 600; font-size: 15px;
+             border: none; background: var(--accent); color: #fff; }
+  #rec-btn.stop { background: var(--rec); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 10px; word-break: break-all; }
+  #msg { font-size: 13px; color: #ff9592; margin-top: 10px; }
+
+  #clips { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  #clips li { padding: 10px 12px; border-radius: 8px; background: #0f1115; border: 1px solid var(--line); }
+  .clip-top { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+  .clip-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .chip.recording, .chip.starting, .chip.stopping { background: #3b1719; color: #ff9592; }
+  .chip.saving { background: #2a2410; color: #f3d9a4; }
+  .chip.saved { background: #132d21; color: #7ee2a8; }
+  .chip.error { background: #3b1719; color: #ff9592; }
+  .clip-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .clip-err { font-size: 12px; color: #ff9592; margin-top: 4px; }
+  .empty { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pi camera recorder</h1>
+  <span class="pill" id="live-pill"><span class="dot"></span><span id="live-text">Connecting…</span></span>
+</header>
+
+<div id="banner" hidden><span id="banner-text"></span></div>
+
+<main>
+  <section>
+    <div class="stage" id="stage">
+      <video id="video" autoplay playsinline muted></video>
+      <div id="placeholder">Connecting to the camera…</div>
+      <div id="rec-badge" hidden><span class="dot"></span>REC <span id="rec-time">0:00</span></div>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card">
+      <h2>Record</h2>
+      <label for="name">Clip name</label>
+      <input id="name" placeholder="e.g. fall_01 (blank = timestamp)" autocomplete="off" spellcheck="false">
+      <button id="rec-btn" type="button" disabled>Start recording</button>
+      <div id="msg" hidden></div>
+      <div class="hint">Records the preview above. Keep this tab open until the clip
+        shows Saved. Clips go to<br>{{ out_dir }}</div>
+    </div>
+
+    <div class="card">
+      <h2>This session</h2>
+      <ul id="clips"><li class="empty">No clips yet.</li></ul>
+    </div>
+  </aside>
+</main>
+
+<script>
+  const WHEP_URL = {{ whep_url|tojson }};
+  const AUTH = {{ auth_header|tojson }};
+  const MAX_SEC = {{ max_sec|tojson }};
+
+  const $ = (id) => document.getElementById(id);
+  const video = $("video"), nameInput = $("name"), recBtn = $("rec-btn");
+
+  // ------------------------------------------------------------------ preview
+  let pc = null, retryTimer = null;
+
+  function setLive(text, cls) {
+    $("live-text").textContent = text;
+    $("live-pill").className = "pill" + (cls ? " " + cls : "");
+  }
+
+  function scheduleRetry(ms = 3000) {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, ms);
+  }
+
+  async function connect() {
+    clearTimeout(retryTimer);
+    if (pc) { pc.close(); pc = null; }
+    setLive("Connecting…", "");
+    const conn = new RTCPeerConnection();
+    pc = conn;
+    conn.addTransceiver("video", { direction: "recvonly" });
+    conn.ontrack = (e) => { if (e.track.kind === "video") video.srcObject = e.streams[0]; };
+    conn.oniceconnectionstatechange = () => {
+      if (conn !== pc) return;
+      const s = conn.iceConnectionState;
+      if (s === "connected" || s === "completed") {
+        setLive("Preview live", "live");
+        $("placeholder").hidden = true;
+      } else if (s === "disconnected") {
+        setLive("Preview interrupted…", "bad");
+      } else if (s === "failed" || s === "closed") {
+        setLive("Preview lost, reconnecting…", "bad");
+        $("placeholder").hidden = false;
+        scheduleRetry();
+      }
+    };
+    try {
+      const offer = await conn.createOffer();
+      await conn.setLocalDescription(offer);
+      const headers = { "Content-Type": "application/sdp" };
+      if (AUTH) headers["Authorization"] = AUTH;
+      const r = await fetch(WHEP_URL, { method: "POST", headers, body: offer.sdp });
+      if (!r.ok) throw new Error("WHEP " + r.status);
+      await conn.setRemoteDescription({ type: "answer", sdp: await r.text() });
+    } catch (err) {
+      if (conn !== pc) return;
+      setLive("Preview offline, retrying…", "bad");
+      $("placeholder").textContent = "Camera preview unavailable (" + err.message + "). Retrying…";
+      scheduleRetry();
+    }
+  }
+
+  // ---------------------------------------------------------------- recording
+  // MediaRecorder encodes the same WebRTC track the preview is playing, so the
+  // clip is what you see. Chrome/Edge 126+ can write MP4; older ones WebM.
+  const FORMATS = [["video/mp4;codecs=avc1", "mp4"], ["video/mp4", "mp4"],
+                   ["video/webm;codecs=vp9", "webm"], ["video/webm;codecs=vp8", "webm"],
+                   ["video/webm", "webm"]];
+  const FORMAT = window.MediaRecorder
+    ? FORMATS.find(([m]) => MediaRecorder.isTypeSupported(m)) || null : null;
+
+  let rec = null;       // {recorder, clip, t0} while recording
+  const clips = [];     // this session, newest first
+
+  function fmt(sec) {
+    sec = Math.max(0, sec | 0);
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  }
+
+  // fall_01 -> fall_02, so a series of takes only needs Enter between them.
+  function nextName(n) {
+    const m = n.match(/^(.*?)(\d+)$/);
+    return m ? m[1] + String(Number(m[2]) + 1).padStart(m[2].length, "0") : n;
+  }
+
+  function showMsg(text) {
+    $("msg").textContent = text || "";
+    $("msg").hidden = !text;
+  }
+
+  function previewLive() {
+    const s = video.srcObject;
+    return !!(pc && ["connected", "completed"].includes(pc.iceConnectionState) &&
+              s && s.getVideoTracks().some((t) => t.readyState === "live"));
+  }
+
+  const LABELS = { recording: "Recording", uploading: "Saving…", saved: "Saved", error: "Error" };
+
+  function renderClips() {
+    const ul = $("clips");
+    ul.replaceChildren();
+    if (!clips.length) {
+      const li = document.createElement("li");
+      li.className = "empty"; li.textContent = "No clips yet.";
+      ul.append(li);
+      return;
+    }
+    for (const c of clips) {
+      const li = document.createElement("li");
+      const top = document.createElement("div"); top.className = "clip-top";
+      const nm = document.createElement("span"); nm.className = "clip-name"; nm.textContent = c.name;
+      const chip = document.createElement("span");
+      chip.className = "chip " + (c.state === "uploading" ? "saving" : c.state);
+      chip.textContent = LABELS[c.state];
+      top.append(nm, chip);
+      li.append(top);
+      const meta = [];
+      if (c.state !== "recording") meta.push(fmt(c.seconds));
+      if (c.size_mb != null) meta.push(c.size_mb + " MB");
+      if (c.note) meta.push(c.note);
+      if (meta.length) {
+        const m = document.createElement("div"); m.className = "clip-meta";
+        m.textContent = meta.join(" · "); li.append(m);
+      }
+      if (c.error) {
+        const e = document.createElement("div"); e.className = "clip-err";
+        e.textContent = c.error; li.append(e);
+        if (c.retry) {
+          const b = document.createElement("button");
+          b.type = "button"; b.textContent = "Retry save"; b.style.marginTop = "6px";
+          b.addEventListener("click", c.retry);
+          li.append(b);
+        }
+      }
+      ul.append(li);
+    }
+  }
+
+  function tick() {
+    const active = !!rec;
+    if (active) {
+      const sec = (performance.now() - rec.t0) / 1000;
+      $("rec-time").textContent = fmt(sec);
+      if (sec >= MAX_SEC) stopRecording("Stopped at the " + fmt(MAX_SEC) + " limit.");
+    }
+    $("stage").classList.toggle("recording", !!rec);
+    $("rec-badge").hidden = !rec;
+    nameInput.disabled = !!rec;
+    recBtn.classList.toggle("stop", !!rec);
+    recBtn.textContent = rec ? "Stop recording" : "Start recording";
+    recBtn.disabled = !FORMAT || (!rec && !previewLive());
+  }
+
+  async function upload(clip, blob, name, ext) {
+    clip.state = "uploading"; clip.error = null; clip.retry = null;
+    renderClips();
+    const form = new FormData();
+    form.append("name", name);
+    form.append("ext", ext);
+    form.append("video", blob, "clip." + ext);
+    try {
+      const r = await fetch("/upload", { method: "POST", body: form });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+      clip.name = j.name; clip.size_mb = j.size_mb; clip.state = "saved";
+    } catch (err) {
+      clip.state = "error";
+      clip.error = "Not saved: " + err.message + " Is record.py still running?";
+      clip.retry = () => upload(clip, blob, name, ext);
+    }
+    renderClips();
+  }
+
+  function startRecording() {
+    showMsg("");
+    if (!previewLive()) { showMsg("Wait until the preview is live."); return; }
+    const [mimeType, ext] = FORMAT;
+    const used = nameInput.value.trim();
+    let recorder;
+    try {
+      recorder = new MediaRecorder(new MediaStream(video.srcObject.getVideoTracks()),
+                                   { mimeType, videoBitsPerSecond: 4000000 });
+    } catch (err) {
+      showMsg("Cannot record: " + err.message);
+      return;
+    }
+    const clip = { name: (used || "timestamp") + "." + ext, state: "recording",
+                   seconds: 0, size_mb: null, error: null, note: null, retry: null };
+    const chunks = [];
+    const t0 = performance.now();
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      // Stops on its own when the preview track ends (connection dropped).
+      if (rec && rec.recorder === recorder) {
+        rec = null;
+        clip.note = "Ended early: the preview connection dropped.";
+      }
+      clip.seconds = (performance.now() - t0) / 1000;
+      if (!chunks.length) {
+        clip.state = "error"; clip.error = "Nothing was recorded.";
+        renderClips();
+        return;
+      }
+      upload(clip, new Blob(chunks, { type: mimeType }), used, ext);
+    };
+    recorder.start(1000);
+    rec = { recorder, clip, t0 };
+    clips.unshift(clip);
+    nameInput.value = used ? nextName(used) : "";
+    renderClips();
+    tick();
+  }
+
+  function stopRecording(note) {
+    if (!rec) return;
+    const { recorder, clip } = rec;
+    rec = null;
+    if (note) clip.note = note;
+    recorder.stop();   // onstop uploads
+    tick();
+  }
+
+  function toggleRecording() {
+    if (rec) stopRecording(); else startRecording();
+  }
+
+  recBtn.addEventListener("click", toggleRecording);
+  nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") toggleRecording(); });
+  window.addEventListener("beforeunload", (e) => {
+    if (rec || clips.some((c) => c.state === "uploading")) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  if (!FORMAT) {
+    $("banner").hidden = false;
+    $("banner-text").textContent =
+      "This browser cannot record video (no MediaRecorder support). Use Chrome or Edge.";
+  }
+
+  connect();
+  tick();
+  setInterval(tick, 250);
+</script>
+</body>
+</html>
