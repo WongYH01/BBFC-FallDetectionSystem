@@ -1,0 +1,470 @@
+<!--
+  demo-tele bench. Three columns: edit the message, see it as Telegram would
+  render it, send it and watch what comes back.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>demo-tele · alert bench</title>
+<style>
+  :root {
+    --bg: #12151a; --panel: #191d24; --panel-2: #1f242c; --line: #2b323c;
+    --ink: #e6eaf0; --dim: #8f9bab; --accent: #4a9eff; --ok: #3ecf8e;
+    --warn: #f0a742; --bad: #ff6b6b; --mono: "Cascadia Code", Consolas, ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+           padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .3px; }
+  header .sp { flex: 1; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px;
+          background: var(--panel-2); border: 1px solid var(--line); color: var(--dim); }
+  .pill b { color: var(--ink); font-weight: 600; }
+  .pill.ok { border-color: #2c5a45; color: var(--ok); }
+  .pill.bad { border-color: #5a2c2c; color: var(--bad); }
+
+  main { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px;
+         background: var(--line); min-height: calc(100vh - 47px); }
+  section { background: var(--bg); padding: 16px; overflow-y: auto; max-height: calc(100vh - 47px); }
+  h2 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase;
+       letter-spacing: .8px; color: var(--dim); font-weight: 600; }
+  .hint { color: var(--dim); font-size: 12px; margin: 0 0 14px; }
+  fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+             margin: 0 0 14px; background: var(--panel); }
+  legend { padding: 0 6px; font-size: 11px; text-transform: uppercase;
+           letter-spacing: .8px; color: var(--dim); }
+  label { display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  input, select, textarea {
+    width: 100%; background: var(--panel-2); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font: inherit;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { font-family: var(--mono); font-size: 13px; resize: vertical; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  button { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+           border-radius: 6px; padding: 7px 13px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06121f;
+                   font-weight: 600; }
+  button.ghost { color: var(--dim); }
+  .btnrow { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+  /* Telegram-ish preview */
+  .phone { background: #0e1621; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .bubble { background: #182533; border-radius: 10px; padding: 10px 12px; max-width: 100%;
+            box-shadow: 0 1px 2px #0006; }
+  .bubble .body { white-space: normal; word-wrap: break-word; font-size: 14.5px; }
+  .bubble .body code, .bubble .body pre { font-family: var(--mono); background: #0e1621;
+            padding: 1px 4px; border-radius: 4px; }
+  .keys { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .key { flex: 1 1 45%; text-align: center; background: #22364a; border-radius: 7px;
+         padding: 8px 6px; font-size: 13px; color: #cfe3fa; cursor: default; }
+  .err { color: var(--bad); font-family: var(--mono); font-size: 12.5px;
+         white-space: pre-wrap; background: #2a1a1a; border: 1px solid #5a2c2c;
+         border-radius: 6px; padding: 10px; }
+  details.payload { margin-top: 12px; }
+  details.payload summary { cursor: pointer; color: var(--dim); font-size: 12px; }
+  details.payload pre { font-family: var(--mono); font-size: 11.5px; background: var(--panel);
+         border: 1px solid var(--line); border-radius: 6px; padding: 10px; overflow-x: auto; }
+
+  /* Activity */
+  .log { font-family: var(--mono); font-size: 12.5px; }
+  .log .e { display: flex; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .log .t { color: var(--dim); flex: none; }
+  .log .k { flex: none; width: 76px; font-size: 11px; text-transform: uppercase; }
+  .k-dispatch { color: var(--accent); } .k-escalation { color: var(--warn); }
+  .k-ack { color: var(--ok); } .k-false_alarm { color: var(--warn); }
+  .k-error { color: var(--bad); } .k-info { color: var(--dim); }
+  .chat { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+          border-bottom: 1px solid var(--line); font-size: 12.5px; }
+  .chat code { font-family: var(--mono); color: var(--accent); }
+  .chat .sp { flex: 1; }
+  .empty { color: var(--dim); font-size: 12.5px; font-style: italic; }
+  .alertcard { border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px;
+               margin-bottom: 8px; background: var(--panel); font-size: 12.5px; }
+  .alertcard .id { font-family: var(--mono); color: var(--accent); }
+  .alertcard.closed { opacity: .55; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; }
+    section { max-height: none; } }
+</style>
+
+<header>
+  <h1>demo-tele · alert bench</h1>
+  <span class="pill" id="bot">bot …</span>
+  <span class="pill" id="listener">listener …</span>
+  <button class="ghost" id="listen">Start listener</button>
+  <span class="sp"></span>
+  <label style="margin:0;display:flex;align-items:center;gap:6px;color:var(--ink)">
+    <input type="checkbox" id="dryrun" checked style="width:auto"> Dry run
+  </label>
+  <button class="ghost" id="reset">Clear state</button>
+</header>
+
+<main>
+  <!-- ---------------------------------------------------------------- -->
+  <section>
+    <h2>Message</h2>
+    <p class="hint">Edits render live. Save writes back to <code>alerts.yaml</code>.</p>
+
+    <fieldset>
+      <legend>Template</legend>
+      <label>Which template</label>
+      <select id="msgKey"></select>
+
+      <label>Label</label>
+      <input id="msgLabel">
+
+      <label>Parse mode</label>
+      <select id="msgParse">
+        <option value="HTML">HTML</option>
+        <option value="">Plain text</option>
+      </select>
+
+      <label>Text — Jinja2, variables under <code>event.</code></label>
+      <textarea id="msgText" rows="12"></textarea>
+
+      <label>Buttons — one per line, <code>Label | action</code> (ack, false_alarm)</label>
+      <textarea id="msgButtons" rows="3"></textarea>
+
+      <div class="btnrow">
+        <button class="primary" id="saveMsg">Save template</button>
+        <button id="newMsg">New template…</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Event</legend>
+      <label>Sample</label>
+      <select id="sampleKey"></select>
+      <label>Payload from the detector — edit to test your variables</label>
+      <textarea id="eventJson" rows="10"></textarea>
+      <label>Preview as escalation level</label>
+      <input id="escLevel" type="number" min="0" value="0">
+    </fieldset>
+  </section>
+
+  <!-- ---------------------------------------------------------------- -->
+  <section>
+    <h2>Preview</h2>
+    <p class="hint">What the staff group sees. Nothing is sent yet.</p>
+    <div id="preview"></div>
+
+    <fieldset style="margin-top:16px">
+      <legend>Send to</legend>
+      <label>Chat target</label>
+      <select id="targetKey"></select>
+      <div id="targetMeta" class="hint" style="margin:6px 0 0"></div>
+      <div class="btnrow">
+        <button class="primary" id="send">Send alert</button>
+        <button id="editTarget">Edit target…</button>
+      </div>
+      <p class="hint" style="margin:8px 0 0">
+        Sends the template open in the <b>Message</b> column — exactly what the
+        preview shows.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Dispatch</legend>
+      <div class="row">
+        <div>
+          <label>Escalate after (s)</label>
+          <input id="escSeconds" type="number" min="5">
+        </div>
+        <div>
+          <label>Max escalations</label>
+          <input id="maxEsc" type="number" min="0">
+        </div>
+      </div>
+      <div class="btnrow"><button id="saveDispatch">Save dispatch</button></div>
+    </fieldset>
+  </section>
+
+  <!-- ---------------------------------------------------------------- -->
+  <section>
+    <h2>Open alerts</h2>
+    <div id="alerts"><p class="empty">Nothing sent yet.</p></div>
+
+    <h2 style="margin-top:20px">Chats the bot can see</h2>
+    <p class="hint">Add the bot to your group, or type <code>/id</code> in it,
+      and it appears here with its chat id.</p>
+    <div id="chats"><p class="empty">None yet — start the listener with a live send.</p></div>
+
+    <h2 style="margin-top:20px">Activity</h2>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let STATE = {messages: {}, targets: {}, samples: [], dispatch: {}};
+let logSeq = 0;
+
+// --- helpers ---------------------------------------------------------------
+const buttonsToText = (bs) => (bs || []).map(b => `${b.text} | ${b.action}`).join("\n");
+const textToButtons = (t) => t.split("\n").map(l => l.trim()).filter(Boolean).map(line => {
+  const [text, action] = line.split("|").map(s => (s || "").trim());
+  return {text, action: action || "ack"};
+});
+const currentMessage = () => ({
+  label: $("msgLabel").value,
+  parse_mode: $("msgParse").value,
+  text: $("msgText").value,
+  buttons: textToButtons($("msgButtons").value),
+});
+function currentEvent() {
+  try { return JSON.parse($("eventJson").value); }
+  catch { return null; }
+}
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  return r.json();
+}
+const post = (path, body) => api(path, {
+  method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+});
+const put = (path, body) => api(path, {
+  method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)
+});
+
+// --- load ------------------------------------------------------------------
+async function loadState(keepSelection) {
+  const s = await api("/api/state");
+  STATE = s;
+
+  const msgSel = $("msgKey"), prev = msgSel.value;
+  msgSel.innerHTML = Object.entries(s.messages)
+    .map(([k, m]) => `<option value="${k}">${m.label || k}</option>`).join("");
+  if (keepSelection && s.messages[prev]) msgSel.value = prev;
+  loadMessage(msgSel.value);
+
+  const tSel = $("targetKey"), tPrev = tSel.value;
+  tSel.innerHTML = Object.entries(s.targets)
+    .map(([k, t]) => `<option value="${k}">${t.label || k}</option>`).join("");
+  tSel.value = (keepSelection && s.targets[tPrev]) ? tPrev : (s.dispatch.default_target || tSel.value);
+  showTarget();
+
+  const smpSel = $("sampleKey");
+  if (!smpSel.options.length) {
+    smpSel.innerHTML = s.samples
+      .map((e, i) => `<option value="${i}">${e.label || e.event_id}</option>`).join("");
+    loadSample(0);
+  }
+
+  $("escSeconds").value = s.dispatch.escalation_seconds;
+  $("maxEsc").value = s.dispatch.max_escalations;
+
+  const bot = $("bot");
+  bot.className = "pill " + (s.bot.username ? "ok" : (s.bot.configured ? "bad" : ""));
+  bot.innerHTML = s.bot.username
+    ? `bot <b>@${s.bot.username}</b>`
+    : (s.bot.configured ? `bot <b>unreachable</b> — ${s.bot.error || ""}` : "bot <b>no token</b>");
+  $("listener").innerHTML = `listener <b>${s.listener}</b>`;
+
+  renderChats(s.seen_chats);
+  renderAlerts(s.alerts);
+}
+
+function loadMessage(key) {
+  const m = STATE.messages[key] || {};
+  $("msgLabel").value = m.label || key;
+  $("msgParse").value = m.parse_mode || "";
+  $("msgText").value = m.text || "";
+  $("msgButtons").value = buttonsToText(m.buttons);
+  preview();
+}
+
+function loadSample(i) {
+  const e = STATE.samples[i];
+  if (!e) return;
+  const {label, ...event} = e;   // `label` is a picker nicety, not event data
+  $("eventJson").value = JSON.stringify(event, null, 2);
+  preview();
+}
+
+function showTarget() {
+  const t = STATE.targets[$("targetKey").value] || {};
+  // t.message is the fallback for callers with no editor (and for escalation to
+  // this target); a send from this page uses whatever template is open.
+  const bits = [`chat <code>${t.chat_id}</code>`, `default template <b>${t.message}</b>`];
+  if (t.escalate_to) bits.push(`escalates to <b>${t.escalate_to}</b>`);
+  if (t.message_thread_id) bits.push(`topic <b>${t.message_thread_id}</b>`);
+  $("targetMeta").innerHTML = bits.join(" · ");
+}
+
+// --- preview ---------------------------------------------------------------
+let previewTimer = null;
+function preview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(async () => {
+    const event = currentEvent();
+    if (!event) {
+      $("preview").innerHTML = `<div class="err">Event JSON does not parse.</div>`;
+      return;
+    }
+    const r = await post("/api/preview", {
+      message: currentMessage(), event, escalation_level: Number($("escLevel").value || 0)
+    });
+    if (!r.ok) {
+      $("preview").innerHTML = `<div class="err">${r.error}</div>`;
+      return;
+    }
+    const keys = r.buttons.map(b => `<div class="key">${b.text}</div>`).join("");
+    $("preview").innerHTML = `
+      <div class="phone">
+        <div class="bubble">
+          <div class="body">${r.html}</div>
+          ${keys ? `<div class="keys">${keys}</div>` : ""}
+        </div>
+      </div>
+      <details class="payload">
+        <summary>sendMessage payload</summary>
+        <pre>${JSON.stringify(r.payload, null, 2)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>
+      </details>`;
+  }, 150);
+}
+
+// --- activity --------------------------------------------------------------
+function renderAlerts(alerts) {
+  const box = $("alerts");
+  if (!alerts || !alerts.length) { box.innerHTML = `<p class="empty">Nothing sent yet.</p>`; return; }
+  box.innerHTML = alerts.map(a => `
+    <div class="alertcard ${a.closed ? "closed" : ""}">
+      <span class="id">${a.event_id}</span> → ${a.target}
+      · ${a.mode}${a.escalation_level ? ` · escalation ${a.escalation_level}` : ""}
+      <div style="margin-top:6px">
+        ${a.closed
+          ? `${a.outcome === "acknowledged" ? "✅" : "🚫"} ${a.outcome} by ${a.acked_by}`
+          : `<button onclick="tap('${a.event_id}','ack')">Tap acknowledge</button>
+             <button onclick="tap('${a.event_id}','false_alarm')">Tap false alarm</button>`}
+      </div>
+    </div>`).join("");
+}
+
+function renderChats(chats) {
+  const box = $("chats");
+  if (!chats || !chats.length) {
+    box.innerHTML = `<p class="empty">None yet — start the listener with a live send.</p>`;
+    return;
+  }
+  box.innerHTML = chats.map(c => `
+    <div class="chat">
+      <span>${c.title} <span style="color:var(--dim)">(${c.type}${c.is_forum ? ", forum" : ""})</span></span>
+      <span class="sp"></span>
+      <code>${c.id}</code>
+      <button onclick="navigator.clipboard.writeText('${c.id}')">Copy</button>
+    </div>`).join("");
+}
+
+async function tap(eventId, action) {
+  await post("/api/simulate-tap", {event_id: eventId, action});
+  pollLog();
+}
+
+// Re-entrancy guard. logSeq only advances after the await resolves, so a tap's
+// explicit poll racing the 1.5s interval would fetch the same `since` twice and
+// render every entry twice — which reads as the alert firing twice.
+let polling = false;
+async function pollLog() {
+  if (polling) return;
+  polling = true;
+  try {
+    await pollLogOnce();
+  } finally {
+    polling = false;
+  }
+}
+
+async function pollLogOnce() {
+  const r = await api(`/api/log?since=${logSeq}`);
+  for (const e of r.entries) {
+    logSeq = Math.max(logSeq, e.seq);
+    const div = document.createElement("div");
+    div.className = "e";
+    div.innerHTML = `<span class="t">${e.ts}</span>
+                     <span class="k k-${e.kind}">${e.kind}</span>
+                     <span>${e.text.replace(/</g, "&lt;")}</span>`;
+    $("log").prepend(div);
+  }
+  renderAlerts(r.alerts);
+  renderChats(r.seen_chats);
+  $("listener").innerHTML = `listener <b>${r.listener}</b>`;
+}
+
+// --- wiring ----------------------------------------------------------------
+$("msgKey").onchange = (e) => loadMessage(e.target.value);
+$("sampleKey").onchange = (e) => loadSample(Number(e.target.value));
+$("targetKey").onchange = showTarget;
+["msgText", "msgButtons", "msgParse", "eventJson", "escLevel"].forEach(
+  id => $(id).addEventListener("input", preview));
+
+$("saveMsg").onclick = async () => {
+  await put(`/api/messages/${$("msgKey").value}`, currentMessage());
+  loadState(true);
+};
+
+$("newMsg").onclick = async () => {
+  const key = prompt("Template key (lowercase, no spaces):");
+  if (!key) return;
+  await put(`/api/messages/${key.trim()}`, currentMessage());
+  await loadState(false);
+  $("msgKey").value = key.trim();
+  loadMessage(key.trim());
+};
+
+$("editTarget").onclick = async () => {
+  const key = $("targetKey").value;
+  const t = STATE.targets[key] || {};
+  const chat_id = prompt(
+    `Chat id for "${t.label || key}".\n\nGroups are negative (supergroups start -100).\n` +
+    `Add the bot to the group or type /id in it, then copy the id from the Chats panel.`,
+    t.chat_id || "");
+  if (chat_id === null) return;
+  const message = prompt("Which message template?", t.message || "standard");
+  if (message === null) return;
+  const thread = prompt("Forum topic id (blank for a normal group):", t.message_thread_id || "");
+  await put(`/api/targets/${key}`, {
+    label: t.label || key, chat_id, message,
+    escalate_to: t.escalate_to || "", message_thread_id: (thread || "").trim(),
+  });
+  loadState(true);
+};
+
+$("saveDispatch").onclick = async () => {
+  await put("/api/dispatch", {
+    default_target: $("targetKey").value,
+    escalation_seconds: Number($("escSeconds").value),
+    max_escalations: Number($("maxEsc").value),
+  });
+  loadState(true);
+};
+
+$("send").onclick = async () => {
+  const event = currentEvent();
+  if (!event) { alert("Event JSON does not parse."); return; }
+  const r = await post("/api/send", {
+    event, target: $("targetKey").value, dry_run: $("dryrun").checked,
+    message: currentMessage(),   // what the preview shows is what gets sent
+  });
+  if (!r.ok) alert(r.error);
+  pollLog();
+};
+
+// Starting the listener has to be possible without sending anything: finding a
+// group's chat id is what you need the listener FOR, so requiring a live send
+// first would be circular.
+$("listen").onclick = async () => {
+  const r = await post("/api/listen", {});
+  $("listener").innerHTML = `listener <b>${r.status}</b>`;
+  pollLog();
+};
+
+$("reset").onclick = async () => { await post("/api/reset", {}); logSeq = 0; $("log").innerHTML = ""; pollLog(); };
+
+loadState(false);
+setInterval(pollLog, 1500);
+</script>
