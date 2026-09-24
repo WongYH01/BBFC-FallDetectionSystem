@@ -22,6 +22,15 @@ WEBRTC_PORT     = os.environ.get("MEDIAMTX_WEBRTC_PORT", "8889")
 RTSP_PORT       = os.environ.get("MEDIAMTX_RTSP_PORT", "8554")
 STREAM_PATH     = os.environ.get("STREAM_PATH", "cam")
 
+# The manual Record button is the ONE path that writes raw camera footage to
+# disk (v2/videos/pose_<ts>.mp4 is a side-by-side of the camera image and the
+# annotated frame). The automatic fall clip is skeleton-only and unaffected by
+# this switch. The detection service sets ALLOW_MANUAL_RECORDING=0 so a
+# deployment never stores camera imagery; the demo leaves it on. A metrics run
+# ({"metrics": true}) writes no video, so it is allowed either way.
+ALLOW_MANUAL_RECORDING = os.environ.get(
+    "ALLOW_MANUAL_RECORDING", "1") not in ("", "0")
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -67,7 +76,12 @@ def record_start():
     # {"metrics": true} starts a measurement run instead of a recording:
     # metrics/*.json + *.csv, and no video at all.
     payload = request.get_json(silent=True) or {}
-    return jsonify(start_recording(metrics=bool(payload.get("metrics"))))
+    metrics = bool(payload.get("metrics"))
+    if not metrics and not ALLOW_MANUAL_RECORDING:
+        return jsonify({"error": "manual recording is disabled "
+                                 "(ALLOW_MANUAL_RECORDING=0); the automatic "
+                                 "fall clip is skeleton-only and unaffected"}), 403
+    return jsonify(start_recording(metrics=metrics))
 
 @app.route("/record/stop", methods=["POST"])
 def record_stop():

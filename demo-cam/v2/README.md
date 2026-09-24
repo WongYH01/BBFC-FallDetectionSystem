@@ -10,6 +10,18 @@ v1's camera plumbing and replaces the fall decision.
 | decision | box width/height rule | transformer + room-fitted head, rolling mean, latch, descent gate |
 | box ratio | the alarm | debug overlay only (`FALL_DEBUG=1`) |
 
+## What is recorded
+
+- The **automatic fall clip** (`v2/fall_clips/fall_<ts>.mp4`) is **skeleton
+  only**: the pose drawn on a blank canvas, no camera pixels. It is the file
+  the detection service uploads to the notification service.
+- The **manual Record button** is the one path that writes raw camera footage
+  (`v2/videos/pose_<ts>.mp4` is a side-by-side of the camera image and the
+  annotated frame). Set `ALLOW_MANUAL_RECORDING=0` to refuse it with a 403;
+  the detection service ships with it off.
+- A metrics run writes CSV/JSON and no video at all, and stays allowed either
+  way.
+
 ## How the alarm is decided
 
 `fallcore.stream.EnsembleStream` owns the arithmetic:
@@ -88,6 +100,7 @@ Defaults shown; full list with commentary in `demo-cam/.env.example`.
 | `BUFFER_LEN` / `FALL_THRESHOLD` | `4` / `0.5` | rolling mean length and the level that engages the alarm |
 | `FALL_MIN_DESCENT` | `0.10` | the descent gate, body lengths/s; `0` restores pre-gate behaviour |
 | `FALL_CLEAR_BELOW` / `FALL_CLEAR_WINDOWS` | `0.2` / `2` | hysteresis for clearing |
+| `ALLOW_MANUAL_RECORDING` | `1` | `0` refuses the raw-footage Record button (403); automatic clips stay skeleton-only |
 | `VID_STRIDE` / `STREAM_FRAME_STRIDE` | `1` / `2` | decode-and-score one frame in N, then rows per window sample. Their product must keep rows ~67 ms apart (see below) |
 | `STREAM_STALL_SEC` / `STREAM_CONNECT_SEC` | `8` / `24` | force a reconnect when frames stop or never start |
 | `IDLE_STOP_SEC` | `30` | drop the RTSP connection this long after the last viewer (ignored while clips or a recording run) |
@@ -141,7 +154,9 @@ app.py            Flask routes: /, /video_feed, /stream/status, /record/*,
                   /fall/status, /fall_clips/status; reloader off by design
 detector.py       RTSP -> ONNX pose -> calibrated model -> MJPEG / status / recorder
 metrics.py        measurement mode, model columns and provenance
-fall_recorder.py  pre-buffered fall-clip capture (unchanged from v1)
+fall_recorder.py  pre-buffered skeleton-only fall clips; publishes clip_started /
+                  clip_ready events (pop_events) for the detection service, and
+                  only ever names a file `fall_<ts>.mp4` once it is complete
 replay.py         offline replay of one video through the same decision stack
 METRICS.md        what the measurement numbers do and do not mean
 ../pi/            Pi-side MediaMTX config + encoder watchdog (deploy there)

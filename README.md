@@ -52,11 +52,21 @@ demo-cam/
   v2/              the deployed Flask app (see its README)
   v1/              the earlier bounding-box-ratio demo, kept for comparison
   pi/              MediaMTX config + the encoder watchdog for the Pi
+services/
+  detection/       v2 as a container: always-on capture + alert/clip outbox
+  notification/    the alerting service (Spring Boot): Telegram, escalation, storage
+demo-tele/         the earlier Telegram bench for the alert wording
 scripts/
   fetch_weights.py        pull the deployment weights from Hugging Face
   fit_calibration_head.py fit the room head on that room's own clips
 runs/ data/ videos/       checkpoints, corpora and caches   (all gitignored)
 ```
+
+The detection service ([`services/detection`](services/detection/README.md))
+runs v2 headless against the same models, POSTs an alert to the notification
+service the moment a fall latches, and uploads the **skeleton-only** clip when
+it is complete. Raw camera footage is never stored: the manual Record button is
+refused (`ALLOW_MANUAL_RECORDING=0`) and the local clip is deleted after upload.
 
 ## Setup
 

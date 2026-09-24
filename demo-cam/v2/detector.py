@@ -856,8 +856,12 @@ def _capture_loop() -> None:
                     # keep its rolling pre-event buffer current — see
                     # fall_recorder.py for the automatic capture logic.
                     if fall_recorder.ENABLED:
+                        # The rolling mean is the score the decision actually
+                        # latched on; it rides the clip_started event so the
+                        # detection service can put it in the alert.
                         fall_recorder.push_frame(
-                            skel, bool(_last_state.get("alarm")))
+                            skel, bool(_last_state.get("alarm")),
+                            confidence=float(_last_state.get("rolling_mean", 0.0)))
 
                     if _recording:
                         combined = np.hstack([result.orig_img, frame])

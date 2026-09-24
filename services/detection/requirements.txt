@@ -1,0 +1,23 @@
+# Detection service runtime.
+#
+# torch and torchvision are NOT listed here: the Dockerfile installs them from
+# the CPU-only wheel index, because plain `pip install torch` on Linux pulls
+# the CUDA build and its multi-GB nvidia dependencies.
+#
+# The versions mirror demo-cam/requirements.txt, with opencv swapped for the
+# headless build (the service has no display and the full wheel needs libGL).
+# ultralytics itself requires opencv-python, so the Dockerfile removes it
+# after installation; the two must not be installed side by side.
+numpy==2.5.1
+opencv-python-headless==5.0.0.93
+onnxruntime==1.30.0
+# Ultralytics imports onnx to read an .onnx model's metadata and will pip
+# install it at first inference if it is missing -- an 8.9 MB download on
+# every container start, into a user site-packages that a read-only home
+# may refuse. Pin it here so it is in the image.
+onnx==1.23.0
+ultralytics==8.4.104
+lap==0.5.13
+flask==3.1.3
+python-dotenv==1.2.2
+requests==2.34.2

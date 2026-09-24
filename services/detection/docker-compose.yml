@@ -1,0 +1,45 @@
+# Detection service. Bring the notification stack up first:
+#
+#   cd services/notification && docker compose up -d
+#   cd services/detection   && docker compose up -d --build
+#
+# The two share the notification compose's default network, so the detection
+# container reaches the API as http://notification:8081. Weights are bind-
+# mounted from the host (fetch them once with scripts/fetch_weights.py).
+name: detection
+
+services:
+  detection:
+    build:
+      context: ../..
+      dockerfile: services/detection/Dockerfile
+    image: bbfc/detection:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Inside the container the UI must listen on all interfaces for the
+      # published port to reach it; the publish below restricts it to the
+      # host's loopback, because the v2 UI has no authentication.
+      SERVICE_UI_HOST: 0.0.0.0
+      SPOOL_DIR: /data/outbox
+    volumes:
+      - ../../demo-cam/models:/app/demo-cam/models:ro
+      - ../../runs/checkpoints:/app/runs/checkpoints:ro
+      # The clips volume holds only skeleton-only mp4s; they are deleted after
+      # upload unless KEEP_UPLOADED_CLIPS=1.
+      - clips:/app/demo-cam/v2/fall_clips
+      - spool:/data/outbox
+    ports:
+      - "127.0.0.1:5005:5005"
+    networks:
+      - notification
+
+networks:
+  notification:
+    external: true
+    name: notification_default
+
+volumes:
+  clips: {}
+  spool: {}

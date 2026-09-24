@@ -1,0 +1,27 @@
+# Build context hygiene: the detection image needs fallcore/, demo-cam/v2/ and
+# services/detection/ only. Everything here is either huge (the venvs, runs/,
+# data/), generated, or not part of the image.
+.git
+.gitignore
+.dockerignore
+.venv/
+.venv-train/
+**/.venv/
+**/.venv-train/
+**/__pycache__/
+**/*.pyc
+notebooks/
+runs/
+data/
+videos/
+demo-tele/
+demo-cam/models/
+demo-cam/pi/
+demo-cam/v1/
+demo-cam/v2/fall_clips/
+demo-cam/v2/videos/
+demo-cam/v2/metrics/
+demo-cam/recordings/
+demo-cam/.env
+services/detection/.env
+services/detection/spool/
