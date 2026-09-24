@@ -10,6 +10,7 @@ examples/
 # deployment pair comes from Hugging Face via scripts/fetch_weights.py)
 *.pt
 *.onnx
+*.npz
 
 # The research side of the project, which this repo does not carry: it tracks
 # the deployment subset — fallcore, demo-cam, and the two scripts that stand a
