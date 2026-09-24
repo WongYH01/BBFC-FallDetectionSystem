@@ -38,9 +38,10 @@ MIN_USEFUL_AUC = 0.90
 
 #: Extra per-window inputs the head can take alongside the pooled embedding.
 #: All three are measured in units of the subject's own body, never of the
-#: frame, which is the point: the first room's head separated falls from lying
-#: by height *in frame*, and that cue is furniture, so it did not survive a
-#: second room (`runs/metrics/picam2_what_fires.csv`).
+#: frame, which is the point: picam-1's head separated falls from lying by
+#: height *in frame*, and that cue is the furniture seen from one camera
+#: position, so it weakened as soon as the camera was re-aimed
+#: (`runs/metrics/picam2_what_fires.csv`).
 #: "hip_drop" rather than "drop": these names become DataFrame columns,
 #: and `df.drop` is a method, which silently shadows the column.
 KINEMATIC_NAMES = ("descent_speed", "hip_drop", "extent_ratio")

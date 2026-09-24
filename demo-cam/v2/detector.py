@@ -113,8 +113,11 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # five subjects that is rolling F1 0.967 against 0.836 for the best single
 # checkpoint and 0.853 for the four-model ensemble, at one forward pass per
 # window instead of four (~0.7 ms against ~3.2 ms, and 6 MB of weights against
-# 29). The head needs the room's own falls and ADLs -- it is a commissioning
-# artefact, not a pretrained one, so a new room needs one fitted there.
+# 29). The head is fitted on this installation's own falls and ADLs -- a
+# commissioning artefact, not a pretrained one. It does travel: re-aimed at the
+# same room from a second camera position it scores 0.909 against 0.724 for the
+# bare checkpoint, so a moved camera is worth refitting, not a reason the model
+# stops working.
 # ---------------------------------------------------------------------------
 _CKPT_NAMES = ("augnone_ms_coords_hn_s99.pt",)
 _HEAD_NAME = "probe_augnone_ms_coords_hn_s99.npz"
@@ -126,7 +129,7 @@ ENSEMBLE_CKPTS = (
 )
 # One head per checkpoint, or None to use that checkpoint's own classifier.
 # `CALIBRATION_HEAD=` (empty) in .env runs the checkpoints uncalibrated;
-# pointing it at another room's probe is refused rather than silently applied,
+# pointing it at another backbone's probe is refused rather than silently applied,
 # because a head is a function of one backbone's embedding space.
 _CALIBRATION_HEAD = os.environ.get("CALIBRATION_HEAD",
                                    str(_CKPT_DIR / _HEAD_NAME)).strip()

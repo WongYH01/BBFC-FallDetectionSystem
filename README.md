@@ -21,11 +21,16 @@ leave-one-subject-out — fit on four subjects, score the fifth:
 
 | | clip F1 | false alarms | missed falls |
 |---|---|---|---|
-| deployment camera, held out | **0.967** | 1 | 1 |
-| a second room, zero-shot (52 clips) | **0.909** | 2 | 3 |
+| the fitted camera position, held out | **0.967** | 1 | 1 |
+| the same room re-aimed, zero-shot (52 clips) | **0.909** | 2 | 3 |
+| the same, with no fitted head at all | 0.724 | 9 | 7 |
 
-The second row is the honest transfer number: a different room, different
-people, and a head nobody re-fitted. Window AUC on the first room is 0.992.
+The second row is the honest transfer number: the camera moved to another wall
+and a lower angle, and a head nobody re-fitted. The third says what the head is
+worth there — it is fitted on one view, but most of its benefit survives the
+move. Window AUC is 0.992 on the fitted view and 0.879 on the other, against
+0.887 / 0.814 with no head. Transfer to a *different* room is untested: every
+clip in this project comes from one room.
 
 ## Layout
 
@@ -75,8 +80,9 @@ a plausible-looking number.
 keypoints at 640; another scale hands it an input distribution it never saw.
 
 **The head is a commissioning artefact, not a weight.** It is fitted on one
-room's own falls and ADLs, so a new room needs its own
-(`scripts/fit_calibration_head.py`). Running the checkpoint without a head is
-supported and scores lower.
+installation's own falls and ADLs (`scripts/fit_calibration_head.py`), and it is
+what takes clip F1 from 0.818 to 0.967. Running the checkpoint without one is
+supported and scores lower. Moving the camera costs accuracy but not the head:
+refit when you can, keep running when you cannot.
 
 These are research artifacts, not a certified medical device.

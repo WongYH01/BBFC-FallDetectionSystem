@@ -28,19 +28,27 @@ v1's camera plumbing and replaces the fall decision.
 Step 4 exists because a motionless body carries no information about how it got
 there: without it the verdict is re-made every second on windows of someone
 simply lying still, and the head settles that tie on height in frame — which is
-furniture, and does not survive a change of room.
+furniture, and is read differently the moment the camera moves.
 
-| held out on the camera's 5 subjects | clip F1 | FP | FN |
+Measured on two camera positions in the same room, 60 and 52 clips. The first is
+leave-one-subject-out on the position the head was fitted at; the second is that
+head applied as-is after the camera was moved to another wall and a lower angle:
+
+| | clip F1 | FP | FN |
 |---|---|---|---|
-| calibrated model + gate | **0.967** | 1 | 1 |
-| without the gate | 0.967 | 1 | 1 |
-| second room, zero-shot, + gate | **0.909** | 2 | 3 |
-| second room, zero-shot, no gate | 0.877 | 4 | 3 |
+| fitted position, with the gate | **0.967** | 1 | 1 |
+| fitted position, no gate | 0.967 | 1 | 1 |
+| camera re-aimed, with the gate | **0.909** | 2 | 3 |
+| camera re-aimed, no gate | 0.877 | 4 | 3 |
+| camera re-aimed, no head at all | 0.724 | 9 | 7 |
 
-The gate is free in the fitted room and halves the false alarms in a room nobody
-fitted on. The four-checkpoint ensemble v2 used to ship scored 0.853 on the first
-set, and the best single checkpoint 0.836 — at four forward passes per window
-instead of one.
+So the gate is free where the head was fitted and halves the false alarms where
+it was not, and the head itself carries most of its value across the move — the
+last row is what you get without one. The four-checkpoint ensemble v2 used to
+ship scored 0.853 at the fitted position, and the best single checkpoint 0.836 —
+at four forward passes per window instead of one.
+
+Transfer to a *different room* is untested: every clip here comes from one.
 
 ## Deploy on a new machine
 
