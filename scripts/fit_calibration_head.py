@@ -136,6 +136,14 @@ def main() -> int:
                          "with before this flag existed; 10 costs ~0.001 AUC on "
                          "the held-out subjects and takes P(fall | empty window) "
                          "from 0.9999 to 0.008")
+    ap.add_argument("--extra-kinematics", action="store_true",
+                    help="append the three scale-free descent measures "
+                         "(fallcore.calibrate.KINEMATIC_NAMES) to every "
+                         "embedding before fitting. Measured over three seeds "
+                         "this is NOT an improvement -- a wash in the fitted "
+                         "room and slightly worse in an unseen one; the "
+                         "descent gate is what carries. Kept because it is "
+                         "measured and reproducible")
     args = ap.parse_args()
 
     man = picam.scan()
@@ -147,6 +155,12 @@ def main() -> int:
 
     model, mcfg, tcfg, *_ = T.load_checkpoint(args.ckpt, device="cpu")
     emb = calibrate.embeddings(model, mcfg, tcfg, clips, scale="yolo26n")
+    aspects = {v.video_id: float(v.width) / float(v.height)
+               for _, v in man.iterrows()}
+    ext = (calibrate.window_extras(tcfg, clips, scale="yolo26n",
+                                   aspects=aspects)
+           if args.extra_kinematics else None)
+    extra_names = calibrate.KINEMATIC_NAMES if args.extra_kinematics else ()
     print(f"{Path(args.ckpt).stem}: {len(clips)} windows, "
           f"{clips.video_id.nunique()} clips, embedding {emb.shape[1]}", flush=True)
 
@@ -156,6 +170,10 @@ def main() -> int:
                                  copies=args.empty_negatives)
         syn_emb = embed_windows(model, mcfg, tcfg, windows, device="cpu")
         syn_y = np.zeros(len(syn_emb), dtype=int)
+        # A window nobody is visible in has no measurable descent; zeros are
+        # the honest value and are what `window_kinematics` returns for it.
+        syn_ext = (np.stack([calibrate.window_kinematics(w) for w in windows])
+                   if args.extra_kinematics else None)
         print(f"nobody-visible windows: {len(syn_emb)} labelled No-Fall "
               f"({len(syn_emb) // args.empty_negatives} flavours x "
               f"{args.empty_negatives} copies)", flush=True)
@@ -163,11 +181,15 @@ def main() -> int:
     def fit_fold(train_mask):
         """Fit a head on the masked real windows plus the synthetic negatives."""
         e, lab = emb[train_mask], clips.label.values[train_mask]
+        x = ext[train_mask] if ext is not None else None
         if syn_emb is not None:
             e = np.concatenate([e, syn_emb])
             lab = np.concatenate([lab, syn_y])
+            if x is not None:
+                x = np.concatenate([x, syn_ext])
         return calibrate.fit(e, lab, backbone=args.ckpt, features=mcfg.features,
-                             seq_len=tcfg.seq_len)
+                             seq_len=tcfg.seq_len, extras=x,
+                             extra_names=extra_names)
 
     rows = []
     if args.protocol == "curve":
@@ -185,7 +207,7 @@ def main() -> int:
                 te = ~tr
                 head = fit_fold(tr)
                 prob = np.zeros(len(clips))
-                prob[te] = head.proba(emb[te])
+                prob[te] = head.proba(emb[te], ext[te] if ext is not None else None)
                 aucs.append(roc_auc_score(clips.label.values[te], prob[te]))
                 w = clips[te].copy()
                 w["p"] = prob[te]
@@ -209,7 +231,7 @@ def main() -> int:
         for s in sorted(set(subj)):
             tr, te = subj != s, subj == s
             head = fit_fold(tr)
-            prob[te] = head.proba(emb[te])
+            prob[te] = head.proba(emb[te], ext[te] if ext is not None else None)
             ids = meta.index[meta.subject == s]
             fired = (pd.DataFrame({"video_id": clips.video_id[te], "p": prob[te]})
                      .groupby("video_id")["p"].mean() >= 0.5)
@@ -225,7 +247,7 @@ def main() -> int:
         out = Path(args.out or (cfg.CKPT_DIR / f"probe_{Path(args.ckpt).stem}.npz"))
         head.save(out)
         print(f"wrote {out} (in-sample numbers follow -- descriptive only)")
-        rows += report(f"fitall_{Path(args.ckpt).stem}", head.proba(emb),
+        rows += report(f"fitall_{Path(args.ckpt).stem}", head.proba(emb, ext),
                        clips, clip_labels)
 
     df = pd.DataFrame(rows)

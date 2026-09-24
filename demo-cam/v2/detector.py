@@ -137,6 +137,16 @@ FALL_THRESHOLD     = float(os.environ.get("FALL_THRESHOLD", "0.5"))
 FALL_CLEAR_BELOW   = float(os.environ.get("FALL_CLEAR_BELOW", "0.2"))
 FALL_CLEAR_WINDOWS = int(os.environ.get("FALL_CLEAR_WINDOWS", "2"))
 
+# Body lengths per second the hips must fall somewhere inside a window before
+# that window may *raise* the alarm. Without it the verdict is re-made every
+# second on windows holding no descent at all -- a person lying still -- where a
+# fall and a deliberate lie-down are the same picture, and the decision falls
+# back on whatever that room's furniture height happens to be. Latching and
+# clearing are untouched: a fall is raised on its descent and held.
+# 0 restores the behaviour every result before 2026-09-24 was measured at.
+# See fallcore.picam.V2_MIN_DESCENT and runs/metrics/descent_gate_sweep.csv.
+FALL_MIN_DESCENT = float(os.environ.get("FALL_MIN_DESCENT", "0.10"))
+
 # Frames between the rows that build a classifier window. The default 2 matches
 # training (every 2nd frame of ~30 fps = ~67 ms per row). If the pose backbone
 # cannot run at ~30 fps and the loader is effectively decimating for you (the
@@ -395,6 +405,11 @@ def _update_falls(result) -> list:
     """
     global _people, _last_state, _alarm_since, _last_update
     kp = _largest_person_keypoints(result)
+    # The window kinematics divide by the body's longest dimension, which needs
+    # x and y in the same units; the frame itself carries the ratio, and a
+    # reconnect can change resolution, so it is read per frame rather than once.
+    h, w = result.orig_shape
+    _stream.aspect = w / max(h, 1)
     with _fall_lock:
         if _stream.observe(kp):
             _last_state = _stream.state()
@@ -467,6 +482,9 @@ def get_fall_status() -> dict:
             "ready": bool(state.get("ready", False)),
             "buffered_frames": int(state.get("buffered_frames", 0)),
             "threshold": FALL_THRESHOLD,
+            "min_descent": FALL_MIN_DESCENT,
+            "descent_speed": state.get("descent_speed", 0.0),
+            "gated": bool(state.get("gated", False)),
             "clear_below": FALL_CLEAR_BELOW,
             "models": state.get("models") or _stream.classifier.names,
             "model_probs": state.get("model_probs", []),
@@ -513,11 +531,13 @@ model = YOLO(MODEL_NAME)
 _stream = EnsembleStream(ENSEMBLE_CKPTS, heads=HEADS, buffer=BUFFER_LEN,
                          threshold=FALL_THRESHOLD, clear_below=FALL_CLEAR_BELOW,
                          clear_windows=FALL_CLEAR_WINDOWS,
+                         min_descent=FALL_MIN_DESCENT,
                          frame_stride=STREAM_FRAME_STRIDE, device="cpu")
 print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}, "
       f"threads={POSE_THREADS or 'ORT default'}), decision "
       f"{_stream.classifier.names} buffer={BUFFER_LEN} "
-      f"threshold={FALL_THRESHOLD} frame_stride={STREAM_FRAME_STRIDE} "
+      f"threshold={FALL_THRESHOLD} min_descent={FALL_MIN_DESCENT} "
+      f"frame_stride={STREAM_FRAME_STRIDE} "
       f"vid_stride={VID_STRIDE}")
 
 

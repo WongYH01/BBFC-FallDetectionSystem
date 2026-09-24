@@ -1,0 +1,30 @@
+*.pdf
+
+# Data and experiment outputs — large, regenerable, not source.
+# `data/*` rather than `data/`: git will not descend into an ignored directory,
+# so the wholesale form makes the re-inclusions below unreachable.
+data/*
+runs/
+videos/
+
+# ...except OmniFall's annotations, which are small, are not regenerable
+# without a Hub round-trip, and are what makes notebooks 14 and 15 legible
+# without the 90 GB of video that goes with them.
+!data/omnifall/
+data/omnifall/*
+!data/omnifall/labels/
+!data/omnifall/splits/
+
+# Model weights (pretrained YOLO checkpoints download on demand)
+*.pt
+
+# Environments
+.venv*/
+demo-cam/.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.ruff_cache/

@@ -34,6 +34,7 @@ import numpy as np
 import torch
 
 from . import config as cfg
+from .calibrate import KINEMATIC_NAMES, window_kinematics
 from .data import build_features
 from .train import load_checkpoint
 
@@ -139,7 +140,8 @@ class EnsembleClassifier:
             self.names.append(Path(path).stem + ("+head" if head is not None else ""))
         self.heads = [m[2] for m in self._members]
 
-    def proba(self, window: np.ndarray) -> tuple[float, list[float]]:
+    def proba(self, window: np.ndarray,
+              aspect: float = 1.0) -> tuple[float, list[float]]:
         """(mean P(fall), per-checkpoint probabilities) for one window."""
         probs = []
         for model, model_cfg, head in self._members:
@@ -152,7 +154,10 @@ class EnsembleClassifier:
                     probs.append(float(torch.sigmoid(logit).item()))
                 else:
                     pooled = model._pool(model.encoder(model.embed(xt)))
-                    probs.append(float(head.proba(pooled.cpu().numpy())[0]))
+                    extras = (window_kinematics(window, aspect)[None, :]
+                              if head.n_extra else None)
+                    probs.append(
+                        float(head.proba(pooled.cpu().numpy(), extras)[0]))
         return float(np.mean(probs)), probs
 
 
@@ -176,20 +181,29 @@ class RollingDecision:
         self._q: deque = deque(maxlen=buffer)
         self._below = 0
         self.alarm = False
+        self.gated = False
         self.rolling = 0.0
         self.window_p = 0.0
         self.n_windows = 0
         self.history: list[float] = []
 
-    def update(self, window_p: float) -> bool:
-        """Feed one window probability; returns the (possibly latched) alarm."""
+    def update(self, window_p: float, can_raise: bool = True) -> bool:
+        """Feed one window probability; returns the (possibly latched) alarm.
+
+        `can_raise=False` lets the mean keep tracking but forbids *engaging* the
+        alarm on this window. It is how the descent gate works: a window the
+        subject merely lies still through carries no evidence about how they got
+        there, so it may sustain or clear an alarm but never start one. Falls
+        are unaffected -- they engage on the descent, which is never gated.
+        """
         self.window_p = float(window_p)
         self._q.append(self.window_p)
         self.rolling = float(np.mean(self._q))
         self.n_windows += 1
         self.history.append(round(self.window_p, 4))
+        self.gated = not can_raise
 
-        if self.rolling >= self.threshold:
+        if self.rolling >= self.threshold and (can_raise or self.alarm):
             self.alarm = True
             self._below = 0
         elif self.alarm and self.rolling < self.clear_below:
@@ -214,6 +228,7 @@ class RollingDecision:
     def status(self) -> dict:
         return {
             "alarm": self.alarm,
+            "gated": self.gated,
             "p_fall": self.window_p,
             "rolling_mean": self.rolling,
             "buffer_len": self.buffer,
@@ -241,25 +256,40 @@ class EnsembleStream:
                  seq_len: int = cfg.FINAL_TRAIN.seq_len,
                  frame_stride: int = cfg.PREPROCESS.frame_stride,
                  step: int = cfg.EVAL.sliding_stride, device: str = "cpu",
-                 heads=None):
+                 heads=None, min_descent: float = 0.0,
+                 aspect: float = 1.0):
         self.classifier = EnsembleClassifier(checkpoints, device=device,
                                              heads=heads)
         self.buffer = KeypointBuffer(seq_len, frame_stride, step)
         self.decision = RollingDecision(buffer, threshold, clear_below,
                                         clear_windows)
         self.model_probs: list[float] = []
+        # Body lengths per second the hips must fall somewhere inside a window
+        # before that window is allowed to raise an alarm. 0 disables the gate,
+        # which is the behaviour every result before 2026-09-24 was measured at.
+        self.min_descent = float(min_descent)
+        # The source frame's width/height. The kinematics divide by the body's
+        # longest dimension, which needs x and y in the same units; set this
+        # from the camera (demo-cam) or per clip (picam.score_clip).
+        self.aspect = float(aspect)
+        self.kinematics = np.zeros(len(KINEMATIC_NAMES))
 
     def observe(self, keypoints: np.ndarray) -> bool:
         if not self.buffer.add(keypoints):
             return False
-        mean_p, per_model = self.classifier.proba(self.buffer.window())
+        window = self.buffer.window()
+        mean_p, per_model = self.classifier.proba(window, self.aspect)
         self.model_probs = per_model
-        self.decision.update(mean_p)
+        self.kinematics = window_kinematics(window, self.aspect)
+        can_raise = (self.min_descent <= 0.0
+                     or float(self.kinematics[0]) >= self.min_descent)
+        self.decision.update(mean_p, can_raise=can_raise)
         return True
 
     def reset_buffer(self) -> None:
         self.buffer.reset()
         self.model_probs = []
+        self.kinematics = np.zeros(len(KINEMATIC_NAMES))
 
     def state(self) -> dict:
         st = self.decision.status()
@@ -267,4 +297,7 @@ class EnsembleStream:
         st["model_probs"] = [round(p, 4) for p in self.model_probs]
         st["buffered_frames"] = self.buffer.buffered
         st["ready"] = self.buffer.ready
+        st["min_descent"] = self.min_descent
+        st.update({k: round(float(v), 4)
+                   for k, v in zip(KINEMATIC_NAMES, self.kinematics)})
         return st

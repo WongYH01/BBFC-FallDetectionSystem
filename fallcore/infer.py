@@ -40,7 +40,7 @@ import torch
 
 from . import config as cfg
 from .data import build_features, sliding_starts, take_window
-from .extract import _largest_person, load_pose_model
+from .extract import _largest_person, load_pose_model, pose_device
 
 # The window duration the classifier was trained at: 60 frames, stride 2, 30 fps.
 TRAIN_WINDOW_SECONDS = (
@@ -134,6 +134,7 @@ def run_pose(
     fps = float(fps_override or props["fps"] or cfg.TRAIN_NOMINAL_FPS)
 
     model = model or load_pose_model(scale, device=device)
+    device = pose_device(model, device)
     stream = model.predict(source=str(video_path), stream=True, imgsz=imgsz,
                            device=device, verbose=False)
 
@@ -234,6 +235,7 @@ def score_track(
     stride: int = cfg.EVAL.sliding_stride,
     warmup: bool = False,
     device: str | None = None,
+    head=None,
 ):
     """Slide the classifier over a PoseTrack; one row per window.
 
@@ -250,6 +252,11 @@ def score_track(
     without them and adding them here would quietly change what "the same
     protocol" means. Turn it on for playback, where a four-second blank at the
     start of a six-second clip is worse than a flagged partial score.
+
+    `head` (a `fallcore.calibrate.ProbeHead`) replaces the checkpoint's own
+    classifier with a room-fitted one, scored on the pooled embedding. Same
+    windows, same features, one dot product of extra work; the checkpoint must
+    be the one the head was fitted for, which `calibrate.validate` checks.
     """
     import pandas as pd
 
@@ -259,15 +266,23 @@ def score_track(
 
     seq = track.keypoints[::fs]
     plan = _window_plan(len(seq), seq_len, stride, warmup)
+    # The angle-bearing feature variants need the frame's true shape to measure
+    # a joint angle; every other variant ignores it.
+    aspect = track.width / track.height if track.height else 1.0
     windows = np.stack([
         build_features(
-            take_window(seq[s:s + n_real], seq_len, start=0), model_cfg.features)
+            take_window(seq[s:s + n_real], seq_len, start=0),
+            model_cfg.features, aspect)
         for s, n_real in plan
     ])
 
     model.to(device).eval()
-    probs = torch.sigmoid(
-        model(torch.from_numpy(windows).float().to(device))).cpu().numpy()
+    x = torch.from_numpy(windows).float().to(device)
+    if head is None:
+        probs = torch.sigmoid(model(x)).cpu().numpy()
+    else:
+        pooled = model._pool(model.encoder(model.embed(x))).cpu().numpy()
+        probs = np.asarray(head.proba(pooled), dtype=np.float64)
 
     # Measured over the strided rows the classifier actually saw, and over the
     # *real* rows only: padding repeats the last frame, which is not evidence
@@ -636,6 +651,8 @@ def render(
     strip_height: int = 54,
     fourcc: str = "mp4v",
     frame_gated: np.ndarray | None = None,
+    frame_alarm: np.ndarray | None = None,
+    frame_detail: np.ndarray | None = None,
     progress: bool = True,
 ) -> Path:
     """Write an annotated copy of the video: skeleton, box, score, alarm, timeline.
@@ -647,6 +664,12 @@ def render(
     `frame_gated` (from `frame_gates`) marks frames whose window had no subject
     in it. Those draw grey as "NO SUBJECT" and cannot raise or sustain an alarm
     -- three states on screen, matching the three the verdict can return.
+
+    `frame_alarm` supplies the alarm state directly, for a decision rule that is
+    not "over threshold, then hold" -- demo-cam v2's latched rolling mean. With
+    it, `frame_probs` is read as that rule's score (the rolling mean), and
+    `frame_detail`, if given, is shown beside it as the latest window's own
+    P(fall), so the panel says both what was decided on and what just arrived.
     """
     import cv2
 
@@ -667,7 +690,11 @@ def render(
 
     gated = (np.zeros(track.n_frames, dtype=bool) if frame_gated is None
              else np.asarray(frame_gated, dtype=bool))
-    alarm = alarm_state(frame_probs, threshold, hold_sec, track.fps, gated=gated)
+    if frame_alarm is None:
+        alarm = alarm_state(frame_probs, threshold, hold_sec, track.fps,
+                            gated=gated)
+    else:
+        alarm = np.asarray(frame_alarm, dtype=bool) & ~gated
     strip = _timeline_strip(frame_probs, w, strip_height, threshold, gated=gated)
 
     # Overlay scale, so the annotation reads the same on a 320x240 LE2I clip and
@@ -712,11 +739,16 @@ def render(
             state, label = "NO SUBJECT", "detector sees nobody"
         else:
             state = "FALL DETECTED" if firing else "no fall"
-            label = "warming up" if np.isnan(p) else f"P(fall) {p:.2f}"
+            if np.isnan(p):
+                label = "warming up"
+            elif frame_detail is not None:
+                label = f"mean {p:.2f}  P {frame_detail[i]:.2f}"
+            else:
+                label = f"P(fall) {p:.2f}"
 
         # LE2I is 320x240 and a phone clip is 1080p; a panel sized in absolute
         # pixels covers a third of the former and vanishes on the latter.
-        panel_w = int(220 * s)
+        panel_w = int((260 if frame_detail is not None else 220) * s)
         cv2.rectangle(canvas, (m, m), (m + panel_w, m + int(58 * s)), _DARK, -1)
         cv2.putText(canvas, state, (m + int(7 * s), m + int(24 * s)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.62 * s, colour,
@@ -817,6 +849,7 @@ def analyse(
     max_dropout: float | None = None,
     pose_model=None,
     progress: bool = True,
+    head=None,
 ) -> dict:
     """Pose, slide, decide -- everything except drawing, in one call.
 
@@ -836,6 +869,14 @@ def analyse(
     discards real falls. Notebook 13 measures that at 29 true positives lost
     across the four benchmarks to remove 5 false ones. No benchmark window
     exceeds 0.917, so 0.95 catches an empty frame and nothing else.
+
+    `head` scores every window with a room-fitted `calibrate.ProbeHead` instead
+    of the checkpoint's own classifier -- one forward pass either way. Note the
+    decision rule is *not* the same one this notebook applies by default: the
+    shipped calibrated model uses the rolling mean and latch
+    (`fallcore.stream.RollingDecision`, `demo-cam`'s rule), which is what
+    `runs/metrics/calibration_head.csv` measured. `verdict` here is still the
+    paper's "any window over threshold"; section 3 computes both.
     """
     track = run_pose(video_path, scale=scale, device=device, model=pose_model,
                      progress=progress)
@@ -845,11 +886,13 @@ def analyse(
     fs = cfg.PREPROCESS.frame_stride if fs is None else fs
 
     windows = score_track(track, model, model_cfg, train_cfg, frame_stride=fs,
-                          stride=stride, warmup=warmup, device=device)
+                          stride=stride, warmup=warmup, device=device, head=head)
     v = verdict(windows, threshold=threshold, max_dropout=max_dropout)
     v["frame_stride"] = fs
     v["max_dropout"] = max_dropout
     v["window_seconds"] = train_cfg.seq_len * fs / track.fps
+    v["head_backbone"] = (None if head is None
+                          else str(getattr(head, "backbone", "") or "head"))
     # The soonest any full window can close, and so the floor on how quickly
     # this configuration could ever alarm on a fall that starts at t=0.
     v["min_latency_sec"] = v["window_seconds"]
