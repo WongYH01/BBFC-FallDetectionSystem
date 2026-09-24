@@ -1,22 +1,27 @@
 *.pdf
 
 # Data and experiment outputs — large, regenerable, not source.
-# `data/*` rather than `data/`: git will not descend into an ignored directory,
-# so the wholesale form makes the re-inclusions below unreachable.
-data/*
+data/
 runs/
 videos/
+examples/
 
-# ...except OmniFall's annotations, which are small, are not regenerable
-# without a Hub round-trip, and are what makes notebooks 14 and 15 legible
-# without the 90 GB of video that goes with them.
-!data/omnifall/
-data/omnifall/*
-!data/omnifall/labels/
-!data/omnifall/splits/
-
-# Model weights (pretrained YOLO checkpoints download on demand)
+# Model weights (pretrained YOLO checkpoints download on demand, and the
+# deployment pair comes from Hugging Face via scripts/fetch_weights.py)
 *.pt
+*.onnx
+
+# The research side of the project, which this repo does not carry: it tracks
+# the deployment subset — fallcore, demo-cam, and the two scripts that stand a
+# deployment up. Training, dataset preparation and the analysis notebooks live
+# in the working tree but are not part of what ships.
+notebooks/
+fallcore/picam2.py
+scripts/download_upfall.py
+scripts/extract_omnifall_pose.py
+scripts/prepare_upfall.py
+scripts/render_picam.py
+scripts/train_augmented_single.py
 
 # Environments
 .venv*/
