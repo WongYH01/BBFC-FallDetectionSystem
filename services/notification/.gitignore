@@ -41,3 +41,6 @@ build/
 
 ### .md files ###
 *.md
+
+### Additional Documentation ###
+docs

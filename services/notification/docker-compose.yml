@@ -1,5 +1,6 @@
 services:
   db:
+    profiles: ["local"]
     image: supabase/postgres:15.14.1.170
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -15,6 +16,7 @@ services:
       retries: 10
 
   storage:
+    profiles: ["local"]
     image: supabase/storage-api:v1.75.0
     depends_on:
       db:
@@ -33,23 +35,30 @@ services:
       - clip-data:/var/lib/storage
 
   notification:
+    profiles: ["local", "cloud"]
     build: .
     depends_on:
       db:
         condition: service_healthy
+        required: false
       storage:
         condition: service_started
+        required: false
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/postgres?currentSchema=alerts
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/postgres?currentSchema=alerts}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      SUPABASE_STORAGE_URL: http://storage:5000
+      SUPABASE_STORAGE_URL: ${SUPABASE_STORAGE_URL:-http://storage:5000}
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      SUPABASE_STORAGE_ENSURE_BUCKET: ${SUPABASE_STORAGE_ENSURE_BUCKET:-true}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_GROUP_ID: ${TELEGRAM_CHAT_GROUP_ID}
+      GOOGLE_APPLICATION_CREDENTIALS: /creds.json
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
       - ./config:/app/config:ro
+      - ${GCLOUD_ADC_PATH:-./docker/adc-placeholder.json}:/creds.json:ro
 
 volumes:
   db-data: {}
