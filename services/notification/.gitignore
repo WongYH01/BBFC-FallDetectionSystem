@@ -34,7 +34,7 @@ build/
 
 ### Secrets ###
 .env*
-!.env.example
+!.env.example.*
 
 # Local launcher scripts tend to hardcode passwords. Keep them out.
 *.bat
