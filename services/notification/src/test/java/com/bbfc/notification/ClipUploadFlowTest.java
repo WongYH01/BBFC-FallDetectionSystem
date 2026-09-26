@@ -139,7 +139,7 @@ class ClipUploadFlowTest extends AbstractIntegrationTest {
                         .withBody(binaryEqualTo(CLIP_BYTES)).build()));
 
         SkeletonClip clip = reloadClip();
-        assertThat(clip.storageKey()).isEqualTo("skeleton-clips/room-12/" + EVENT_ID + ".mp4");
+        assertThat(clip.storageKey()).isEqualTo("room-12/" + EVENT_ID + ".mp4");
         assertThat(clip.telegramFileId()).isEqualTo("file-abc");
         assertThat(clip.telegramMessageId()).isEqualTo(601L);
     }

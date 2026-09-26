@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @ConditionalOnProperty(
-        prefix = "supabase.storage",
+        prefix = "clips",
         name = "ensure-bucket",
         havingValue = "true",
         matchIfMissing = true)
