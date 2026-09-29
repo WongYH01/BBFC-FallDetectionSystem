@@ -53,14 +53,15 @@ builds for the manual-recording companion file), whether anyone is currently
 latched as fallen, and the rolling decision score that latched it.
 
 While idle, frames just accumulate in a ring buffer holding the last
-FALL_CLIP_PRE_SECONDS of video (~3s by default). The buffer is trimmed by the
+FALL_CLIP_PRE_SECONDS of video (8 s by default -- it is counted back from the
+latch, which trails the fall itself by several seconds; see PRE_EVENT_SECONDS). The buffer is trimmed by the
 AGE of its frames, not by a frame count computed from RECORD_FPS: that count
 assumed 10 fps, and at the 15.3 fps this actually runs at it bought 2.0 s of
 lead-in instead of 3. For the same reason the mp4 is written -- and the
 finished file restamped -- at the measured rate, not at RECORD_FPS, which was
 stretching a 14 s incident into 22 s of slow-motion playback. The moment a fall
 latches, a new clip file opens and a writer thread starts for it; the
-buffered frames are hand off to that thread first -- this is the "3 seconds
+buffered frames are hand off to that thread first -- this is the "seconds
 before" part -- and then the triggering frame and every frame after it are
 queued to it for a FIXED MAX_CLIP_SECONDS. This does NOT stop early just
 because the fall clears: FALL_CLEAR_FRAMES clears in well under a second, so
@@ -89,6 +90,7 @@ from collections import deque
 from datetime import datetime
 
 import cv2
+import numpy as np
 
 CLIPS_DIR = os.path.join(os.path.dirname(__file__), "fall_clips")
 
@@ -114,8 +116,20 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 ENABLED = os.environ.get("FALL_CLIPS_ENABLED", "1") not in ("0", "")
 
 # Seconds of rolling pre-event footage kept before a fall and flushed into
-# the front of every clip.
-PRE_EVENT_SECONDS = float(os.environ.get("FALL_CLIP_PRE_SECONDS", "3"))
+# the front of every clip, counted back from the frame the alarm LATCHED on --
+# not from the fall itself. The latch trails the fall by the decision pipeline:
+# each window is ~4 s of rows, a new one is scored every ~1 s, and the rolling
+# mean of BUFFER_LEN=4 needs two to three high windows to clear 0.5, so the
+# alarm lands roughly 2.5-5 s after the person starts to go down. The old 3 s
+# lead-in therefore opened the clip at or after the fall and missed it; 8 s
+# covers that lag with a few seconds of normal activity in front.
+PRE_EVENT_SECONDS = float(os.environ.get("FALL_CLIP_PRE_SECONDS", "8"))
+
+# Buffered frames are held JPEG-encoded, not as raw arrays: a 720p canvas is
+# 2.7 MB raw, so 8 s at 15 fps would pin ~330 MB just to wait for a fall. A
+# skeleton on a flat background encodes to ~20 KB in ~3 ms, and whatever JPEG
+# loses at this quality is well under what the crf-28 H.264 pass throws away.
+_BUFFER_JPEG_QUALITY = 90
 
 # vvv THE "10s buffer before another file can be generated" vvv
 # Minimum gap between one clip finishing and the next one being allowed to
@@ -138,7 +152,7 @@ MAX_CLIP_SECONDS = float(os.environ.get("FALL_CLIP_MAX_SECONDS", "10"))
 # directions to assume it.
 _push_times: "deque" = deque(maxlen=120)
 
-# Skeleton frames, oldest first, as (timestamp, frame). Trimmed by AGE rather
+# Skeleton frames, oldest first, as (timestamp, JPEG bytes). Trimmed by AGE rather
 # than by count, so the lead-in is PRE_EVENT_SECONDS whatever the rate does;
 # the maxlen is only a memory guard for an implausibly fast feed.
 _buffer: "deque" = deque(maxlen=max(1, round(PRE_EVENT_SECONDS * 60)))
@@ -232,6 +246,11 @@ def _writer_worker(writer, q: "queue.Queue", rawpath: str, filepath: str,
         frame = q.get()
         if frame is None:
             break
+        if isinstance(frame, bytes):  # a pre-event frame, JPEG-encoded
+            frame = cv2.imdecode(np.frombuffer(frame, np.uint8),
+                                 cv2.IMREAD_COLOR)
+            if frame is None:
+                continue
         writer.write(frame)
     writer.release()
 
@@ -448,7 +467,10 @@ def push_frame(skel_frame, fallen: bool,
 
         # Idle (or still cooling down): just keep the pre-event buffer fresh,
         # dropping whatever is older than the configured lead-in.
-        _buffer.append((now, skel_frame))
+        ok, jpg = cv2.imencode(".jpg", skel_frame,
+                               [cv2.IMWRITE_JPEG_QUALITY, _BUFFER_JPEG_QUALITY])
+        if ok:
+            _buffer.append((now, jpg.tobytes()))
         while _buffer and now - _buffer[0][0] > PRE_EVENT_SECONDS:
             _buffer.popleft()
 

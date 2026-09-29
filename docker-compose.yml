@@ -1,0 +1,56 @@
+# Whole system in one project: db + storage + notification + detection.
+#
+#   docker compose up -d --build            (from the repository root)
+#   docker compose logs -f detection notification
+#
+# Needs services/notification/.env and services/detection/.env (copy the
+# .env.example next to each) and the weights on the host
+# (scripts/fetch_weights.py).
+#
+# The notification stack is included unchanged: its relative paths and its
+# ${...} interpolation still resolve against services/notification/ and its
+# .env. Detection is declared here rather than included, because its own
+# compose file joins the notification stack's network as an external one
+# (notification_default), which does not exist when both run as one project;
+# here they simply share this project's default network, where the API is
+# still http://notification:8081.
+#
+# The per-service compose files still work on their own. Note the volumes
+# here are prefixed "bbfc_", so this project does not see the data of a stack
+# previously started from services/notification/ (notification_db-data).
+name: bbfc
+
+include:
+  - path: services/notification/docker-compose.yml
+
+services:
+  detection:
+    build:
+      context: .
+      dockerfile: services/detection/Dockerfile
+    image: bbfc/detection:latest
+    restart: unless-stopped
+    depends_on:
+      # The outbox retries until the API answers, so this only saves a burst
+      # of retry noise at startup; the notification image has a HEALTHCHECK.
+      notification:
+        condition: service_healthy
+    env_file:
+      - services/detection/.env
+    environment:
+      # Listen on all interfaces inside the container; the publish below keeps
+      # the UI (which has no auth) on the host's loopback only.
+      SERVICE_UI_HOST: 0.0.0.0
+      SPOOL_DIR: /data/outbox
+      NOTIFICATION_BASE_URL: http://notification:8081/api/v1/notification
+    volumes:
+      - ./demo-cam/models:/app/demo-cam/models:ro
+      - ./runs/checkpoints:/app/runs/checkpoints:ro
+      - clips:/app/demo-cam/v2/fall_clips
+      - spool:/data/outbox
+    ports:
+      - "127.0.0.1:5005:5005"
+
+volumes:
+  clips: {}
+  spool: {}
