@@ -593,9 +593,11 @@ def render_clip(clip, det: Detector, root: Path,
     `peak_window_p` is the highest single-window P(fall) in the clip.
 
     Files land at `root/<action>/S<subject>_<OK|FALSE_ALARM|MISSED>.mp4`, plus an
-    `_h264` twin a browser will play. A clip rendered earlier under a different
-    outcome (a new threshold, a new checkpoint in the same folder) has its old
-    files removed, so a folder never holds two verdicts for one clip.
+    `_h264` twin a browser will play; a clip with no subject of its own (subject
+    0, the multi-person recordings) carries its source name in the stem too. A
+    clip rendered earlier under a different outcome (a new threshold, a new
+    checkpoint in the same folder) has its old files removed, so a folder never
+    holds two verdicts for one clip.
 
     `skip_correct` scores the clip but writes nothing when the detector gets it
     right; the row comes back with `path=None`.
@@ -612,7 +614,14 @@ def render_clip(clip, det: Detector, root: Path,
 
     out_dir = Path(root) / clip.action.replace(" ", "_")
     out_dir.mkdir(parents=True, exist_ok=True)
+    # The stem has to identify the CLIP, not the subject: picam-2's multi-person
+    # recordings all carry subject 0 (they have no subject code to recover), so
+    # `S0` named four different clips. Three were then skipped as already
+    # rendered, and the stale-outcome sweep below deleted the fourth -- four
+    # clips left one file on disk, and index.csv pointed three rows at it.
     stem = f"S{int(clip.subject)}"
+    if int(clip.subject) == 0:
+        stem = f"{stem}_{str(clip.video_id).split('__')[-1]}"
     dest = out_dir / f"{stem}_{tag}.mp4"
     playable = dest.with_name(dest.stem + "_h264.mp4")
 
