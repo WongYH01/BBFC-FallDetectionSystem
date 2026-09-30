@@ -24,7 +24,6 @@ camera -> MediaMTX (Pi) --RTSP--> detection service --POST /events-----> notific
 - The service does **not** keep footage: the local clip is deleted after the
   upload (`KEEP_UPLOADED_CLIPS=0`), and the manual Record button -- the one
   path that writes raw camera video -- is refused with `ALLOW_MANUAL_RECORDING=0`.
-  A metrics run writes CSV/JSON, no video, and stays allowed.
 
 ## Run
 

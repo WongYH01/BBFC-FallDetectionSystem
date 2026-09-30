@@ -196,17 +196,6 @@
     .rec-info .rec-file { color: #aaa; font-family: monospace; word-break: break-all; }
     .rec-info .rec-note { color: #777; font-style: italic; }
 
-    .metrics-toggle {
-      display: flex; align-items: center; gap: 7px;
-      font-size: 11px; color: #888; margin-top: 9px; cursor: pointer;
-      user-select: none;
-    }
-    .metrics-toggle input { cursor: pointer; margin: 0; }
-    .metrics-toggle.locked { opacity: 0.45; cursor: default; }
-    .metrics-toggle.locked input { cursor: default; }
-    .record-btn.measuring { background: #4a6fa5; }
-    .record-btn.measuring:hover { background: #5a7fb5; }
-
     .error-box {
       background: rgba(239, 83, 80, 0.1);
       border: 1px solid rgba(239, 83, 80, 0.3);
@@ -394,10 +383,6 @@
     <div class="sidebar-section">
       <div class="sidebar-label">Recording</div>
       <button class="record-btn" id="record-btn" onclick="toggleRecording()">● Record</button>
-      <label class="metrics-toggle" id="metrics-toggle">
-        <input type="checkbox" id="metrics-check">
-        Collect metrics (no video)
-      </label>
       <div class="rec-info" id="rec-info"></div>
     </div>
 
@@ -588,38 +573,23 @@
     });
   }
 
-  // Two different runs end here. A recording writes the side-by-side plus a
-  // skeleton companion; a measurement run writes a JSON summary and a CSV and
-  // NO video. Both name every file they produced — a measurement run silently
-  // leaving no mp4 behind is the obvious way for this to confuse.
+  // A recording writes the side-by-side plus a skeleton companion; name both.
   function setRecordingUI(isRecording, data) {
     data = data || {};
     const btn    = document.getElementById("record-btn");
     const info   = document.getElementById("rec-info");
-    const toggle = document.getElementById("metrics-toggle");
-    const check  = document.getElementById("metrics-check");
     recording = isRecording;
 
-    // The mode cannot change mid-run: the artefacts are decided at start.
-    check.disabled = isRecording;
-    toggle.classList.toggle("locked", isRecording);
-
-    btn.classList.remove("recording", "measuring");
+    btn.classList.remove("recording");
     if (isRecording) {
       btn.textContent = "■ Stop";
-      btn.classList.add(data.metrics ? "measuring" : "recording");
-      info.innerHTML = (data.metrics ? "Measuring… " : "Recording… ") +
-        '<span id="rec-elapsed">0s</span>';
+      btn.classList.add("recording");
+      info.innerHTML = 'Recording… <span id="rec-elapsed">0s</span>';
       return;
     }
 
     btn.textContent = "● Record";
-    if (data.metrics && data.filename_metrics) {
-      info.innerHTML =
-        'Saved: <span class="rec-file">metrics/' + data.filename_metrics + '</span>' +
-        '<br><span class="rec-file">metrics/' + data.filename_frames + '</span>' +
-        '<br><span class="rec-note">No video written — measurement run.</span>';
-    } else if (data.filename) {
+    if (data.filename) {
       let html = 'Saved: <span class="rec-file">videos/' + data.filename + '</span>';
       if (data.filename_skeleton) {
         html += '<br><span class="rec-file">videos/' + data.filename_skeleton + '</span>';
@@ -647,15 +617,8 @@
         clearInterval(recTimer);
         recStart = null;
         setRecordingUI(false, data);
-        if (data.summary) console.log("metrics summary", data.summary);
       } else {
-        const resp = await fetch("/record/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            metrics: document.getElementById("metrics-check").checked,
-          }),
-        });
+        const resp = await fetch("/record/start", { method: "POST" });
         const data = await resp.json();
         recStart = Date.now();
         recTimer = setInterval(updateRecElapsed, 1000);
@@ -809,7 +772,6 @@
         recStart = Date.now() - (data.elapsed_sec || 0) * 1000;
         recTimer = setInterval(updateRecElapsed, 1000);
       }
-      if (data.recording) document.getElementById("metrics-check").checked = !!data.metrics;
       setRecordingUI(data.recording, data);
       if (data.recording) updateRecElapsed();
     } catch (err) {

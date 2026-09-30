@@ -43,7 +43,6 @@ os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
 
 import cv2
 import fall_recorder
-import metrics as _metrics
 import numpy as np
 from ultralytics import YOLO
 
@@ -241,43 +240,15 @@ def _writer_worker(writer: "cv2.VideoWriter", q: "queue.Queue") -> None:
         writer.write(frame)
     writer.release()
 
-# Measurement mode. A run with this set writes NO video at all — see metrics.py
-# for why that is the point rather than a shortcut.
-_metrics_mode = False
-_run: "object | None" = None
-
-
-def start_recording(metrics: bool = False) -> dict:
-    """Start a recording, or a measurement run when `metrics` is true.
-
-    The two are mutually exclusive: a measurement run produces metrics/*.json
-    and *.csv and no video, a normal recording produces the two mp4s and no
-    metrics.
-    """
+def start_recording() -> dict:
+    """Start a recording: the side-by-side mp4 and its skeleton companion."""
     global _recording, _write_queue, _filename, _filepath, _start_time
-    global _write_queue_skel, _filename_skel, _filepath_skel, _metrics_mode, _run
+    global _write_queue_skel, _filename_skel, _filepath_skel
     with _lock:
         if _recording:
-            return {"recording": True, "metrics": _metrics_mode,
-                    "filename": _filename, "filename_skeleton": _filename_skel}
+            return {"recording": True, "filename": _filename,
+                    "filename_skeleton": _filename_skel}
 
-        if metrics:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            _run = _metrics.Run(ts, _metrics.provenance_of(
-                model, IMGSZ, pose_backend=POSE_BACKEND,
-                ensemble=_stream.classifier.names, buffer=BUFFER_LEN,
-                threshold=FALL_THRESHOLD,
-                checkpoints=[str(p) for p in ENSEMBLE_CKPTS]))
-            _metrics_mode = True
-            _filename = _filename_skel = _filepath = _filepath_skel = None
-            _write_queue = _write_queue_skel = None
-            _start_time = time.time()
-            _recording = True
-            return {"recording": True, "metrics": True,
-                    "filename": None, "filename_skeleton": None}
-
-        _metrics_mode = False
-        _run = None
         os.makedirs(VIDEOS_DIR, exist_ok=True)
         # One now() for both names. Two calls could straddle a second boundary
         # and give the pair different timestamps, which is the one thing that
@@ -293,17 +264,15 @@ def start_recording(metrics: bool = False) -> dict:
         _write_queue_skel = None
         _start_time = time.time()
         _recording = True
-        return {"recording": True, "metrics": False, "filename": _filename,
+        return {"recording": True, "filename": _filename,
                 "filename_skeleton": _filename_skel}
 
 
 def stop_recording() -> dict:
-    """Stop the run and finalize whichever artefacts it was producing."""
+    """Stop the recording; the encoders finish its two files in the background."""
     global _recording, _write_queue, _filename, _start_time, _write_queue_skel, _filename_skel
-    global _metrics_mode, _run
     with _lock:
         duration = round(time.time() - _start_time, 1) if _start_time else 0
-        was_metrics, run = _metrics_mode, _run
         # Signal the worker threads rather than releasing here directly: the
         # queues may still hold unwritten frames, and encoding those (then
         # calling release()) can take a moment -- doing it inline here would
@@ -317,29 +286,17 @@ def stop_recording() -> dict:
             _write_queue_skel.put(None)
             _write_queue_skel = None
         _recording = False
-        _metrics_mode = False
-        _run = None
         filename, filename_skel = _filename, _filename_skel
         _start_time = None
 
-    # Outside the lock: writing the CSV touches the disk, and gen_frames needs
-    # the lock every frame.
-    if was_metrics and run is not None:
-        out = run.finish()
-        return {"recording": False, "metrics": True, "duration_sec": duration,
-                "filename": None, "filename_skeleton": None,
-                "filename_metrics": out["filename_metrics"],
-                "filename_frames": out["filename_frames"],
-                "summary": out["summary"]}
-
-    return {"recording": False, "metrics": False, "filename": filename,
+    return {"recording": False, "filename": filename,
             "filename_skeleton": filename_skel, "duration_sec": duration}
 
 
 def get_status() -> dict:
     with _lock:
         elapsed = round(time.time() - _start_time, 1) if _recording and _start_time else 0
-        return {"recording": _recording, "metrics": _metrics_mode,
+        return {"recording": _recording,
                 "filename": _filename, "filename_skeleton": _filename_skel,
                 "elapsed_sec": elapsed}
 
@@ -569,7 +526,7 @@ print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}, "
 #
 # Ported from the v1 fix (`fix stream getting frozen issue`, Fall-Recording),
 # keeping v2's own decisions: ONNX/torch pose via `model.track`, the four-model
-# ensemble, the recorder, the metrics tap and the fall-clip buffer.
+# ensemble, the recorder and the fall-clip buffer.
 # ---------------------------------------------------------------------------
 _frame_cv = threading.Condition()
 _latest_jpeg: "bytes | None" = None
@@ -777,11 +734,11 @@ def _watchdog_loop() -> None:
 def _capture_loop() -> None:
     """The one thread that talks to the camera. Reconnects on anything.
 
-    Everything v2 needs per frame happens here: the pose pass, the tap the
-    metrics run reads, the ensemble decision, the drawings, the recorder queues
-    and the publish into the viewer slot. This thread is also what drains the
-    RTSP socket, so nothing slow may run inline -- the encoders stay on their own
-    worker threads (see _writer_worker).
+    Everything v2 needs per frame happens here: the pose pass, the ensemble
+    decision, the drawings, the recorder queues and the publish into the viewer
+    slot. This thread is also what drains the RTSP socket, so nothing slow may
+    run inline -- the encoders stay on their own worker threads (see
+    _writer_worker).
     """
     global _write_queue, _write_queue_skel
     rtsp_url = _rtsp_url()
@@ -810,11 +767,6 @@ def _capture_loop() -> None:
             for result in stream:
                 if _worker_stop.is_set():
                     break
-                # Cheap identity check after the first frame. model.track()
-                # builds a fresh predictor and dataset on every reconnect and
-                # the tap does not survive one, so re-installing has to be
-                # automatic rather than remembered.
-                _metrics.install_tap(getattr(model.predictor, "dataset", None))
 
                 frame = result.plot()  # BGR ndarray with skeleton + track IDs
 
@@ -829,18 +781,13 @@ def _capture_loop() -> None:
                 # reach the raw half of the hstack below.
                 _draw_falls(frame, people, _last_state)
 
-                # A measurement run must never touch a VideoWriter — the encode
-                # is most of what it would otherwise be measuring. Everything
-                # below (manual recording AND the automatic fall-clip capture)
-                # is skipped during a metrics run for the same reason.
-                #
                 # need_skel: build the skeleton canvas only when something will
                 # actually use it. Set FALL_CLIPS_ENABLED=0 in .env to drop the
                 # auto-capture side of this if the stream is struggling — that
                 # removes an extra full result.plot() call from every frame
                 # instead of only the ones being manually recorded.
                 need_skel = _recording or fall_recorder.ENABLED
-                if not _metrics_mode and need_skel:
+                if need_skel:
                     # Same annotations, blank canvas. plot() draws onto whatever
                     # `img` it is handed (it deep-copies it first, so `blank` is
                     # untouched), and boxes/labels/conf off leaves only the pose.
@@ -919,18 +866,6 @@ def _capture_loop() -> None:
                                 _write_queue_skel.put(skel)
 
                 ok, buf = cv2.imencode(".jpg", frame, jpeg_params)
-
-                # Scored after the encode so latency_ms covers the whole path
-                # from frame arrival to a frame ready to send, and outside the
-                # lock because add() only touches this run's own list.
-                # Bind first: stop_recording() sets _run to None from the Flask
-                # thread, and a check-then-call would occasionally hit None and
-                # take the whole feed down for a reconnect. Adding a row to an
-                # already-finished run is harmless — nothing reads it again.
-                run = _run
-                if run is not None and _metrics_mode:
-                    run.add(result, time.perf_counter(), fall_state=_last_state)
-
                 if not ok:
                     continue
                 _publish(buf.tobytes())

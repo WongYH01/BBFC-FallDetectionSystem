@@ -20,7 +20,6 @@ demo-cam/pi/
 demo-cam/v1/
 demo-cam/v2/fall_clips/
 demo-cam/v2/videos/
-demo-cam/v2/metrics/
 demo-cam/recordings/
 demo-cam/.env
 services/detection/.env

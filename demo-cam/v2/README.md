@@ -19,8 +19,6 @@ v1's camera plumbing and replaces the fall decision.
   (`v2/videos/pose_<ts>.mp4` is a side-by-side of the camera image and the
   annotated frame). Set `ALLOW_MANUAL_RECORDING=0` to refuse it with a 403;
   the detection service ships with it off.
-- A metrics run writes CSV/JSON and no video at all, and stays allowed either
-  way.
 
 ## How the alarm is decided
 
@@ -131,6 +129,24 @@ Get it wrong and the window's time span changes, not just its cost: 15 fps with
   the classifier adds ~0.7 ms once a second. One CPU serves one camera at 30 fps
   with `VID_STRIDE=2`.
 
+## Switching pose models
+
+Time the candidates offline, on the machine that will run the detector, before
+changing `POSE_MODEL`:
+
+```
+python scripts/bench_pose.py                  # every .pt/.onnx in demo-cam/models
+python scripts/bench_pose.py --camera-fps 15 --imgsz 480 --threads 4
+```
+
+It reads `POSE_IMGSZ` / `POSE_THREADS` / `POSE_DEVICE` from the environment,
+then `services/detection/.env`, then `demo-cam/.env` (the detection service's order),
+and prints ms per frame, fps, the `VID_STRIDE` / `STREAM_FRAME_STRIDE` pair that
+keeps rows ~67 ms apart for that camera, and a verdict: `fits` (≥1.3× the rate
+those strides demand, leaving room for tracking, drawing and encoding),
+`marginal` or `too slow`. It runs without the camera. After the switch, the
+`fps` field of `/stream/status` is the live check.
+
 ## One reader, many viewers
 
 `detector.py` runs **one capture+inference thread per process**, started on the
@@ -153,11 +169,9 @@ and the watchdog that restarts it when the hardware encoder wedges.
 app.py            Flask routes: /, /video_feed, /stream/status, /record/*,
                   /fall/status, /fall_clips/status; reloader off by design
 detector.py       RTSP -> ONNX pose -> calibrated model -> MJPEG / status / recorder
-metrics.py        measurement mode, model columns and provenance
 fall_recorder.py  pre-buffered skeleton-only fall clips; publishes clip_started /
                   clip_ready events (pop_events) for the detection service, and
                   only ever names a file `fall_<ts>.mp4` once it is complete
 replay.py         offline replay of one video through the same decision stack
-METRICS.md        what the measurement numbers do and do not mean
 ../pi/            Pi-side MediaMTX config + encoder watchdog (deploy there)
 ```

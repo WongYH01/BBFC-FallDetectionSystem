@@ -191,25 +191,39 @@ def frame_keypoints(model, frame: np.ndarray, imgsz: int = 640) -> np.ndarray:
 
 
 def predict_timings(model, frame: np.ndarray, imgsz: int = 640,
-                    warmup: int = 5, runs: int = 30) -> dict:
+                    warmup: int = 5, runs: int = 30,
+                    device: str = "cpu") -> dict:
     """Per-frame latency of the whole Ultralytics predict call on one frame.
 
     `bench.benchmark_pose` answers the same question for the PyTorch model; this
     is its backend-agnostic twin, kept here so an ONNX file can be timed through
-    the identical preprocessing and postprocessing path.
+    the identical preprocessing and postprocessing path. It also times a `.pt`
+    file on `device` (scripts/bench_pose.py uses it for both backends).
     """
+    # Any device but cpu may be a GPU ("cuda", "cuda:0", "0"); wait for it, or
+    # the timer stops before the kernels do.
+    sync = lambda: None
+    if str(device) != "cpu":
+        import torch
+        if torch.cuda.is_available():
+            sync = torch.cuda.synchronize
+
+    def run():
+        model.predict(frame, imgsz=imgsz, device=device, verbose=False)
+        sync()
+
     for _ in range(warmup):
-        model.predict(frame, imgsz=imgsz, device="cpu", verbose=False)
+        run()
 
     timings = []
     for _ in range(runs):
         t0 = time.perf_counter()
-        model.predict(frame, imgsz=imgsz, device="cpu", verbose=False)
+        run()
         timings.append((time.perf_counter() - t0) * 1000.0)
 
     clean = _iqr_filter(np.asarray(timings))
     return {
-        "device": "cpu",
+        "device": device,
         "imgsz": imgsz,
         "mean_ms": float(clean.mean()),
         "std_ms": float(clean.std()),
