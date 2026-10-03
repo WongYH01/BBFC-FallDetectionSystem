@@ -32,10 +32,10 @@ public class TemplateMessageRenderer implements MessageRenderer {
             .appendPattern("d MMMM yyyy h:mm")
             .appendText(ChronoField.AMPM_OF_DAY, Map.of(0L, "am", 1L, "pm"))
             .toFormatter()
-            .withZone(ZoneId.systemDefault());
+            .withZone(ZoneId.of("Asia/Singapore"));
 
     private static final DateTimeFormatter CLOCK_TIME = DateTimeFormatter.ofPattern("HH:mm")
-            .withZone(ZoneId.systemDefault());
+            .withZone(ZoneId.of("Asia/Singapore"));
 
     private static void validateTemplate(String template, Set<String> knownValues, String propertyName){
         Matcher matcher = PLACEHOLDER.matcher(template);

@@ -588,6 +588,9 @@ def _close_stream(stream) -> None:
     a wedged stream.
     """
     dataset = getattr(getattr(model, "predictor", None), "dataset", None)
+    if hasattr(dataset, "caps") and hasattr(dataset, "threads"):
+        _close_loader(dataset)
+        dataset = None
     for obj, what in ((dataset, "dataset"), (stream, "generator")):
         close = getattr(obj, "close", None)
         if close is None:
@@ -596,6 +599,51 @@ def _close_stream(stream) -> None:
             close()
         except Exception as exc:  # noqa: BLE001 - teardown must never raise
             print(f"[detector] closing the {what} failed: {exc!r}")
+
+
+def _close_loader(dataset) -> None:
+    """LoadStreams.close() without the segfault.
+
+    Ultralytics' own close() joins each grab thread for 5s and then releases
+    the capture regardless. On a wedged RTSP stream the thread is still inside
+    cap.grab() -- FFmpeg only gives up after its 30s interrupt timeout -- so
+    release() frees the decoder under it and the process dies with SIGSEGV
+    (exit 139), taking the whole service down with it. Here a capture is only
+    released once its reader has actually exited; a stuck one is handed to a
+    reaper thread that waits it out and releases it then.
+    """
+    dataset.running = False  # every grab thread checks this between reads
+    pending = []
+    for i, (thread, cap) in enumerate(zip(dataset.threads, dataset.caps)):
+        if cap is None:
+            continue
+        # Take ownership: the loader's own close() (which __next__ still calls
+        # once the reader dies) skips a None slot, so nothing releases it twice.
+        dataset.caps[i] = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+        if thread is not None and thread.is_alive():
+            pending.append((thread, cap))
+        else:
+            _release_capture(cap)
+    if pending:
+        print(f"[detector] {len(pending)} capture(s) still blocked in a read "
+              f"-- releasing once the read times out")
+        threading.Thread(target=_reap_captures, args=(pending,),
+                         name="detector-reaper", daemon=True).start()
+
+
+def _reap_captures(pending) -> None:
+    for thread, cap in pending:
+        thread.join()
+        _release_capture(cap)
+
+
+def _release_capture(cap) -> None:
+    try:
+        cap.release()
+    except Exception as exc:  # noqa: BLE001 - teardown must never raise
+        print(f"[detector] releasing the capture failed: {exc!r}")
 
 
 def _publish(jpeg: bytes) -> None:
