@@ -4,8 +4,8 @@ Run this on the machine that will run the detection container, before switching
 pose models (say yolo26n -> yolo26s or yolo26m). It needs no camera, no Pi and
 no running service:
 
-    python scripts/bench_pose.py                      # every .pt/.onnx in demo-cam/models
-    python scripts/bench_pose.py demo-cam/models/yolo26s-pose.pt --camera-fps 15
+    python scripts/bench_pose.py                      # every .pt/.onnx in models/
+    python scripts/bench_pose.py models/yolo26s-pose.pt --camera-fps 15
     python scripts/bench_pose.py --imgsz 480 --threads 4
     python scripts/bench_pose.py --video videos/some_clip.mp4
 
@@ -14,11 +14,11 @@ outliers dropped), frames per second, and the `VID_STRIDE` /
 `STREAM_FRAME_STRIDE` pair that keeps keypoint rows ~67 ms apart for the given
 camera, which is the spacing the fall classifier was trained on. Pick the
 strides from here, not by feel: the wrong pair changes the time span of a
-60-row window, not just its cost (see demo-cam/v2/README.md, "Row spacing").
+60-row window, not just its cost (see v2/README.md, "Row spacing").
 
 Timing uses the settings the live detector reads -- `POSE_IMGSZ` (640),
 `POSE_THREADS` (2, ONNX Runtime's pool) and `POSE_DEVICE` (cpu for ONNX, CUDA
-when available for .pt) from the environment and demo-cam/.env -- so the
+when available for .pt) from the environment and .env -- so the
 numbers carry over. Each row is labelled with those settings.
 
 Verdicts compare pose fps with the rate the recommended strides demand:
@@ -31,11 +31,11 @@ Verdicts compare pose fps with the rate the recommended strides demand:
     too slow   < 1.0x    the pose pass cannot keep up; rows drift apart
     failed               the file did not load; the run carries on
 
-This replaces demo-cam v2's old metrics run, which could never read faster than
+This replaces v2's old metrics run, which could never read faster than
 the camera and silenced fall alerts while it ran. After a switch, check the
 live rate with the always-on `fps` field of `/stream/status`.
 
-It deliberately does not import demo-cam's `detector` or `app`: both load the
+It deliberately does not import v2's `detector` or `app`: both load the
 pose model and read the environment at import time.
 """
 from __future__ import annotations
@@ -45,8 +45,8 @@ import os
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-MODELS_DIR = REPO_ROOT / "demo-cam" / "models"
+ROOT = Path(__file__).resolve().parents[1]          # services/detection
+MODELS_DIR = ROOT / "models"
 
 TARGET_ROWS_PER_SEC = 15.0                    # training rows: 2 frames apart at 30 fps
 TARGET_SPACING_MS = 1000.0 / TARGET_ROWS_PER_SEC
@@ -148,8 +148,8 @@ def make_timer(frame=None, warmup: int = 10, runs: int = 60):
     def time_model(path, imgsz, threads):
         import numpy as np
 
-        if str(REPO_ROOT) not in sys.path:
-            sys.path.insert(0, str(REPO_ROOT))
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
         from ultralytics import YOLO
 
         from fallcore import onnxpose
@@ -214,13 +214,12 @@ def format_table(rows: list[dict], camera_fps: float) -> str:
 
 
 def _load_env() -> None:
-    """Read the same .env files as the detection service, without overriding."""
+    """Read the detection service's .env, without overriding."""
     try:
         from dotenv import load_dotenv
     except ImportError:
         return
-    load_dotenv(REPO_ROOT / "services" / "detection" / ".env")
-    load_dotenv(REPO_ROOT / "demo-cam" / ".env")
+    load_dotenv(ROOT / ".env")
 
 
 def main() -> int:

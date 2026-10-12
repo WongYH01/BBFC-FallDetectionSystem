@@ -31,7 +31,7 @@ from . import config as cfg
 def resolve_weights(scale: str) -> str:
     """Path or name to hand Ultralytics for a given scale.
 
-    Prefers a checkpoint already on disk (demo-cam/models has yolo26n-pose.pt);
+    Prefers a checkpoint already on disk (models/ may hold yolo26n-pose.pt);
     otherwise returns the bare asset name and lets Ultralytics download it.
     """
     if scale not in cfg.POSE_BACKBONES:

@@ -1,6 +1,6 @@
 """Detection service entry point.
 
-Wires the unmodified demo-cam v2 app to the notification service:
+Wires the unmodified v2 app to the notification service:
 
 * the shared capture thread is started at boot, not on the first viewer, so
   the room is watched whether or not anybody has the page open;
@@ -24,7 +24,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from .config import REPO_ROOT, SERVICE_DIR, V2_DIR, Settings
+from .config import SERVICE_DIR, V2_DIR, Settings
 from .notifier import NotificationClient
 from .outbox import run_outbox
 from .spool import Outbox
@@ -35,23 +35,21 @@ def _load_env() -> None:
     """Load .env files without overriding real environment variables.
 
     Compose passes the settings as environment variables; a local run reads
-    services/detection/.env, falling back to demo-cam/.env for the stream and
-    model settings shared with the demo.
+    services/detection/.env.
     """
     load_dotenv(SERVICE_DIR / ".env")
-    load_dotenv(REPO_ROOT / "demo-cam" / ".env")
 
 
 def _import_v2(settings: Settings):
-    """Import demo-cam v2's modules after the environment is in place.
+    """Import v2's modules after the environment is in place.
 
     `detector` and `app` read the environment (and load the pose model) at
     import time, so this must not happen until `.env` is loaded.
     """
-    # The repo root carries the `fallcore` package; demo-cam/v2 carries
+    # services/detection carries the `fallcore` package; v2/ carries
     # `detector`, `fall_recorder` and `app`. Running as `python -m service.main`
     # from services/detection puts neither on sys.path.
-    for path in (str(REPO_ROOT), str(V2_DIR)):
+    for path in (str(SERVICE_DIR), str(V2_DIR)):
         if path not in sys.path:
             sys.path.insert(0, path)
     detector = importlib.import_module("detector")

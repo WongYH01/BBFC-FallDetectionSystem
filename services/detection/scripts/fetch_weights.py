@@ -7,9 +7,9 @@ This script downloads them from
 
     junyuu/fall-detection-bbfc
 
-into exactly the paths `demo-cam/v2` resolves by default:
+into exactly the paths `v2` resolves by default (relative to services/detection):
 
-    demo-cam/models/yolo26n-pose.onnx
+    models/yolo26n-pose.onnx
     runs/checkpoints/augnone_ms_coords_hn_s99.pt
     runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz
 
@@ -27,13 +27,13 @@ is an error, not a warning. The revision is pinned to the commit those hashes
 were taken from, so a deployment cannot silently change under you.
 
 The repo is private, so a Hugging Face **read** token is required, and it must
-come from demo-cam/.env:
+come from services/detection/.env:
 
     FALL_WEIGHTS_TOKEN=hf_xxx
 
 That file is already the deployment secrets file for the Flask app and is
 gitignored. Create the token at https://huggingface.co/settings/tokens (read
-scope), copy demo-cam/.env.example to demo-cam/.env if it does not exist yet,
+scope), copy .env.example to .env if it does not exist yet,
 and add the line.
 
 There is no other auth path: no CLI flag, no process environment variable, no
@@ -54,7 +54,7 @@ import shutil
 import sys
 from pathlib import Path
 
-#: The one variable the script reads; written into demo-cam/.env by the operator.
+#: The one variable the script reads; written into services/detection/.env by the operator.
 TOKEN_VAR = "FALL_WEIGHTS_TOKEN"
 
 DEFAULT_REPO = "junyuu/fall-detection-bbfc"
@@ -66,7 +66,7 @@ DEFAULT_REVISION = "09c33ba5d37d0bf38ab3f42d4be631732daaef00"
 #: remote path in the repo -> (path under the target root, sha256)
 FILES = {
     "pose/yolo26n-pose-imgsz640.onnx": (
-        "demo-cam/models/yolo26n-pose.onnx",
+        "models/yolo26n-pose.onnx",
         "ea6b37044a5784d279dd93837b2fd89aaa2e0db720ad0928b4de2d78ad1f5c57"),
     "checkpoints/augnone_ms_coords_hn_s99.pt": (
         "runs/checkpoints/augnone_ms_coords_hn_s99.pt",
@@ -97,8 +97,8 @@ def read_token(env_file: Path) -> str:
     """
     if not env_file.exists():
         raise FileNotFoundError(
-            f"{env_file} not found -- copy demo-cam/.env.example to "
-            f"demo-cam/.env and add {TOKEN_VAR}=hf_... (read token from "
+            f"{env_file} not found -- copy .env.example to "
+            f".env and add {TOKEN_VAR}=hf_... (read token from "
             f"https://huggingface.co/settings/tokens)")
     for raw in env_file.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -145,7 +145,7 @@ def fetch_one(repo: str, revision: str, remote: str, root: Path,
     except HfHubHTTPError as exc:
         raise RuntimeError(
             f"cannot download {remote} from {repo}: {exc}. The repo is "
-            f"private: set {TOKEN_VAR} in demo-cam/.env to a read token."
+            f"private: set {TOKEN_VAR} in services/detection/.env to a read token."
         ) from exc
 
     got = sha256(cached)
@@ -166,7 +166,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=str(Path(__file__).resolve().parents[1]),
-                    help="tree the weights are written into (default: repo root)")
+                    help="tree the weights are written into (default: services/detection)")
     ap.add_argument("--repo", default=DEFAULT_REPO)
     ap.add_argument("--revision", default=DEFAULT_REVISION)
     ap.add_argument("--force", action="store_true",
@@ -174,8 +174,8 @@ def main() -> int:
     ap.add_argument("--check", action="store_true",
                     help="verify the local files only; never download")
     ap.add_argument("--env-file", default=str(
-        Path(__file__).resolve().parents[1] / "demo-cam" / ".env"),
-        help="secrets file holding FALL_WEIGHTS_TOKEN (default: demo-cam/.env)")
+        Path(__file__).resolve().parents[1] / ".env"),
+        help="secrets file holding FALL_WEIGHTS_TOKEN (default: services/detection/.env)")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()

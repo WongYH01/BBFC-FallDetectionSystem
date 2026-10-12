@@ -31,7 +31,7 @@ across page reloads. `detector.py` now runs one capture thread for the whole
 process and fans the finished frames out to every viewer.
 
 Both demos have that restructure now: it landed in `demo-cam/v1/detector.py` and
-was ported to `demo-cam/v2/detector.py`, which shares one capture thread the same
+was ported to `services/detection/v2/detector.py`, which shares one capture thread the same
 way, adds `VID_STRIDE` (the socket is still drained at full rate) and reports the
 reader at `/stream/status` — `viewers`, `fps`, `reconnects`, `age_sec`.
 

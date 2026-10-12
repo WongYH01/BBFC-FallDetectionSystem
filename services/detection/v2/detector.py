@@ -61,7 +61,7 @@ RTSP_PORT       = os.environ.get("MEDIAMTX_RTSP_PORT", "8554")
 STREAM_PATH     = os.environ.get("STREAM_PATH", "cam")
 
 # Pose weights: the ONNX export by default (notebook 18), either the shared
-# demo-cam/models copy or the one under the repo's runs/onnx/. Ultralytics
+# models/ copy or the one under runs/onnx/. Ultralytics
 # dispatches .onnx to ONNX Runtime when it is installed; set POSE_MODEL to a
 # .pt path to fall back to torch.
 #
@@ -79,11 +79,12 @@ POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
 # leaves ONNX Runtime's default. Only applies to the ONNX backend.
 POSE_THREADS = int(os.environ.get("POSE_THREADS", "2"))
 
-REPO_ROOT  = Path(__file__).resolve().parents[2]
-MODELS_DIR = Path(__file__).resolve().parents[1] / "models"
+# services/detection: models/ and runs/ sit next to this v2/ folder.
+ROOT       = Path(__file__).resolve().parents[1]
+MODELS_DIR = ROOT / "models"
 _POSE_CANDIDATES = [
     MODELS_DIR / f"{POSE_SCALE}-pose.onnx",
-    REPO_ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz{IMGSZ}.onnx",
+    ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz{IMGSZ}.onnx",
 ]
 MODEL_NAME = os.environ.get("POSE_MODEL") or str(
     next((p for p in _POSE_CANDIDATES if p.exists()), _POSE_CANDIDATES[0]))
@@ -120,7 +121,7 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # ---------------------------------------------------------------------------
 _CKPT_NAMES = ("augnone_ms_coords_hn_s99.pt",)
 _HEAD_NAME = "probe_augnone_ms_coords_hn_s99.npz"
-_CKPT_DIR = REPO_ROOT / "runs" / "checkpoints"
+_CKPT_DIR = ROOT / "runs" / "checkpoints"
 ENSEMBLE_CKPTS = (
     [Path(p) for p in os.environ["ENSEMBLE_CKPTS"].split(os.pathsep)]
     if os.environ.get("ENSEMBLE_CKPTS")
@@ -472,7 +473,7 @@ def _rtsp_url() -> str:
 if MODEL_NAME.lower().endswith(".onnx") and not Path(MODEL_NAME).exists():
     raise FileNotFoundError(
         f"pose model {MODEL_NAME!r} not found. Export it with notebook 18 "
-        f"(runs/onnx/) or copy it into demo-cam/models/, or set POSE_MODEL.")
+        f"(runs/onnx/) or copy it into models/, or set POSE_MODEL.")
 _missing = [str(p) for p in ENSEMBLE_CKPTS if not Path(p).exists()]
 _missing += [str(h) for h in HEADS if h is not None and not Path(h).exists()]
 if _missing:

@@ -12,7 +12,7 @@ backbone swapped to **YOLO26** and the decision layer rebuilt for deployment.
 
 ## The live system
 
-**[`demo-cam/v2`](demo-cam/v2/README.md)** is what runs on the camera: ONNX pose
+**[`services/detection/v2`](services/detection/v2/README.md)** is what runs on the camera: ONNX pose
 on CPU, one window scored per second, a logistic head fitted on the room, a
 rolling mean of four windows with a hysteresis latch, and a descent gate.
 
@@ -35,31 +35,34 @@ clip in this project comes from one room.
 ## Layout
 
 ```
-fallcore/        the pipeline as an importable package
-  config.py        every hyperparameter, with references to the paper
-  extract.py       frozen YOLO26-Pose -> cached (frames, 17, 3) keypoint arrays
-  onnxpose.py      the ONNX export of that backbone and its parity checks
-  data.py          windowing, padding, the input-feature variants
-  model.py         the Transformer classifier (+ BiLSTM / CNN / MLP baselines)
-  train.py         AdamW loop, early stopping on validation F1
-  evaluate.py      clip and sliding-window protocols, metrics
-  calibrate.py     the per-room logistic head and the window kinematics
-  stream.py        the live decision: ring buffer, rolling mean, latch, gate
-  infer.py         one video file -> verdict + annotated render
-  manifest.py      video ingest, label inference, the frozen stratified split
-  le2i.py caucafall.py gmdcsa.py omnifall.py picam.py   dataset adapters
+services/
+  detection/       everything the fall detector needs, self-contained
+    fallcore/        the pipeline as an importable package
+      config.py        every hyperparameter, with references to the paper
+      extract.py       frozen YOLO26-Pose -> cached (frames, 17, 3) keypoint arrays
+      onnxpose.py      the ONNX export of that backbone and its parity checks
+      data.py          windowing, padding, the input-feature variants
+      model.py         the Transformer classifier (+ BiLSTM / CNN / MLP baselines)
+      train.py         AdamW loop, early stopping on validation F1
+      evaluate.py      clip and sliding-window protocols, metrics
+      calibrate.py     the per-room logistic head and the window kinematics
+      stream.py        the live decision: ring buffer, rolling mean, latch, gate
+      infer.py         one video file -> verdict + annotated render
+      manifest.py      video ingest, label inference, the frozen stratified split
+      le2i.py caucafall.py gmdcsa.py omnifall.py picam.py   dataset adapters
+    v2/              the deployed Flask app (see its README)
+    service/         v2 as a container: always-on capture + alert/clip outbox
+    scripts/
+      fetch_weights.py        pull the deployment weights from Hugging Face
+      fit_calibration_head.py fit the room head on that room's own clips
+      bench_pose.py           time pose models, recommend the stream strides
+    tests/           unittest suite (service + bench_pose)
+    models/ runs/ data/ videos/   weights, checkpoints, corpora   (all gitignored)
+  notification/    the alerting service (Spring Boot): Telegram, escalation, storage
 demo-cam/
-  v2/              the deployed Flask app (see its README)
   v1/              the earlier bounding-box-ratio demo, kept for comparison
   pi/              MediaMTX config + the encoder watchdog for the Pi
-services/
-  detection/       v2 as a container: always-on capture + alert/clip outbox
-  notification/    the alerting service (Spring Boot): Telegram, escalation, storage
 demo-tele/         the earlier Telegram bench for the alert wording
-scripts/
-  fetch_weights.py        pull the deployment weights from Hugging Face
-  fit_calibration_head.py fit the room head on that room's own clips
-runs/ data/ videos/       checkpoints, corpora and caches   (all gitignored)
 ```
 
 The detection service ([`services/detection`](services/detection/README.md))
@@ -71,13 +74,14 @@ refused (`ALLOW_MANUAL_RECORDING=0`) and the local clip is deleted after upload.
 ## Setup
 
 ```bash
+cd services/detection
 pip install -e .
 python scripts/fetch_weights.py     # ONNX pose + the calibrated pair
 ```
 
 `fetch_weights.py` pulls three files (~17 MB) from the private Hugging Face repo
 `junyuu/fall-detection-bbfc`, pinned to a revision and each verified against its
-SHA-256. It reads the token from `demo-cam/.env` only — `FALL_WEIGHTS_TOKEN=hf_…`
+SHA-256. It reads the token from `services/detection/.env` only — `FALL_WEIGHTS_TOKEN=hf_…`
 with read scope, no other auth path. `--check` verifies local files without one.
 
 ## Three things worth knowing
@@ -90,7 +94,7 @@ a plausible-looking number.
 keypoints at 640; another scale hands it an input distribution it never saw.
 
 **The head is a commissioning artefact, not a weight.** It is fitted on one
-installation's own falls and ADLs (`scripts/fit_calibration_head.py`), and it is
+installation's own falls and ADLs (`services/detection/scripts/fit_calibration_head.py`), and it is
 what takes clip F1 from 0.818 to 0.967. Running the checkpoint without one is
 supported and scores lower. Moving the camera costs accuracy but not the head:
 refit when you can, keep running when you cannot.

@@ -12,11 +12,9 @@ from pathlib import Path
 
 #: services/detection -- the directory holding .env, the Dockerfile and tests.
 SERVICE_DIR = Path(__file__).resolve().parents[1]
-#: Repository root; the service reuses demo-cam/v2 and fallcore from here.
-REPO_ROOT = Path(__file__).resolve().parents[3]
 #: The v2 detection app (detector.py, fall_recorder.py, app.py).
-V2_DIR = REPO_ROOT / "demo-cam" / "v2"
-#: Where demo-cam/v2 writes the skeleton-only fall clips by default.
+V2_DIR = SERVICE_DIR / "v2"
+#: Where v2 writes the skeleton-only fall clips by default.
 DEFAULT_CLIPS_DIR = V2_DIR / "fall_clips"
 
 

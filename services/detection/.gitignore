@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 spool/
 tests/__pycache__/
+
+# Weights (scripts/fetch_weights.py) and v2's recordings
+models/
+v2/videos/
+v2/fall_clips/

@@ -28,20 +28,20 @@ from fallcore import config as fcfg
 from fallcore import extract as fextract
 from fallcore.stream import EnsembleStream
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 # Same default as detector.py: the calibrated pair (one backbone + the head
 # fitted on this room). Keep them in step -- the offline replay is what makes a
 # live number believable.
 DEFAULT_CKPTS = [
-    str(REPO_ROOT / "runs" / "checkpoints" / n)
+    str(ROOT / "runs" / "checkpoints" / n)
     for n in ("augnone_ms_coords_hn_s99.pt",)
 ]
-DEFAULT_HEAD = str(REPO_ROOT / "runs" / "checkpoints"
+DEFAULT_HEAD = str(ROOT / "runs" / "checkpoints"
                    / "probe_augnone_ms_coords_hn_s99.npz")
 POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
 _DEFAULT_ONNX = [
-    Path(__file__).resolve().parents[1] / "models" / f"{POSE_SCALE}-pose.onnx",
-    REPO_ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz640.onnx",
+    ROOT / "models" / f"{POSE_SCALE}-pose.onnx",
+    ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz640.onnx",
 ]
 
 

@@ -322,7 +322,7 @@ def build_clips(man: pd.DataFrame, scale: str = cfg.DEFAULT_SCALE,
 
 #: demo-cam v2's decision, by registry name: the mean P(fall) of these four,
 #: smoothed over the last `buffer` windows and latched. Keep in step with
-#: `_CKPT_NAMES` in demo-cam/v2/detector.py -- the four files must be the same.
+#: `_CKPT_NAMES` in v2/detector.py -- the four files must be the same.
 ENSEMBLES: dict[str, tuple[str, ...]] = {
     "v2 ensemble": ("paper replication", "Kaggle + hard neg",
                     "coords + hard neg", "OmniFall"),

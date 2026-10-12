@@ -11,8 +11,7 @@ name: detection
 services:
   detection:
     build:
-      context: ../..
-      dockerfile: services/detection/Dockerfile
+      context: .
     image: bbfc/detection:latest
     restart: unless-stopped
     env_file:
@@ -24,11 +23,11 @@ services:
       SERVICE_UI_HOST: 0.0.0.0
       SPOOL_DIR: /data/outbox
     volumes:
-      - ../../demo-cam/models:/app/demo-cam/models:ro
-      - ../../runs/checkpoints:/app/runs/checkpoints:ro
+      - ./models:/app/models:ro
+      - ./runs/checkpoints:/app/runs/checkpoints:ro
       # The clips volume holds only skeleton-only mp4s; they are deleted after
       # upload unless KEEP_UPLOADED_CLIPS=1.
-      - clips:/app/demo-cam/v2/fall_clips
+      - clips:/app/v2/fall_clips
       - spool:/data/outbox
     ports:
       - "127.0.0.1:5005:5005"

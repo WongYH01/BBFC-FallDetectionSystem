@@ -13,16 +13,17 @@ examples/
 *.npz
 
 # The research side of the project, which this repo does not carry: it tracks
-# the deployment subset — fallcore, demo-cam, and the two scripts that stand a
-# deployment up. Training, dataset preparation and the analysis notebooks live
-# in the working tree but are not part of what ships.
+# the deployment subset — fallcore, the v2 app and the scripts that stand a
+# deployment up (all under services/detection). Training, dataset preparation
+# and the analysis notebooks live in the working tree but are not part of what
+# ships.
 notebooks/
-fallcore/picam2.py
-scripts/download_upfall.py
-scripts/extract_omnifall_pose.py
-scripts/prepare_upfall.py
-scripts/render_picam.py
-scripts/train_augmented_single.py
+services/detection/fallcore/picam2.py
+services/detection/scripts/download_upfall.py
+services/detection/scripts/extract_omnifall_pose.py
+services/detection/scripts/prepare_upfall.py
+services/detection/scripts/render_picam.py
+services/detection/scripts/train_augmented_single.py
 
 # Environments
 .venv*/

@@ -4,17 +4,13 @@ __pycache__/
 *venv/
 *.log
 
-# Model weights (shared by v1 and v2)
+# Model weights (v1)
 models/
 
 # v1 demo recordings
 v1/videos/
 v1/metrics/
 v1/fall_clips/
-
-# v2 demo recordings
-v2/videos/
-v2/fall_clips/
 
 # manual recorder clips (record.py)
 recordings/

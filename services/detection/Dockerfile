@@ -1,11 +1,11 @@
-# Detection service: demo-cam v2 + the notification outbox.
+# Detection service: v2 + the notification outbox.
 #
-# Build from the REPOSITORY ROOT (the compose file does this for you):
-#   docker build -f services/detection/Dockerfile -t bbfc/detection .
+# Build from services/detection (the compose files do this for you):
+#   docker build -t bbfc/detection .
 #
-# Weights are not baked in. The compose file bind-mounts
-# demo-cam/models/ and runs/checkpoints/ read-only; fetch them on the host
-# with scripts/fetch_weights.py first.
+# Weights are not baked in. The compose file bind-mounts models/ and
+# runs/checkpoints/ read-only; fetch them on the host with
+# scripts/fetch_weights.py first.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -27,8 +27,8 @@ WORKDIR /app
 RUN pip install --index-url https://download.pytorch.org/whl/cpu \
         torch==2.13.0 torchvision==0.28.0
 
-COPY services/detection/requirements.txt /app/services/detection/requirements.txt
-RUN pip install -r /app/services/detection/requirements.txt
+COPY requirements.txt /app/requirements.txt
+RUN pip install -r /app/requirements.txt
 # ultralytics depends on opencv-python, and both packages install into the same
 # cv2/ directory: uninstalling just opencv-python deletes files the headless
 # build also owns, leaving no importable cv2. Remove both, then reinstall the
@@ -36,11 +36,11 @@ RUN pip install -r /app/services/detection/requirements.txt
 RUN pip uninstall -y opencv-python opencv-python-headless \
     && pip install opencv-python-headless==5.0.0.93
 
-# The detection stack and the service, exactly as the repo lays them out:
-# fallcore at the root, demo-cam/v2 next to it, the service under services/.
+# The detection stack and the service, laid out as in services/detection:
+# fallcore, v2 and service side by side under /app.
 COPY fallcore /app/fallcore
-COPY demo-cam/v2 /app/demo-cam/v2
-COPY services/detection/service /app/services/detection/service
+COPY v2 /app/v2
+COPY service /app/service
 
 # The app runs as a non-root user; the clip directory and the spool live on
 # volumes. Every volume mountpoint must EXIST in the image and be owned by that
@@ -55,8 +55,8 @@ COPY services/detection/service /app/services/detection/service
 ENV YOLO_CONFIG_DIR=/tmp/Ultralytics \
     MPLCONFIGDIR=/tmp/matplotlib
 RUN useradd -r -m -d /home/appuser -s /usr/sbin/nologin appuser \
-    && mkdir -p /app/demo-cam/v2/fall_clips /app/demo-cam/v2/videos /data/outbox \
-    && chown -R appuser:appuser /app/demo-cam /data /home/appuser
+    && mkdir -p /app/v2/fall_clips /app/v2/videos /data/outbox \
+    && chown -R appuser:appuser /app/v2 /data /home/appuser
 USER appuser
 
 EXPOSE 5005
@@ -65,5 +65,5 @@ EXPOSE 5005
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5005/stream/status', timeout=4)" || exit 1
 
-WORKDIR /app/services/detection
+WORKDIR /app
 CMD ["python", "-m", "service.main"]

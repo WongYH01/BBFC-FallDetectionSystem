@@ -1,6 +1,6 @@
-"""Turn demo-cam v2's clip lifecycle events into spooled notifications.
+"""Turn v2's clip lifecycle events into spooled notifications.
 
-`fall_recorder` publishes two facts (see demo-cam/v2/fall_recorder.py):
+`fall_recorder` publishes two facts (see v2/fall_recorder.py):
 
     clip_started  -- the alarm latched and a skeleton clip began recording
     clip_ready    -- the clip is complete and playable

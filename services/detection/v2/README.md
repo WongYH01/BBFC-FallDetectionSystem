@@ -1,4 +1,4 @@
-# demo-cam v2 — ONNX pose + calibrated fall detection
+# v2 — ONNX pose + calibrated fall detection
 
 A Flask app on the MediaMTX RTSP feed: live MJPEG with skeletons, manual
 recording, automatic pre-buffered fall clips, and a measurement mode. v2 keeps
@@ -62,31 +62,33 @@ Transfer to a *different room* is untested: every clip here comes from one.
 
 ## Deploy on a new machine
 
-The venv is uv-managed (no pip). From the repo root:
+The venv is uv-managed (no pip) and shared with demo-cam v1. From the repo
+root:
 
 ```
 uv venv demo-cam/.venv
 uv pip install --python demo-cam/.venv/Scripts/python.exe -r demo-cam/requirements.txt
-uv pip install --python demo-cam/.venv/Scripts/python.exe -e .
-python scripts/fetch_weights.py              # ONNX pose + the calibrated pair
-copy demo-cam\.env.example demo-cam\.env     # fill in MediaMTX host/credentials
-cd demo-cam && .venv\Scripts\python.exe v2\app.py
+uv pip install --python demo-cam/.venv/Scripts/python.exe -e services/detection
+cd services/detection
+copy .env.example .env                       # MediaMTX host/credentials, FALL_WEIGHTS_TOKEN
+..\..\demo-cam\.venv\Scripts\python.exe scripts\fetch_weights.py
+..\..\demo-cam\.venv\Scripts\python.exe v2\app.py
 ```
 
-`app.py` reads `.env` from the working directory, so run it from `demo-cam/`; the
-page is on port 5005. The pose pane drives inference — if nobody is watching the
+`app.py` finds `services/detection/.env` by searching up from `v2/`; the page is
+on port 5005. The pose pane drives inference — if nobody is watching the
 MJPEG stream, no frames are scored and the UI reports "No feed".
 
 Offline check before pointing it at the camera, same decision code as the live
 path:
 
 ```
-.venv\Scripts\python.exe v2\replay.py path\to\clip.mp4
+..\..\demo-cam\.venv\Scripts\python.exe v2\replay.py path\to\clip.mp4
 ```
 
 ## Settings
 
-Defaults shown; full list with commentary in `demo-cam/.env.example`.
+Defaults shown; full list with commentary in `services/detection/.env.example`.
 
 | Var | Default | Meaning |
 |---|---|---|
@@ -135,12 +137,12 @@ Time the candidates offline, on the machine that will run the detector, before
 changing `POSE_MODEL`:
 
 ```
-python scripts/bench_pose.py                  # every .pt/.onnx in demo-cam/models
+python scripts/bench_pose.py                  # every .pt/.onnx in models/
 python scripts/bench_pose.py --camera-fps 15 --imgsz 480 --threads 4
 ```
 
 It reads `POSE_IMGSZ` / `POSE_THREADS` / `POSE_DEVICE` from the environment,
-then `services/detection/.env`, then `demo-cam/.env` (the detection service's order),
+then `services/detection/.env`,
 and prints ms per frame, fps, the `VID_STRIDE` / `STREAM_FRAME_STRIDE` pair that
 keeps rows ~67 ms apart for that camera, and a verdict: `fits` (≥1.3× the rate
 those strides demand, leaving room for tracking, drawing and encoding),

@@ -5,7 +5,7 @@
 #
 # Needs services/notification/.env and services/detection/.env (copy the
 # .env.example next to each) and the weights on the host
-# (scripts/fetch_weights.py).
+# (services/detection/scripts/fetch_weights.py).
 #
 # The notification stack is included unchanged: its relative paths and its
 # ${...} interpolation still resolve against services/notification/ and its
@@ -26,8 +26,7 @@ include:
 services:
   detection:
     build:
-      context: .
-      dockerfile: services/detection/Dockerfile
+      context: services/detection
     image: bbfc/detection:latest
     restart: unless-stopped
     depends_on:
@@ -44,9 +43,9 @@ services:
       SPOOL_DIR: /data/outbox
       NOTIFICATION_BASE_URL: http://notification:8081/api/v1/notification
     volumes:
-      - ./demo-cam/models:/app/demo-cam/models:ro
-      - ./runs/checkpoints:/app/runs/checkpoints:ro
-      - clips:/app/demo-cam/v2/fall_clips
+      - ./services/detection/models:/app/models:ro
+      - ./services/detection/runs/checkpoints:/app/runs/checkpoints:ro
+      - clips:/app/v2/fall_clips
       - spool:/data/outbox
     ports:
       - "127.0.0.1:5005:5005"

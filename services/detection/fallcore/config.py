@@ -76,7 +76,7 @@ FIGURES_DIR = RUNS_DIR / "figures"
 
 # A yolo26n-pose checkpoint already sits in the demo app's models folder.
 # Reuse it instead of re-downloading; ultralytics fetches the rest on demand.
-LOCAL_WEIGHTS_DIR = ROOT / "demo-cam" / "models"
+LOCAL_WEIGHTS_DIR = ROOT / "models"
 
 
 def ensure_dirs() -> None:

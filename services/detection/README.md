@@ -1,6 +1,6 @@
 # detection service
 
-The demo-cam v2 fall detector as a container, wired to the Java notification
+The v2 fall detector (`v2/`) as a container, wired to the Java notification
 service. One container watches one room: it pulls the MediaMTX RTSP feed, runs
 the calibrated fall decision, and on a latch sends an alert and a skeleton-only
 clip to `services/notification`, which owns Telegram, escalation and storage.
@@ -31,7 +31,7 @@ Weights are artifacts and are bind-mounted, not baked into the image. Fetch
 them once on the host:
 
 ```
-python scripts/fetch_weights.py          # demo-cam/models + runs/checkpoints
+python scripts/fetch_weights.py          # models/ + runs/checkpoints/ (token in .env)
 ```
 
 Then:
@@ -50,14 +50,14 @@ The compose file joins the notification compose's default network, so
 Local run without Docker (from this directory):
 
 ```
-..\..\.venv-train\Scripts\python.exe -m service.main
+..\..\demo-cam\.venv\Scripts\python.exe -m service.main
 ```
 
 ## Configuration
 
 All settings come from the environment; `.env.example` documents every one.
 The required three are `ROOM_ID`, `ROOM_NAME` and `MEDIAMTX_HOST`; the stream,
-pose and fall-decision variables are the ones from `demo-cam/.env.example`.
+pose and fall-decision variables are documented in `v2/README.md`.
 
 The startup guard refuses to run with `FALL_CLIPS_ENABLED=0`: with no viewer
 attached the capture watchdog would drop the RTSP connection after
@@ -92,7 +92,13 @@ matrix; the watcher and outbox tests use a temporary spool and clip directory.
 
 ```
 Dockerfile             python:3.12-slim + ffmpeg; torch from the CPU wheel index
+                       (build context is this directory)
 docker-compose.yml     joins notification_default; bind-mounts weights
+pyproject.toml         the `fallcore` package (`pip install -e .` from here)
+fallcore/              the pose + fall-decision pipeline v2 imports
+v2/                    the Flask app, detector and fall_recorder the service runs
+scripts/               fetch_weights, bench_pose, fit_calibration_head
+models/ runs/          weights and checkpoints (gitignored; fetch_weights.py)
 requirements.txt       runtime pins (opencv headless; torch installed separately)
 service/config.py      Settings.from_env() -- ROOM_ID/ROOM_NAME required
 service/main.py        entry point: env, always-on capture, watcher, outbox, Flask UI
@@ -100,5 +106,5 @@ service/watcher.py     fall_recorder events -> outbox; restart reconciliation
 service/spool.py       append-only JSONL outbox with compaction
 service/notifier.py    HTTP client for POST /events and PUT /events/:id/clip
 service/outbox.py      delivery worker with backoff and clip cleanup
-tests/                 unittest suite
+tests/                 unittest suite (service + scripts/bench_pose.py)
 ```
