@@ -1,0 +1,19 @@
+[Unit]
+Description=Restart MediaMTX when the Pi hardware H.264 encoder wedges
+After=mediamtx.service
+# Not Requires= — the watchdog surviving a mediamtx restart is the whole point.
+Wants=mediamtx.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mediamtx-watchdog
+Restart=always
+RestartSec=5
+
+# Tune without editing the script:
+#Environment=THRESHOLD=20
+#Environment=WINDOW=10
+#Environment=COOLDOWN=120
+
+[Install]
+WantedBy=multi-user.target

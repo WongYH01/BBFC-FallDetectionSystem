@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+*venv/
+*.log
+alerts.yaml.tmp
+*env
+
+# Chat ids discovered at runtime — local to whoever ran the bot.
+seen_chats.json

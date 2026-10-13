@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+*venv/
+*.log
+
+# Model weights (v1)
+models/
+
+# v1 demo recordings
+v1/videos/
+v1/metrics/
+v1/fall_clips/
+
+# manual recorder clips (record.py)
+recordings/

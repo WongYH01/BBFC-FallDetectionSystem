@@ -1,0 +1,44 @@
+# ===========================================================================
+#  demo-tele — sample fall events
+#
+#  Stand-ins for what M5 (Fall Detection Engine) hands to M6 (Alert
+#  Orchestrator) across interface I-3. The field names follow the FallEvent
+#  object in §7.1 of the design document, so the same payload shape drops into
+#  the real orchestrator later.
+#
+#  This file is hand-edited only — the UI never writes it.
+# ===========================================================================
+
+events:
+  - event_id: FE-20260905-0031
+    label: Night fall, high confidence
+    room_id: room-12
+    room: Block A · Room 12
+    ts_trigger: "2026-09-05T03:42:11+08:00"
+    ts_confirmed: "2026-09-05T03:42:19+08:00"
+    confidence: 0.87
+    detector_version: rules-v1.2
+    immobility_s: 8
+    detection_type: Fall — confirmed after 8 s immobility
+
+  - event_id: FE-20260905-0032
+    label: Borderline daytime, low confidence
+    room_id: room-14
+    room: Block A · Room 14
+    ts_trigger: "2026-09-05T14:07:02+08:00"
+    ts_confirmed: "2026-09-05T14:07:08+08:00"
+    confidence: 0.44
+    detector_version: rules-v1.2
+    immobility_s: 6
+    detection_type: Fall — borderline, aspect ratio only
+
+  - event_id: FE-20260905-0033
+    label: Slow slide down a wall
+    room_id: room-12
+    room: Block A · Room 12
+    ts_trigger: "2026-09-05T21:15:40+08:00"
+    ts_confirmed: "2026-09-05T21:15:52+08:00"
+    confidence: 0.66
+    detector_version: rules-v1.2
+    immobility_s: 12
+    detection_type: Fall — confirmed after 12 s immobility

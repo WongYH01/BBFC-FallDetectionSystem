@@ -1,0 +1,42 @@
+*.pdf
+
+# Data and experiment outputs — large, regenerable, not source.
+data/
+runs/
+videos/
+examples/
+
+# Model weights (pretrained YOLO checkpoints download on demand, and the
+# deployment pair comes from Hugging Face via scripts/fetch_weights.py)
+*.pt
+*.onnx
+*.npz
+
+# The research side of the project, which this repo does not carry: it tracks
+# the deployment subset — fallcore, the v2 app and the scripts that stand a
+# deployment up (all under services/detection). Training, dataset preparation
+# and the analysis notebooks live in the working tree but are not part of what
+# ships.
+notebooks/
+services/detection/fallcore/picam2.py
+services/detection/scripts/download_upfall.py
+services/detection/scripts/extract_omnifall_pose.py
+services/detection/scripts/prepare_upfall.py
+services/detection/scripts/render_picam.py
+services/detection/scripts/train_augmented_single.py
+
+# Environments
+.venv*/
+demos/demo-cam/.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.ruff_cache/
+.DS_Store
+
+# Secrets
+/.env*
+!/.env.example.*
