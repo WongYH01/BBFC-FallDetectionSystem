@@ -22,7 +22,7 @@ pip install -r requirements.txt
 ```
 
 ```bash
-cp .env.example .env
+cp .env.example.local .env
 ```
 
 Put your bot token in `.env`, then:
