@@ -32,12 +32,12 @@ clips:
   # Must stay below spring.servlet.multipart.max-file-size, and match the bucket's own limit
   # and STORAGE_FILE_SIZE_LIMIT so all three agree.
   max-bytes: 8388608
+  # Created at startup if absent. A failure here never blocks boot.
+  ensure-bucket: true
 
 supabase:
   storage:
     bucket: skeleton-clips
-    # Created at startup if absent. A failure here never blocks boot.
-    ensure-bucket: true
 
 alerting:
   escalation:

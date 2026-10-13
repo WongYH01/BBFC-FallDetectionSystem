@@ -2,16 +2,13 @@ package com.bbfc.notification.out.storage;
 
 import com.bbfc.notification.config.SupabaseStorageConfig;
 import com.bbfc.notification.core.domain.EventId;
-import com.bbfc.notification.core.port.ClipContent;
 import com.bbfc.notification.core.port.ClipStorageException;
+import com.bbfc.notification.core.port.ClipStore;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.web.client.RestClient;
-
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.binaryEqualTo;
@@ -22,18 +19,17 @@ import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.put;
 import static com.github.tomakehurst.wiremock.client.WireMock.putRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class SupabaseStorageClipStoreTest {
+class SupabaseStorageClipStoreTest extends ClipStoreContract {
 
     @RegisterExtension
     static WireMockExtension wireMock = WireMockExtension.newInstance().build();
 
-    private static final String OBJECT = "/object/skeleton-clips/room-12/FE-1.mp4";
+    private static final String OBJECT_PREFIX = "/object/skeleton-clips/";
+    private static final String OBJECT = OBJECT_PREFIX + "room-12/FE-1.mp4";
     private static final String BUCKET = "/bucket";
-    private static final byte[] CLIP_BYTES = "fake-mp4-bytes".getBytes(StandardCharsets.UTF_8);
 
     private SupabaseStorageClipStore store;
 
@@ -42,23 +38,27 @@ class SupabaseStorageClipStoreTest {
         SupabaseStorageConfig config =
                 new SupabaseStorageConfig(wireMock.baseUrl(), "test-key", "skeleton-clips");
         store = new SupabaseStorageClipStore(config, RestClient.builder());
-    }
 
-    private static ClipContent clip() {
-        return new ClipContent("FE-1.mp4", "video/mp4", CLIP_BYTES.length,
-                () -> new ByteArrayInputStream(CLIP_BYTES));
-    }
-
-    @Test
-    void uploadsTheClipAndReturnsTheStorageKey() {
         wireMock.stubFor(put(urlEqualTo(OBJECT)).willReturn(aResponse()
                 .withStatus(200)
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"Key\":\"skeleton-clips/room-12/FE-1.mp4\",\"Id\":\"abc\"}")));
+    }
 
-        String key = store.store("room-12", new EventId("FE-1"), clip());
+    @Override
+    ClipStore store() {
+        return store;
+    }
 
-        assertThat(key).isEqualTo("skeleton-clips/room-12/FE-1.mp4");
+    @Override
+    byte[] storedBytes(String key) {
+        return wireMock.findAll(putRequestedFor(urlEqualTo(OBJECT_PREFIX + key))).getFirst().getBody();
+    }
+
+    @Test
+    void uploadsWithTheServiceKeyAndMp4Headers() {
+        store.store("room-12", new EventId("FE-1"), clip());
+
         wireMock.verify(putRequestedFor(urlEqualTo(OBJECT))
                 .withHeader("Authorization", equalTo("Bearer test-key"))
                 .withHeader("Content-Type", equalTo("video/mp4"))
@@ -82,18 +82,6 @@ class SupabaseStorageClipStoreTest {
                 .withBody("{\"Id\":\"abc\"}")));
 
         assertThatThrownBy(() -> store.store("room-12", new EventId("FE-1"), clip()))
-                .isInstanceOf(ClipStorageException.class);
-    }
-
-    @Test
-    void rejectsARoomIdThatWouldEscapeTheBucket() {
-        assertThatThrownBy(() -> store.store("../../etc", new EventId("FE-1"), clip()))
-                .isInstanceOf(ClipStorageException.class);
-    }
-
-    @Test
-    void rejectsAnEventIdThatWouldEscapeTheBucket() {
-        assertThatThrownBy(() -> store.store("room-12", new EventId("../../etc"), clip()))
                 .isInstanceOf(ClipStorageException.class);
     }
 

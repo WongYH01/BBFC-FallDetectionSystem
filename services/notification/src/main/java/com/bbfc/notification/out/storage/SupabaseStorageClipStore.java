@@ -9,6 +9,7 @@ import com.bbfc.notification.out.storage.dto.SupabaseRequests.CreateBucket;
 import com.bbfc.notification.out.storage.dto.SupabaseRequests.UploadResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -17,16 +18,14 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.io.InputStream;
 import java.util.List;
-import java.util.regex.Pattern;
 
 @Component
+@ConditionalOnProperty(prefix = "clips", name = "store", havingValue = "supabase", matchIfMissing = true)
 public class SupabaseStorageClipStore implements ClipStore {
 
     private static final Logger log = LoggerFactory.getLogger(SupabaseStorageClipStore.class);
     private static final MediaType MP4 = MediaType.valueOf("video/mp4");
     private static final long BUCKET_FILE_SIZE_LIMIT = 8_388_608L;
-
-    private static final Pattern SAFE_SEGMENT = Pattern.compile("[A-Za-z0-9._-]+");
 
     private final RestClient restClient;
     private final String bucket;
@@ -41,12 +40,11 @@ public class SupabaseStorageClipStore implements ClipStore {
 
     @Override
     public String store(String roomId, EventId eventId, ClipContent content) {
-        String room = requireSafe(roomId, "roomId");
-        String event = requireSafe(eventId.eventId(), "eventId");
+        String key = ClipObjectKey.of(roomId, eventId);
 
         try {
             UploadResponse response = restClient.put()
-                    .uri("/object/{bucket}/{room}/{event}.mp4", bucket, room, event)
+                    .uri("/object/{bucket}/{room}/{event}.mp4", bucket, roomId, eventId.eventId())
                     .contentType(MP4)
                     .header(HttpHeaders.CONTENT_LENGTH, Long.toString(content.sizeBytes()))
                     .body(out -> {
@@ -58,12 +56,12 @@ public class SupabaseStorageClipStore implements ClipStore {
                     .body(UploadResponse.class);
 
             if (response == null || response.key() == null) {
-                throw new ClipStorageException("Supabase Storage returned no key for " + event);
+                throw new ClipStorageException("Supabase Storage returned no key for " + eventId.eventId());
             }
-            return response.key();
+            return key;
         } catch (RestClientResponseException e) {
             throw new ClipStorageException(
-                    "Supabase Storage rejected the clip for " + event + ": " + e.getMessage(), e);
+                    "Supabase Storage rejected the clip for " + eventId.eventId() + ": " + e.getMessage(), e);
         }
     }
 
@@ -86,12 +84,5 @@ public class SupabaseStorageClipStore implements ClipStore {
                 throw new ClipStorageException("Could not create bucket " + bucket + ": " + e.getMessage(), e);
             }
         }
-    }
-
-    private static String requireSafe(String value, String field) {
-        if (value == null || !SAFE_SEGMENT.matcher(value).matches()) {
-            throw new ClipStorageException("Unsafe " + field + " for a storage key: " + value);
-        }
-        return value;
     }
 }

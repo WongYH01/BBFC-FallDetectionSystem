@@ -77,21 +77,21 @@ class AttachClipServiceTest {
     @Test
     void storesTheClipThenSendsItAsAReply() {
         given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(dispatchedAlert()));
-        given(clipStore.store(eq("room-12"), eq(EVENT_ID), any())).willReturn("skeleton-clips/room-12/FE-1.mp4");
+        given(clipStore.store(eq("room-12"), eq(EVENT_ID), any())).willReturn("room-12/FE-1.mp4");
         given(notificationChannel.sendClipReply(eq(501L), any()))
                 .willReturn(Optional.of(new ClipDelivery("file-abc", 601L)));
 
         boolean sent = service.attach(EVENT_ID, content(1024));
 
         assertThat(sent).isTrue();
-        verify(clipRecorder).markStored(EVENT_ID, SkeletonClip.stored("skeleton-clips/room-12/FE-1.mp4", NOW));
+        verify(clipRecorder).markStored(EVENT_ID, SkeletonClip.stored("room-12/FE-1.mp4", NOW));
         verify(clipRecorder).markDelivered(EVENT_ID, new ClipDelivery("file-abc", 601L));
     }
 
     @Test
     void aRejectedTelegramSendStillLeavesTheClipStored() {
         given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(dispatchedAlert()));
-        given(clipStore.store(any(), any(), any())).willReturn("skeleton-clips/room-12/FE-1.mp4");
+        given(clipStore.store(any(), any(), any())).willReturn("room-12/FE-1.mp4");
         given(notificationChannel.sendClipReply(any(Long.class), any())).willReturn(Optional.empty());
 
         boolean sent = service.attach(EVENT_ID, content(1024));
@@ -114,7 +114,7 @@ class AttachClipServiceTest {
     @Test
     void aSecondClipIsRejectedBeforeAnythingIsUploaded() {
         Alert alert = dispatchedAlert();
-        alert.attachClip(SkeletonClip.stored("skeleton-clips/room-12/FE-1.mp4", NOW));
+        alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", NOW));
         given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(alert));
 
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
@@ -153,7 +153,7 @@ class AttachClipServiceTest {
                 new Confidence(0.92),
                 Instant.parse("2026-09-16T10:00:00Z"));
         given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(alert));
-        given(clipStore.store(any(), any(), any())).willReturn("skeleton-clips/room-12/FE-1.mp4");
+        given(clipStore.store(any(), any(), any())).willReturn("room-12/FE-1.mp4");
 
         boolean sent = service.attach(EVENT_ID, content(1024));
 

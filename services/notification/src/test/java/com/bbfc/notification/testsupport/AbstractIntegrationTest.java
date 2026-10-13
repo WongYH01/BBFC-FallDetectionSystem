@@ -26,7 +26,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         // Both background triggers off — tests drive the scheduler and the handler directly.
         "telegram.polling-enabled=false",
         "alerting.escalation.scheduler-enabled=false",
-        "supabase.storage.ensure-bucket=false"
+        "clips.store=supabase",
+        "clips.ensure-bucket=false"
 })
 @Testcontainers
 public abstract class AbstractIntegrationTest {
