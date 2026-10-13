@@ -1,9 +1,9 @@
 # Detection service: v2 + the notification outbox.
 #
-# Build from services/detection (the compose files do this for you):
+# Build from services/detection (the root docker-compose.yml does this for you):
 #   docker build -t bbfc/detection .
 #
-# Weights are not baked in. The compose file bind-mounts models/ and
+# Weights are not baked in. The root docker-compose.yml bind-mounts models/ and
 # runs/checkpoints/ read-only; fetch them on the host with
 # scripts/fetch_weights.py first.
 FROM python:3.12-slim

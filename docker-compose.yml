@@ -1,30 +1,79 @@
-# Whole system in one project: db + storage + notification + detection.
+# Whole system: db + storage + notification + detection.
 #
-#   docker compose up -d --build            (from the repository root)
-#   docker compose logs -f detection notification
+#   docker compose up -d --build                        local (default via COMPOSE_PROFILES in .env)
+#   docker compose --env-file .env.cloud up -d --build  cloud: Cloud SQL + GCS, no db/storage
+#   docker compose up -d db storage                     infra only, for running Spring from the IDE
 #
-# Needs services/notification/.env and services/detection/.env (copy the
-# .env.example next to each) and the weights on the host
-# (services/detection/scripts/fetch_weights.py).
-#
-# The notification stack is included unchanged: its relative paths and its
-# ${...} interpolation still resolve against services/notification/ and its
-# .env. Detection is declared here rather than included, because its own
-# compose file joins the notification stack's network as an external one
-# (notification_default), which does not exist when both run as one project;
-# here they simply share this project's default network, where the API is
-# still http://notification:8081.
-#
-# The per-service compose files still work on their own. Note the volumes
-# here are prefixed "bbfc_", so this project does not see the data of a stack
-# previously started from services/notification/ (notification_db-data).
+# Needs .env (copy .env.example.local), services/detection/.env (copy its
+# .env.example) and the weights on the host (services/detection/scripts/fetch_weights.py).
 name: bbfc
 
-include:
-  - path: services/notification/docker-compose.yml
-
 services:
+  db:
+    profiles: ["local"]
+    image: supabase/postgres:15.14.1.170
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${DB_PORT}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./services/notification/docker/storage-role-password.sql:/docker-entrypoint-initdb.d/zz-storage-roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  storage:
+    profiles: ["local"]
+    image: supabase/storage-api:v1.75.0
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://supabase_storage_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      PGRST_JWT_SECRET: ${SUPABASE_JWT_SECRET}
+      SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      ANON_KEY: ${SUPABASE_ANON_KEY}
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      FILE_SIZE_LIMIT: ${STORAGE_FILE_SIZE_LIMIT}
+    ports:
+      - "127.0.0.1:${STORAGE_PORT}:5000"
+    volumes:
+      - clip-data:/var/lib/storage
+
+  notification:
+    profiles: ["local", "cloud"]
+    build: services/notification
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+      storage:
+        condition: service_started
+        required: false
+    environment:
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://db:5432/postgres?currentSchema=alerts}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SUPABASE_STORAGE_URL: ${SUPABASE_STORAGE_URL:-http://storage:5000}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      CLIPS_STORE: ${CLIPS_STORE:-supabase}
+      CLIPS_GCS_BUCKET: ${CLIPS_GCS_BUCKET:-}
+      CLIPS_ENSURE_BUCKET: ${CLIPS_ENSURE_BUCKET:-true}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_GROUP_ID: ${TELEGRAM_CHAT_GROUP_ID}
+      GOOGLE_APPLICATION_CREDENTIALS: /creds.json
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ./services/notification/config:/app/config:ro
+      - ${GCLOUD_ADC_PATH:-./services/notification/docker/adc-placeholder.json}:/creds.json:ro
+
   detection:
+    profiles: ["local", "cloud"]
     build:
       context: services/detection
     image: bbfc/detection:latest
@@ -51,5 +100,7 @@ services:
       - "127.0.0.1:5005:5005"
 
 volumes:
+  db-data: {}
+  clip-data: {}
   clips: {}
   spool: {}

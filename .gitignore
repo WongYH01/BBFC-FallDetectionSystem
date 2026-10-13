@@ -27,7 +27,7 @@ services/detection/scripts/train_augmented_single.py
 
 # Environments
 .venv*/
-demo-cam/.venv/
+demos/demo-cam/.venv/
 
 # Python
 __pycache__/
@@ -36,3 +36,7 @@ __pycache__/
 .ipynb_checkpoints/
 .ruff_cache/
 .DS_Store
+
+# Secrets
+/.env*
+!/.env.example.*

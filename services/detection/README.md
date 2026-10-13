@@ -37,13 +37,12 @@ python scripts/fetch_weights.py          # models/ + runs/checkpoints/ (token in
 Then:
 
 ```
-cd services/notification && docker compose up -d      # db + storage + notification
-cd services/detection
 copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*
-docker compose up -d --build
+copy ..\..\.env.example.local ..\..\.env              # notification settings
+docker compose up -d --build                          # repo root docker-compose.yml
 ```
 
-The compose file joins the notification compose's default network, so
+Detection and notification share the root project's network, so
 `http://notification:8081/api/v1/notification` resolves. The UI is published on
 `127.0.0.1:5005` only (it has no auth). Logs: `docker compose logs -f detection`.
 
@@ -93,7 +92,6 @@ matrix; the watcher and outbox tests use a temporary spool and clip directory.
 ```
 Dockerfile             python:3.12-slim + ffmpeg; torch from the CPU wheel index
                        (build context is this directory)
-docker-compose.yml     joins notification_default; bind-mounts weights
 pyproject.toml         the `fallcore` package (`pip install -e .` from here)
 fallcore/              the pose + fall-decision pipeline v2 imports
 v2/                    the Flask app, detector and fall_recorder the service runs
