@@ -22,8 +22,9 @@ __version__ = "0.1.0"
 
 __all__ = [
     "bench", "calibrate", "caucafall", "config", "data", "decide", "evaluate",
-    "extract", "gmdcsa", "infer", "interpret", "le2i", "manifest", "model",
-    "omnifall", "picam", "rulebased", "stream", "train", "viz",
+    "extract", "fall_decision", "gmdcsa", "infer", "interpret", "le2i",
+    "manifest", "model", "omnifall", "picam", "rulebased", "stream", "train",
+    "viz",
 ]
 
 

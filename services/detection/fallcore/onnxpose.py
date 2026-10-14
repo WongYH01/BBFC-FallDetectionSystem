@@ -30,7 +30,7 @@ import numpy as np
 
 from . import config as cfg
 from .bench import _iqr_filter
-from .extract import _largest_person, resolve_weights
+from .extract import resolve_weights, subject_row
 
 #: Where exported graphs live. `runs/` is gitignored, so exports are a local
 #: artifact like the checkpoints, not something to commit.
@@ -172,22 +172,11 @@ def session_summary(path: str | Path) -> dict:
 def frame_keypoints(model, frame: np.ndarray, imgsz: int = 640) -> np.ndarray:
     """One frame -> the cache's `(17, 3)` `(y, x, conf)` row for the largest person.
 
-    Byte-for-byte the same convention as `extract.extract_video`: most pixels
-    -> largest box -> keypoints in pixels -> swapped and divided by frame height
-    and width. Frames with no detection come back as zeros, as in the cache.
+    The cache's own conversion (`extract.subject_row`), so a benchmarked frame
+    is the row the cache and the live detector would store.
     """
     r = model.predict(frame, imgsz=imgsz, device="cpu", verbose=False)[0]
-    kp = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
-    idx = _largest_person(r)
-    keypoints = getattr(r, "keypoints", None)
-    if idx is not None and keypoints is not None and keypoints.data is not None \
-            and len(keypoints.data) > idx:
-        k = keypoints.data[idx].cpu().numpy()
-        h, w = r.orig_shape
-        kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)
-        kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)
-        kp[:, 2] = k[:, 2]
-    return kp
+    return subject_row(r)[0]
 
 
 def predict_timings(model, frame: np.ndarray, imgsz: int = 640,

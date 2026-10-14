@@ -36,6 +36,7 @@ import pandas as pd
 
 from . import calibrate
 from . import config as cfg
+from .fall_decision import DEPLOYED_CHECKPOINT, DEPLOYED_HEAD, FallDecision
 
 CLIPS_DIR = cfg.DATA_DIR / "picam"
 
@@ -98,8 +99,8 @@ MODELS: dict[str, str] = {
 #: it is in-sample and its numbers are a description of the fitted set, not a
 #: prediction. Quote the cross-subject figure, not this file's score.
 CALIBRATED: dict[str, tuple[str, str]] = {
-    "ms coords + room head": ("augnone_ms_coords_hn_s99.pt",
-                              "probe_augnone_ms_coords_hn_s99.npz"),
+    # The pair demo-cam v2 deploys (`fallcore.fall_decision`).
+    "ms coords + room head": (DEPLOYED_CHECKPOINT, DEPLOYED_HEAD),
     # The same backbone and fitting recipe, plus the three scale-free descent
     # measures appended to every embedding (fit_calibration_head.py
     # --extra-kinematics).
@@ -127,7 +128,8 @@ CALIBRATED: dict[str, tuple[str, str]] = {
 #: either room. 0.12 removes the last two picam-2 false alarms as well, but
 #: costs a `fall sitting` clip whose fastest window is 0.11 -- a fall from a
 #: seated position barely moves the hips. `runs/metrics/descent_gate_sweep.csv`.
-V2_MIN_DESCENT = 0.10
+#: The value lives in `fallcore.fall_decision`; this name is kept for notebooks.
+V2_MIN_DESCENT = FallDecision.min_descent
 
 #: Subject boundaries, as the first capture time of each round. Taken from the
 #: session timeline rather than from a gap threshold: the round 4 -> 5 gap is
@@ -320,16 +322,18 @@ def build_clips(man: pd.DataFrame, scale: str = cfg.DEFAULT_SCALE,
 # either one comes out of the same scoring and the same file layout.
 # ---------------------------------------------------------------------------
 
-#: demo-cam v2's decision, by registry name: the mean P(fall) of these four,
-#: smoothed over the last `buffer` windows and latched. Keep in step with
-#: `_CKPT_NAMES` in v2/detector.py -- the four files must be the same.
+#: demo-cam v2's earlier decision, by registry name: the mean P(fall) of these
+#: four, smoothed over the last `buffer` windows and latched. The camera now
+#: runs the calibrated pair (`fallcore.fall_decision`); this is kept to compare.
 ENSEMBLES: dict[str, tuple[str, ...]] = {
     "v2 ensemble": ("paper replication", "Kaggle + hard neg",
                     "coords + hard neg", "OmniFall"),
 }
 
-#: demo-cam v2's defaults (BUFFER_LEN, FALL_CLEAR_BELOW, FALL_CLEAR_WINDOWS).
-V2_BUFFER, V2_CLEAR_BELOW, V2_CLEAR_WINDOWS = 4, 0.2, 2
+#: demo-cam v2's defaults (BUFFER_LEN, FALL_CLEAR_BELOW, FALL_CLEAR_WINDOWS),
+#: read from `fallcore.fall_decision`; the names are kept for notebooks.
+V2_BUFFER, V2_CLEAR_BELOW, V2_CLEAR_WINDOWS = (
+    FallDecision.buffer, FallDecision.clear_below, FallDecision.clear_windows)
 
 
 def resolve_checkpoint(model: str | Path) -> Path:
@@ -404,37 +408,34 @@ class Detector:
 
 
 def load_detector(model: str | Path, device: str = "cpu",
-                  threshold: float = cfg.EVAL.threshold,
+                  threshold: float = FallDecision.threshold,
                   buffer: int = V2_BUFFER,
                   clear_below: float = V2_CLEAR_BELOW,
                   clear_windows: int = V2_CLEAR_WINDOWS,
-                  min_descent: float = 0.0) -> Detector:
+                  min_descent: float = V2_MIN_DESCENT) -> Detector:
     """A `Detector` from a registry name, a `CALIBRATED` name, or a checkpoint.
+
+    The rule defaults to the one demo-cam v2 deploys, descent gate included;
+    pass `min_descent=0.0` to reproduce a result measured before 2026-09-24.
 
     The ensemble's members must agree on backbone and window length, since they
     score the same buffered keypoints; mixing scales is refused rather than
-    silently fed the wrong pose. A calibrated pair is checked the same way: the
-    head records the backbone it was fitted against, and a mismatch is an error
-    rather than a silently misapplied head.
+    silently fed the wrong pose. A calibrated pair is built as a
+    `FallDecision`, which refuses a head fitted for another backbone rather
+    than silently misapplying it.
     """
     from . import train as T
 
     if isinstance(model, str) and model in CALIBRATED:
-        from .calibrate import ProbeHead
-        from .stream import EnsembleStream
-
         ckpt_name, head_name = CALIBRATED[model]
         path = resolve_checkpoint(ckpt_name)
         head_path = resolve_head(head_name)
-        head = ProbeHead.load(head_path)
-        m, mc, tc, scale = T.load_checkpoint(path, device="cpu")
-        calibrate.validate(head, path, mc.features, tc.seq_len)
-        stream = EnsembleStream(
-            [path], heads=[head], buffer=buffer, threshold=threshold,
-            clear_below=clear_below, clear_windows=clear_windows,
-            min_descent=min_descent,
-            seq_len=tc.seq_len, frame_stride=cfg.PREPROCESS.frame_stride,
-            step=cfg.EVAL.sliding_stride, device=device)
+        decision = FallDecision(
+            checkpoints=(path,), heads=(head_path,), buffer=buffer,
+            threshold=threshold, clear_below=clear_below,
+            clear_windows=clear_windows, min_descent=min_descent)
+        stream = decision.build(device=device)
+        _m, mc, tc, scale = T.load_checkpoint(path, device="cpu")
         return Detector(name=model, scale=scale,
                         features=f"{mc.features} -> room head",
                         checkpoints=[path], train_cfg=tc, stream=stream,

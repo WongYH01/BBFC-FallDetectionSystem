@@ -46,10 +46,9 @@ import fall_recorder
 import numpy as np
 from ultralytics import YOLO
 
-from fallcore import config as fcfg
-from fallcore import extract as fextract
 from fallcore import onnxpose as fonnx
-from fallcore.stream import EnsembleStream
+from fallcore.extract import subject_row
+from fallcore.fall_decision import FallDecision
 
 # ---------------------------------------------------------------------------
 # Config — reuse the same env vars the Flask app already reads
@@ -118,46 +117,38 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # same room from a second camera position it scores 0.909 against 0.724 for the
 # bare checkpoint, so a moved camera is worth refitting, not a reason the model
 # stops working.
-# ---------------------------------------------------------------------------
-_CKPT_NAMES = ("augnone_ms_coords_hn_s99.pt",)
-_HEAD_NAME = "probe_augnone_ms_coords_hn_s99.npz"
-_CKPT_DIR = ROOT / "runs" / "checkpoints"
-ENSEMBLE_CKPTS = (
-    [Path(p) for p in os.environ["ENSEMBLE_CKPTS"].split(os.pathsep)]
-    if os.environ.get("ENSEMBLE_CKPTS")
-    else [_CKPT_DIR / n for n in _CKPT_NAMES]
-)
-# One head per checkpoint, or None to use that checkpoint's own classifier.
-# `CALIBRATION_HEAD=` (empty) in .env runs the checkpoints uncalibrated;
-# pointing it at another backbone's probe is refused rather than silently applied,
-# because a head is a function of one backbone's embedding space.
-_CALIBRATION_HEAD = os.environ.get("CALIBRATION_HEAD",
-                                   str(_CKPT_DIR / _HEAD_NAME)).strip()
-HEADS = ([Path(_CALIBRATION_HEAD)] if _CALIBRATION_HEAD else
-         [None] * len(ENSEMBLE_CKPTS))
-BUFFER_LEN         = int(os.environ.get("BUFFER_LEN", "4"))
-FALL_THRESHOLD     = float(os.environ.get("FALL_THRESHOLD", "0.5"))
-FALL_CLEAR_BELOW   = float(os.environ.get("FALL_CLEAR_BELOW", "0.2"))
-FALL_CLEAR_WINDOWS = int(os.environ.get("FALL_CLEAR_WINDOWS", "2"))
-
-# Body lengths per second the hips must fall somewhere inside a window before
-# that window may *raise* the alarm. Without it the verdict is re-made every
-# second on windows holding no descent at all -- a person lying still -- where a
-# fall and a deliberate lie-down are the same picture, and the decision falls
-# back on whatever that room's furniture height happens to be. Latching and
-# clearing are untouched: a fall is raised on its descent and held.
+#
+# All of it -- the pair, the rule and the sampling -- is `fallcore.fall_decision`,
+# which replay.py and picam scoring build from too. The environment overrides it
+# under the names below:
+#
+# ENSEMBLE_CKPTS takes an os.pathsep list of checkpoints. CALIBRATION_HEAD names
+# the head; `CALIBRATION_HEAD=` (empty) runs the checkpoints uncalibrated, and a
+# head fitted for another backbone is refused rather than silently applied,
+# because a head is a function of one backbone's embedding space. BUFFER_LEN,
+# FALL_THRESHOLD, FALL_CLEAR_BELOW and FALL_CLEAR_WINDOWS set the rolling rule.
+#
+# FALL_MIN_DESCENT: body lengths per second the hips must fall somewhere inside
+# a window before that window may *raise* the alarm. Without it the verdict is
+# re-made every second on windows holding no descent at all -- a person lying
+# still -- where a fall and a deliberate lie-down are the same picture, and the
+# decision falls back on whatever that room's furniture height happens to be.
+# Latching and clearing are untouched: a fall is raised on its descent and held.
 # 0 restores the behaviour every result before 2026-09-24 was measured at.
 # See fallcore.picam.V2_MIN_DESCENT and runs/metrics/descent_gate_sweep.csv.
-FALL_MIN_DESCENT = float(os.environ.get("FALL_MIN_DESCENT", "0.10"))
-
-# Frames between the rows that build a classifier window. The default 2 matches
-# training (every 2nd frame of ~30 fps = ~67 ms per row). If the pose backbone
-# cannot run at ~30 fps and the loader is effectively decimating for you (the
-# yolo26m CPU path runs ~14 fps, ~73 ms per row), set this to 1: the rows then
-# arrive at roughly the trained spacing and a 60-row window still covers ~4 s.
-# Leaving it at 2 there would stretch the window to ~9 s of wall clock.
-STREAM_FRAME_STRIDE = int(os.environ.get(
-    "STREAM_FRAME_STRIDE", str(fcfg.PREPROCESS.frame_stride)))
+#
+# STREAM_FRAME_STRIDE: frames between the rows that build a classifier window.
+# The default 2 matches training (every 2nd frame of ~30 fps = ~67 ms per row).
+# If the pose backbone cannot run at ~30 fps and the loader is effectively
+# decimating for you (the yolo26m CPU path runs ~14 fps, ~73 ms per row), set
+# this to 1: the rows then arrive at roughly the trained spacing and a 60-row
+# window still covers ~4 s. Leaving it at 2 there would stretch the window to
+# ~9 s of wall clock.
+#
+# A value that does not parse or is out of range stops the detector here, with
+# the variable's name, rather than booting it mis-tuned.
+DECISION = FallDecision.from_env(os.environ)
+# ---------------------------------------------------------------------------
 
 # Decode-and-score one frame in every VID_STRIDE. Ultralytics' loader still
 # grabs every frame and only fully retrieves every Nth, so this buys CPU back
@@ -318,26 +309,6 @@ _STALE_SECONDS = 1.5        # no frames for this long -> report nothing, not "cl
 _RED = (0, 0, 255)
 
 
-def _largest_person_keypoints(result) -> np.ndarray:
-    """This frame's subject as `(17, 3)` `(y, x, conf)`, cache convention.
-
-    The same rule the training cache used: the biggest box is the subject, and
-    a frame with no detection becomes zeros -- the classifier was trained with
-    exactly those rows, so the absence is information, not something to hide.
-    """
-    kp = np.zeros((fcfg.N_KEYPOINTS, 3), dtype=np.float32)
-    idx = fextract._largest_person(result)
-    keypoints = getattr(result, "keypoints", None)
-    if idx is not None and keypoints is not None and keypoints.data is not None \
-            and len(keypoints.data) > idx:
-        k = keypoints.data[idx].cpu().numpy()
-        h, w = result.orig_shape
-        kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)   # y first
-        kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)   # then x
-        kp[:, 2] = k[:, 2]
-    return kp
-
-
 def _boxes(result) -> list:
     """Per-box width/height ratios for the debug overlay; never the alarm."""
     boxes = getattr(result, "boxes", None)
@@ -365,12 +336,11 @@ def _update_falls(result) -> list:
     the drawing, the recorder and `/fall/status`.
     """
     global _people, _last_state, _alarm_since, _last_update
-    kp = _largest_person_keypoints(result)
-    # The window kinematics divide by the body's longest dimension, which needs
-    # x and y in the same units; the frame itself carries the ratio, and a
-    # reconnect can change resolution, so it is read per frame rather than once.
-    h, w = result.orig_shape
-    _stream.aspect = w / max(h, 1)
+    # The training cache's rule: the biggest box is the subject, and a frame
+    # with no detection is zeros -- the classifier was trained with exactly
+    # those rows, so the absence is information, not something to hide. The
+    # aspect comes per frame because a reconnect can change resolution.
+    kp, _stream.aspect = subject_row(result)
     with _fall_lock:
         if _stream.observe(kp):
             _last_state = _stream.state()
@@ -437,16 +407,16 @@ def get_fall_status() -> dict:
             # -- the ensemble decision (v2) ---------------------------------
             "p_fall": round(float(state.get("p_fall", 0.0)), 4),
             "rolling_mean": round(float(state.get("rolling_mean", 0.0)), 4),
-            "buffer_len": int(state.get("buffer_len", BUFFER_LEN)),
+            "buffer_len": int(state.get("buffer_len", DECISION.buffer)),
             "buffer_values": state.get("buffer_values", []),
             "n_windows": int(state.get("n_windows", 0)),
             "ready": bool(state.get("ready", False)),
             "buffered_frames": int(state.get("buffered_frames", 0)),
-            "threshold": FALL_THRESHOLD,
-            "min_descent": FALL_MIN_DESCENT,
+            "threshold": DECISION.threshold,
+            "min_descent": DECISION.min_descent,
             "descent_speed": state.get("descent_speed", 0.0),
             "gated": bool(state.get("gated", False)),
-            "clear_below": FALL_CLEAR_BELOW,
+            "clear_below": DECISION.clear_below,
             "models": state.get("models") or _stream.classifier.names,
             "model_probs": state.get("model_probs", []),
             "pose_backend": POSE_BACKEND,
@@ -474,8 +444,8 @@ if MODEL_NAME.lower().endswith(".onnx") and not Path(MODEL_NAME).exists():
     raise FileNotFoundError(
         f"pose model {MODEL_NAME!r} not found. Export it with notebook 18 "
         f"(runs/onnx/) or copy it into models/, or set POSE_MODEL.")
-_missing = [str(p) for p in ENSEMBLE_CKPTS if not Path(p).exists()]
-_missing += [str(h) for h in HEADS if h is not None and not Path(h).exists()]
+_missing = [str(p) for p in DECISION.checkpoints if not p.exists()]
+_missing += [str(h) for h in DECISION.heads if h is not None and not h.exists()]
 if _missing:
     raise FileNotFoundError(
         "model file(s) missing: " + ", ".join(_missing) +
@@ -489,17 +459,10 @@ if POSE_BACKEND == "onnx" and POSE_THREADS > 0:
     fonnx.use_tuned_sessions(threads=POSE_THREADS, spinning=False)
 
 model = YOLO(MODEL_NAME)
-_stream = EnsembleStream(ENSEMBLE_CKPTS, heads=HEADS, buffer=BUFFER_LEN,
-                         threshold=FALL_THRESHOLD, clear_below=FALL_CLEAR_BELOW,
-                         clear_windows=FALL_CLEAR_WINDOWS,
-                         min_descent=FALL_MIN_DESCENT,
-                         frame_stride=STREAM_FRAME_STRIDE, device="cpu")
+_stream = DECISION.build(device="cpu")
 print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}, "
-      f"threads={POSE_THREADS or 'ORT default'}), decision "
-      f"{_stream.classifier.names} buffer={BUFFER_LEN} "
-      f"threshold={FALL_THRESHOLD} min_descent={FALL_MIN_DESCENT} "
-      f"frame_stride={STREAM_FRAME_STRIDE} "
-      f"vid_stride={VID_STRIDE}")
+      f"threads={POSE_THREADS or 'ORT default'}), vid_stride={VID_STRIDE}, "
+      f"decision {DECISION}")
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +529,7 @@ def get_stream_status() -> dict:
     s["viewers"] = _viewers
     s["running"] = _worker is not None and _worker.is_alive()
     s["vid_stride"] = VID_STRIDE
-    s["frame_stride"] = STREAM_FRAME_STRIDE
+    s["frame_stride"] = DECISION.frame_stride
     s["jpeg_quality"] = JPEG_QUALITY
     s["pose_backend"] = POSE_BACKEND
     s["stall_sec"] = STREAM_STALL_SEC

@@ -79,8 +79,10 @@ copy .env.example .env                       # MediaMTX host/credentials, FALL_W
 on port 5005. The pose pane drives inference — if nobody is watching the
 MJPEG stream, no frames are scored and the UI reports "No feed".
 
-Offline check before pointing it at the camera, same decision code as the live
-path:
+Offline check before pointing it at the camera. Replay builds the same Fall
+Decision as the live path (`fallcore.fall_decision`), reads the same settings
+below from the environment, and prints the decision it ran under; a flag such
+as `--min-descent 0` or `--threshold 0.6` overrides one setting on top:
 
 ```
 ..\..\demo-cam\.venv\Scripts\python.exe v2\replay.py path\to\clip.mp4

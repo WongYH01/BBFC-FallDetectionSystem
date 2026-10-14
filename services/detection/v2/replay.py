@@ -1,10 +1,12 @@
 """Replay one video through the v2 decision stack, without camera or Flask.
 
-Feeds every frame through the same pose model and `fallcore.stream` ensemble the
-detector uses, printing each scored window (P(fall), rolling mean, latched
-alarm) and a summary at the end. Use it to sanity-check a checkpoint set, a
-buffer length or a threshold on a recording before pointing v2 at the live
-feed -- the same decision code runs here, only the frame source differs.
+Feeds every frame through the same pose model and the same Fall Decision the
+detector builds (`fallcore.fall_decision`), printing each scored window
+(P(fall), rolling mean, latched alarm) and a summary at the end. Use it to
+sanity-check a checkpoint set, a buffer length or a threshold on a recording
+before pointing v2 at the live feed -- the same decision runs here, read from
+the same environment variables, and only the frame source differs. A flag
+overrides one setting on top of that.
 
     python replay.py path\\to\\clip.mp4
     python replay.py clip.mp4 --buffer 4 --threshold 0.5 --max-frames 900
@@ -21,23 +23,12 @@ import os
 from pathlib import Path
 
 import cv2
-import numpy as np
 from ultralytics import YOLO
 
-from fallcore import config as fcfg
-from fallcore import extract as fextract
-from fallcore.stream import EnsembleStream
+from fallcore.extract import subject_row
+from fallcore.fall_decision import FallDecision
 
 ROOT = Path(__file__).resolve().parents[1]
-# Same default as detector.py: the calibrated pair (one backbone + the head
-# fitted on this room). Keep them in step -- the offline replay is what makes a
-# live number believable.
-DEFAULT_CKPTS = [
-    str(ROOT / "runs" / "checkpoints" / n)
-    for n in ("augnone_ms_coords_hn_s99.pt",)
-]
-DEFAULT_HEAD = str(ROOT / "runs" / "checkpoints"
-                   / "probe_augnone_ms_coords_hn_s99.npz")
 POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
 _DEFAULT_ONNX = [
     ROOT / "models" / f"{POSE_SCALE}-pose.onnx",
@@ -50,19 +41,27 @@ def _default_pose() -> str:
         next((p for p in _DEFAULT_ONNX if p.exists()), _DEFAULT_ONNX[0]))
 
 
-def _keypoints(result) -> np.ndarray:
-    """Same subject conversion as detector/fallcore.extract (largest person)."""
-    kp = np.zeros((fcfg.N_KEYPOINTS, 3), dtype=np.float32)
-    idx = fextract._largest_person(result)
-    keypoints = getattr(result, "keypoints", None)
-    if idx is not None and keypoints is not None and keypoints.data is not None \
-            and len(keypoints.data) > idx:
-        k = keypoints.data[idx].cpu().numpy()
-        h, w = result.orig_shape
-        kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)
-        kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)
-        kp[:, 2] = k[:, 2]
-    return kp
+#: Each decision flag and the environment variable it overrides. A flag is that
+#: variable for this run, parsed and checked exactly as the detector parses it.
+_FLAG_VARS = {
+    "checkpoints": "ENSEMBLE_CKPTS",
+    "head": "CALIBRATION_HEAD",
+    "buffer": "BUFFER_LEN",
+    "threshold": "FALL_THRESHOLD",
+    "clear_below": "FALL_CLEAR_BELOW",
+    "clear_windows": "FALL_CLEAR_WINDOWS",
+    "min_descent": "FALL_MIN_DESCENT",
+    "frame_stride": "STREAM_FRAME_STRIDE",
+}
+
+
+def _decision(args) -> FallDecision:
+    """The detector's Fall Decision: the environment, then the flags given."""
+    env = dict(os.environ)
+    env.update({var: str(getattr(args, flag))
+                for flag, var in _FLAG_VARS.items()
+                if getattr(args, flag) is not None})
+    return FallDecision.from_env(env)
 
 
 def main() -> int:
@@ -71,21 +70,24 @@ def main() -> int:
     ap.add_argument("video")
     ap.add_argument("--pose", default=_default_pose())
     ap.add_argument("--imgsz", type=int, default=640)
-    ap.add_argument("--checkpoints", default=os.pathsep.join(DEFAULT_CKPTS),
-                    help="os.pathsep-separated model paths")
-    ap.add_argument("--head", default=DEFAULT_HEAD,
+    # Every decision flag defaults to "not given": the Fall Decision, with the
+    # environment's overrides, is the default, exactly as the live detector
+    # reads it. A flag replaces one setting on top of that.
+    ap.add_argument("--checkpoints", default=None,
+                    help="os.pathsep-separated model paths (ENSEMBLE_CKPTS)")
+    ap.add_argument("--head", default=None,
                     help="logistic head fitted on this room's clips, or '' for "
-                         "the checkpoint's own classifier")
-    ap.add_argument("--buffer", type=int, default=4)
-    ap.add_argument("--threshold", type=float, default=0.5)
-    ap.add_argument("--clear-below", type=float, default=0.2)
-    ap.add_argument("--clear-windows", type=int, default=2)
-    ap.add_argument("--frame-stride", type=int,
-                    default=int(os.environ.get(
-                        "STREAM_FRAME_STRIDE",
-                        str(fcfg.PREPROCESS.frame_stride))),
-                    help="rows between window samples; 2 matches ~30 fps "
-                         "training data, use 1 when the pose rate is ~15 fps")
+                         "the checkpoints' own classifier (CALIBRATION_HEAD)")
+    ap.add_argument("--buffer", default=None, help="BUFFER_LEN")
+    ap.add_argument("--threshold", default=None, help="FALL_THRESHOLD")
+    ap.add_argument("--clear-below", default=None, help="FALL_CLEAR_BELOW")
+    ap.add_argument("--clear-windows", default=None, help="FALL_CLEAR_WINDOWS")
+    ap.add_argument("--min-descent", default=None,
+                    help="FALL_MIN_DESCENT; 0 turns the descent gate off")
+    ap.add_argument("--frame-stride", default=None,
+                    help="STREAM_FRAME_STRIDE: rows between window samples; 2 "
+                         "matches ~30 fps training data, use 1 when the pose "
+                         "rate is ~15 fps")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--json", action="store_true", help="print machine-readable events")
     args = ap.parse_args()
@@ -99,28 +101,23 @@ def main() -> int:
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
     cap.release()
 
-    ckpts = [Path(p) for p in args.checkpoints.split(os.pathsep) if p]
-    missing = [str(p) for p in ckpts if not p.exists()]
-    if missing:
-        print("missing checkpoint(s): " + ", ".join(missing))
+    try:
+        decision = _decision(args)
+    except ValueError as e:
+        print(e)
         return 1
-    head = Path(args.head) if args.head else None
-    if head is not None and not head.exists():
-        print(f"missing head: {head}")
+    missing = [str(p) for p in decision.checkpoints + decision.heads
+               if p is not None and not p.exists()]
+    if missing:
+        print("missing model file(s): " + ", ".join(missing))
         return 1
     if str(args.pose).endswith(".onnx") and not Path(args.pose).exists():
         print(f"pose model not found: {args.pose}")
         return 1
 
     pose = YOLO(str(args.pose))
-    ensemble = EnsembleStream(ckpts, heads=[head], buffer=args.buffer,
-                              threshold=args.threshold,
-                              clear_below=args.clear_below,
-                              clear_windows=args.clear_windows,
-                              frame_stride=args.frame_stride, device="cpu")
-    print(f"pose {Path(args.pose).name} | models {ensemble.classifier.names} | "
-          f"buffer {args.buffer} | threshold {args.threshold} | "
-          f"frame_stride {args.frame_stride}")
+    ensemble = decision.build(device="cpu")
+    print(f"pose {Path(args.pose).name} | decision {decision}")
     print(f"file {video.name} @ {fps:.1f} fps")
 
     events, frame_no = [], 0
@@ -130,7 +127,8 @@ def main() -> int:
         frame_no += 1
         if args.max_frames and frame_no > args.max_frames:
             break
-        if not ensemble.observe(_keypoints(result)):
+        kp, ensemble.aspect = subject_row(result)
+        if not ensemble.observe(kp):
             continue
         st = ensemble.state()
         t = frame_no / fps
@@ -155,8 +153,10 @@ def main() -> int:
         "alarm": alarm_ever,
         "first_alarm_s": alarm_first,
         "models": ensemble.classifier.names,
-        "buffer": args.buffer,
-        "threshold": args.threshold,
+        "buffer": decision.buffer,
+        "threshold": decision.threshold,
+        "min_descent": decision.min_descent,
+        "decision": str(decision),
     }
     if not args.json:
         print("\n" + json.dumps(summary, indent=2))

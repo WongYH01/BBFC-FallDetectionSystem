@@ -77,6 +77,32 @@ def _largest_person(result) -> int | None:
     return int(np.argmax(areas))
 
 
+def subject_row(result) -> tuple[np.ndarray, float]:
+    """One pose result -> the subject's `(17, 3)` row and the frame's width/height.
+
+    The cache convention, defined here once for the cache builder and every
+    live or offline caller: the largest box is the subject, and its keypoints
+    are stored `(y_norm, x_norm, conf)` -- swapped and divided by the frame
+    height and width. A frame with no detection is a row of zeros, exactly as
+    the classifier was trained on it. The aspect ratio comes back alongside
+    because the window kinematics need x and y in the same units, and a caller
+    that feeds a stream rows without it scores a squashed body.
+    """
+    h, w = result.orig_shape
+    kp = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+    idx = _largest_person(result)
+    keypoints = getattr(result, "keypoints", None)
+    if idx is not None and keypoints is not None and keypoints.data is not None \
+            and len(keypoints.data) > idx:
+        # Ultralytics gives (x, y, conf) in pixels; the paper stores
+        # (y_norm, x_norm, conf). Swap and normalise in one step.
+        k = keypoints.data[idx].cpu().numpy()  # (17, 3)
+        kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)   # y first
+        kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)   # then x
+        kp[:, 2] = k[:, 2]
+    return kp, w / max(h, 1)
+
+
 def pose_device(model, device: str = "cuda") -> str:
     """The device to run an Ultralytics model on, given what that model is.
 
@@ -132,20 +158,7 @@ def extract_video(
     )
 
     for result in stream:
-        h, w = result.orig_shape
-        kp = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
-
-        idx = _largest_person(result)
-        keypoints = getattr(result, "keypoints", None)
-        if idx is not None and keypoints is not None and keypoints.data is not None \
-                and len(keypoints.data) > idx:
-            # Ultralytics gives (x, y, conf) in pixels; the paper stores
-            # (y_norm, x_norm, conf). Swap and normalise in one step.
-            k = keypoints.data[idx].cpu().numpy()  # (17, 3)
-            kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)   # y first
-            kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)   # then x
-            kp[:, 2] = k[:, 2]
-
+        kp, _aspect = subject_row(result)
         frames.append(kp)
         if max_frames is not None and len(frames) >= max_frames:
             break
