@@ -40,7 +40,7 @@ import torch
 
 from . import config as cfg
 from .data import build_features, sliding_starts, take_window
-from .extract import _largest_person, load_pose_model, pose_device
+from .extract import _largest_person, load_pose_model, pose_device, subject_row
 
 # The window duration the classifier was trained at: 60 frames, stride 2, 30 fps.
 TRAIN_WINDOW_SECONDS = (
@@ -146,23 +146,16 @@ def run_pose(
     kps: list[np.ndarray] = []
     boxes: list[np.ndarray] = []
     for result in stream:
-        h, w = result.orig_shape
-        kp = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+        kp, _aspect = subject_row(result)
         bx = np.zeros(5, dtype=np.float32)
 
+        # The same rule `subject_row` used, so the box is the subject's.
         idx = _largest_person(result)
         if idx is not None:
             b = result.boxes
             bx[:4] = b.xyxy[idx].cpu().numpy()
             conf = getattr(b, "conf", None)
             bx[4] = float(conf[idx].cpu()) if conf is not None else 1.0
-
-            k = getattr(result, "keypoints", None)
-            if k is not None and k.data is not None and len(k.data) > idx:
-                arr = k.data[idx].cpu().numpy()
-                kp[:, 0] = np.clip(arr[:, 1] / max(h, 1), 0.0, 1.0)   # y first
-                kp[:, 1] = np.clip(arr[:, 0] / max(w, 1), 0.0, 1.0)   # then x
-                kp[:, 2] = arr[:, 2]
 
         kps.append(kp)
         boxes.append(bx)
