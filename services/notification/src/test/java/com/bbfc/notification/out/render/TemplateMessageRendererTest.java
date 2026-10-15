@@ -49,7 +49,7 @@ class TemplateMessageRendererTest {
     }
 
     private static final DateTimeFormatter CLOCK_TIME =
-            DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault());
+            DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.of("Asia/Singapore"));
 
     private static final Instant DETECTED = Instant.parse("2026-09-16T10:00:00Z");
     private static final Instant HANDLED = Instant.parse("2026-09-16T10:03:00Z");

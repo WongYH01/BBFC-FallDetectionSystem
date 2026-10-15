@@ -1,0 +1,32 @@
+# To get started with Dependabot version updates, you'll need to specify which
+# package ecosystems to update and where the package manifests are located.
+
+version: 2
+updates:
+#  - package-ecosystem: "pip" # See documentation for possible values
+#    directory: "/services/detection" # Location of package manifests
+#    schedule:
+#      interval: "weekly"
+
+  - package-ecosystem: "maven" # See documentation for possible values
+    directory: "/services/notification" # Location of package manifests
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker" # See documentation for possible values
+    directories:
+#      - "/services/detection"
+      - "/services/notification"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "docker-compose" # See documentation for possible values
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions" # See documentation for possible values
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
+
