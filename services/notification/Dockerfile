@@ -22,8 +22,11 @@ RUN java -Djarmode=tools -jar application.jar extract --layers --destination ext
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # (optional) run as non-root
 RUN useradd -r -s /usr/sbin/nologin appuser
+COPY config ./config
 USER appuser
 
 # Optional JVM opts (tune as you like)
