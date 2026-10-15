@@ -11,7 +11,7 @@ name: bbfc
 services:
   db:
     profiles: ["local"]
-    image: supabase/postgres:15.14.1.170
+    image: supabase/postgres:17.11.0.003
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
