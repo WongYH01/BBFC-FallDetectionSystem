@@ -1,0 +1,30 @@
+name: notification
+
+on:
+  workflow_call:
+
+jobs:
+  test:
+    name: Run notification service test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: services/notification
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Give execute permission to mvnw
+        run: chmod +x mvnw
+
+      - name: Run unit tests
+        run: ./mvnw -B verify
