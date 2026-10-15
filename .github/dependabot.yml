@@ -12,6 +12,9 @@ updates:
     directory: "/services/notification" # Location of package manifests
     schedule:
       interval: "weekly"
+    groups:
+      maven:
+        patterns: ["*"]
 
   - package-ecosystem: "docker" # See documentation for possible values
     directories:
@@ -19,14 +22,29 @@ updates:
       - "/services/notification"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "eclipse-temurin"
+        update-types: [ "version-update:semver-major" ]
+      - dependency-name: "maven"
+    groups:
+      docker:
+        patterns: ["*"]
 
   - package-ecosystem: "docker-compose" # See documentation for possible values
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "supabase/postgres"
+        update-types: [ "version-update:semver-major" ]
+    groups:
+      docker-compose:
+        patterns: ["*"]
 
   - package-ecosystem: "github-actions" # See documentation for possible values
     directory: "/" # Location of package manifests
     schedule:
       interval: "weekly"
-
+    groups:
+      github-actions:
+        patterns: ["*"]

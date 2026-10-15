@@ -27,7 +27,7 @@ services:
 
   storage:
     profiles: ["local"]
-    image: supabase/storage-api:v1.75.0
+    image: supabase/storage-api:v1.81.0
     depends_on:
       db:
         condition: service_healthy
