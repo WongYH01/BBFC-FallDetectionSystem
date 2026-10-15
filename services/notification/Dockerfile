@@ -1,5 +1,5 @@
 # ---------- build stage ----------
-FROM maven:3.9.6-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /app
 
 # Pre-fetch deps (faster rebuilds)
