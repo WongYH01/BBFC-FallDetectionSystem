@@ -13,13 +13,13 @@ RUN mvn -q -DskipTests clean package
 # ---------- extract layers ----------
 # Splits the fat jar into dependencies / loader / application, so the run
 # stage's COPY layers below only invalidate for the layer that actually changed.
-FROM eclipse-temurin:21-jre-jammy AS extract
+FROM eclipse-temurin:25-jre-jammy AS extract
 WORKDIR /app
 COPY --from=build /app/target/notification-0.0.1-SNAPSHOT.jar application.jar
 RUN java -Djarmode=tools -jar application.jar extract --layers --destination extracted
 
 # ---------- run stage ----------
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:25-jre-jammy
 WORKDIR /app
 
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
