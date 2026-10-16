@@ -25,11 +25,12 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
-from fallcore.extract import subject_row
+from fallcore.extract import sightings, subject_row
 from fallcore.fall_decision import FallDecision
 
 ROOT = Path(__file__).resolve().parents[1]
 POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
+POSE_TRACKER = os.environ.get("POSE_TRACKER", "bytetrack.yaml")
 _DEFAULT_ONNX = [
     ROOT / "models" / f"{POSE_SCALE}-pose.onnx",
     ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz640.onnx",
@@ -52,6 +53,7 @@ _FLAG_VARS = {
     "clear_windows": "FALL_CLEAR_WINDOWS",
     "min_descent": "FALL_MIN_DESCENT",
     "frame_stride": "STREAM_FRAME_STRIDE",
+    "subjects": "FALL_SUBJECTS",
 }
 
 
@@ -88,6 +90,9 @@ def main() -> int:
                     help="STREAM_FRAME_STRIDE: rows between window samples; 2 "
                          "matches ~30 fps training data, use 1 when the pose "
                          "rate is ~15 fps")
+    ap.add_argument("--subjects", default=None,
+                    help="FALL_SUBJECTS: 'tracked' decides every tracked person "
+                         "separately, 'largest' the largest box alone")
     ap.add_argument("--max-frames", type=int, default=None)
     ap.add_argument("--json", action="store_true", help="print machine-readable events")
     args = ap.parse_args()
@@ -116,33 +121,51 @@ def main() -> int:
         return 1
 
     pose = YOLO(str(args.pose))
-    ensemble = decision.build(device="cpu")
+    ensemble = decision.build_camera(device="cpu")
+    tracked = decision.subjects == "tracked"
     print(f"pose {Path(args.pose).name} | decision {decision}")
     print(f"file {video.name} @ {fps:.1f} fps")
 
+    # The detector tracks (ids are what tie a person's frames together), so
+    # the per-person rule must be replayed through the same tracker.
+    if tracked:
+        results = pose.track(source=str(video), stream=True, imgsz=args.imgsz,
+                             device="cpu", tracker=POSE_TRACKER, persist=True,
+                             verbose=False)
+    else:
+        results = pose.predict(source=str(video), stream=True, imgsz=args.imgsz,
+                               device="cpu", verbose=False)
     events, frame_no = [], 0
     alarm_ever, alarm_first = False, None
-    for result in pose.predict(source=str(video), stream=True, imgsz=args.imgsz,
-                               device="cpu", verbose=False):
+    for result in results:
         frame_no += 1
         if args.max_frames and frame_no > args.max_frames:
             break
-        kp, ensemble.aspect = subject_row(result)
-        if not ensemble.observe(kp):
+        if tracked:
+            frame_input, ensemble.aspect = sightings(result)
+        else:
+            frame_input, ensemble.aspect = subject_row(result)
+        if not ensemble.observe(frame_input):
             continue
         st = ensemble.state()
         t = frame_no / fps
         events.append({"t_s": round(t, 2), "p_fall": round(st["p_fall"], 4),
                        "rolling": round(st["rolling_mean"], 4),
                        "alarm": st["alarm"]})
+        if tracked:
+            events[-1]["subject"] = st["subject"]
+            events[-1]["alarmed_subjects"] = [s["subject"] for s in st["subjects"]
+                                              if s["alarm"]]
         if st["alarm"] and not alarm_ever:
             alarm_ever, alarm_first = True, round(t, 2)
         if args.json:
             print(json.dumps(events[-1]))
         else:
+            who = (f"  subject={st['subject']} of {len(st['subjects'])}"
+                   if tracked else "")
             print(f"t={t:6.2f}s  P(fall)={st['p_fall']:.3f}  "
                   f"rolling={st['rolling_mean']:.3f}  "
-                  f"{'ALARM' if st['alarm'] else 'clear'}")
+                  f"{'ALARM' if st['alarm'] else 'clear'}{who}")
 
     ps = [e["p_fall"] for e in events]
     summary = {
@@ -156,6 +179,7 @@ def main() -> int:
         "buffer": decision.buffer,
         "threshold": decision.threshold,
         "min_descent": decision.min_descent,
+        "subjects": decision.subjects,
         "decision": str(decision),
     }
     if not args.json:

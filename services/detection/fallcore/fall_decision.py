@@ -2,10 +2,13 @@
 
 A Fall Decision is the calibrated pair (one checkpoint plus the room head fitted
 on its embedding), the rule that turns its window scores into an alarm (rolling
-buffer, threshold, hysteresis, descent gate) and the sampling the windows are
-cut with. The live detector, `replay.py` and picam scoring all build their
-`EnsembleStream` from one of these, so the rule a replay or a rendered clip
-scores is the rule the camera runs -- not a copy kept in step by hand.
+buffer, threshold, hysteresis, descent gate), the sampling the windows are
+cut with, and whose keypoints are decided on (every tracked person, or the
+largest box). The live detector, `replay.py` and picam scoring all build their
+streams from one of these, so the rule a replay or a rendered clip scores is
+the rule the camera runs -- not a copy kept in step by hand. picam scoring reads
+keypoint caches that hold the largest box only, so it scores `build`'s single
+stream whatever `subjects` says.
 
 Deliberately light: importing this module pulls in only `fallcore.config`, so a
 test or a CLI can read and compare decisions without torch. `build` imports the
@@ -35,9 +38,18 @@ _RULE_VARS: dict[str, tuple[str, type]] = {
     "FALL_CLEAR_WINDOWS":  ("clear_windows", int),
     "FALL_MIN_DESCENT":    ("min_descent", float),
     "STREAM_FRAME_STRIDE": ("frame_stride", int),
+    "FALL_SUBJECTS":       ("subjects", str),
+    "FALL_RECONNECT_SEC":  ("reconnect_sec", float),
+    "FALL_RECONNECT_DIST": ("reconnect_dist", float),
 }
 _RULE_FIELDS = ("buffer", "threshold", "clear_below", "clear_windows",
-                "min_descent", "frame_stride", "step")
+                "min_descent", "frame_stride", "step", "subjects",
+                "reconnect_sec", "reconnect_dist")
+
+#: How a camera picks whose keypoints it decides on: every tracked person, each
+#: with their own stream (`fallcore.stream.SubjectStreams`), or the largest box
+#: alone, which is the paper's rule and every result before 2026-10-16.
+SUBJECT_RULES = ("tracked", "largest")
 
 
 def _out_of_range(field: str, value) -> str | None:
@@ -48,6 +60,10 @@ def _out_of_range(field: str, value) -> str | None:
         return "must be a probability between 0 and 1"
     if field == "min_descent" and value < 0.0:
         return "must be 0 (gate off) or more"
+    if field == "subjects" and value not in SUBJECT_RULES:
+        return f"must be one of {', '.join(SUBJECT_RULES)}"
+    if field in ("reconnect_sec", "reconnect_dist") and value < 0.0:
+        return "must be 0 (never reconnect) or more"
     return None
 
 
@@ -65,6 +81,15 @@ class FallDecision:
     min_descent: float = 0.10
     frame_stride: int = cfg.PREPROCESS.frame_stride
     step: int = cfg.EVAL.sliding_stride
+    # Whose keypoints are decided on (`SUBJECT_RULES`), and, for "tracked",
+    # how a new tracker id is joined to a subject that was just lost: last
+    # seen at most `reconnect_sec` ago, with its box centre at most
+    # `reconnect_dist` (fractions of the frame) from the new one. Picked, not
+    # tuned: they reproduce the largest-box rule's catches on picam's
+    # single-person falls, see `SubjectStreams`.
+    subjects: str = "tracked"
+    reconnect_sec: float = 2.0
+    reconnect_dist: float = 0.35
 
     def __post_init__(self):
         for field in _RULE_FIELDS:
@@ -89,7 +114,7 @@ class FallDecision:
             if var not in env:
                 continue
             try:
-                value = kind(env[var])
+                value = kind(env[var].strip().lower() if kind is str else env[var])
             except ValueError:
                 raise ValueError(f"{var}={env[var]!r} is not "
                                  f"{'an integer' if kind is int else 'a number'}"
@@ -149,6 +174,23 @@ class FallDecision:
             clear_windows=self.clear_windows, min_descent=self.min_descent,
             seq_len=lengths.pop(), frame_stride=self.frame_stride,
             step=self.step, device=device)
+
+    def build_subjects(self, device: str = "cpu"):
+        """A `SubjectStreams` that runs this decision once per tracked subject.
+
+        Every subject's stream is `build`'s rule on one shared classifier, so
+        the models load once however many people are in view.
+        """
+        from .stream import SubjectStreams
+
+        return SubjectStreams(self.build(device), reconnect_sec=self.reconnect_sec,
+                              reconnect_dist=self.reconnect_dist)
+
+    def build_camera(self, device: str = "cpu"):
+        """What a camera runs: `build_subjects` for "tracked", `build` for "largest"."""
+        if self.subjects == "tracked":
+            return self.build_subjects(device)
+        return self.build(device)
 
     def __str__(self) -> str:
         models = ", ".join(

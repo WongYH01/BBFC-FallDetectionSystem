@@ -1,6 +1,6 @@
-"""fallcore.extract.subject_row: one pose result -> the cache's keypoint row.
+"""fallcore.extract.subject_row / sightings: one pose result -> cache rows.
 
-The function is the one seam. These tests hand it fake pose results shaped like
+The functions are the seam. These tests hand it fake pose results shaped like
 an Ultralytics `Results` (boxes, keypoints, orig_shape), so no pose model runs.
 """
 from __future__ import annotations
@@ -11,26 +11,28 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from fallcore.extract import subject_row
+from fallcore.extract import sightings, subject_row
 
 
 class FakeBoxes:
-    def __init__(self, xyxy):
+    def __init__(self, xyxy, ids=None):
         self.xyxy = torch.tensor(xyxy, dtype=torch.float32).reshape(-1, 4)
+        self.id = None if ids is None else torch.tensor(ids, dtype=torch.float32)
 
     def __len__(self):
         return len(self.xyxy)
 
 
-def fake_result(people, height=200, width=400):
+def fake_result(people, height=200, width=400, ids=None):
     """A pose result for `people`, each `(box_xyxy, (x, y, conf))`.
 
     Every keypoint of a person sits at the same pixel, which is enough to see
-    which person was picked and how the pixel was converted.
+    which person was picked and how the pixel was converted. `ids` are the
+    tracker's, as `model.track` attaches them; None is an untracked result.
     """
     data = torch.tensor([[kp] * 17 for _, kp in people],
                         dtype=torch.float32).reshape(-1, 17, 3)
-    return SimpleNamespace(boxes=FakeBoxes([box for box, _ in people]),
+    return SimpleNamespace(boxes=FakeBoxes([box for box, _ in people], ids),
                            keypoints=SimpleNamespace(data=data),
                            orig_shape=(height, width))
 
@@ -73,6 +75,34 @@ class SubjectRowTest(unittest.TestCase):
         _, aspect = subject_row(fake_result([], height=0, width=320))
 
         self.assertEqual(aspect, 320.0)
+
+
+class SightingsTest(unittest.TestCase):
+    def test_every_tracked_person_is_a_sighting_in_cache_convention(self):
+        small = ((0, 0, 40, 20), (40.0, 20.0, 0.3))
+        large = ((100, 0, 400, 200), (300.0, 50.0, 0.9))
+
+        found, aspect = sightings(fake_result([small, large], ids=[4, 9]))
+
+        self.assertEqual([s.track_id for s in found], [4, 9])
+        np.testing.assert_allclose(found[0].row[:, 0], 0.1)    # y / height
+        np.testing.assert_allclose(found[0].row[:, 1], 0.1)    # x / width
+        np.testing.assert_allclose(found[1].row[:, 2], 0.9)
+        self.assertEqual(found[0].centre, (0.05, 0.05))
+        self.assertEqual(found[1].centre, (0.625, 0.5))
+        self.assertAlmostEqual(found[1].area, 0.75)
+        self.assertEqual(aspect, 2.0)
+
+    def test_an_untracked_result_has_no_sightings(self):
+        found, aspect = sightings(fake_result([((0, 0, 50, 50), (10.0, 10.0, 0.8))]))
+
+        self.assertEqual(found, [])
+        self.assertEqual(aspect, 2.0)
+
+    def test_an_empty_frame_has_no_sightings(self):
+        found, _ = sightings(fake_result([], ids=[]))
+
+        self.assertEqual(found, [])
 
 
 if __name__ == "__main__":

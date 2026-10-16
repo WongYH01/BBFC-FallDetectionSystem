@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +78,19 @@ def _largest_person(result) -> int | None:
     return int(np.argmax(areas))
 
 
+def _cache_row(k: np.ndarray, h: int, w: int) -> np.ndarray:
+    """Ultralytics' `(17, 3)` `(x, y, conf)` in pixels -> the cache's row.
+
+    The paper stores `(y_norm, x_norm, conf)`: swapped, and divided by the
+    frame height and width.
+    """
+    kp = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+    kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)   # y first
+    kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)   # then x
+    kp[:, 2] = k[:, 2]
+    return kp
+
+
 def subject_row(result) -> tuple[np.ndarray, float]:
     """One pose result -> the subject's `(17, 3)` row and the frame's width/height.
 
@@ -94,13 +108,49 @@ def subject_row(result) -> tuple[np.ndarray, float]:
     keypoints = getattr(result, "keypoints", None)
     if idx is not None and keypoints is not None and keypoints.data is not None \
             and len(keypoints.data) > idx:
-        # Ultralytics gives (x, y, conf) in pixels; the paper stores
-        # (y_norm, x_norm, conf). Swap and normalise in one step.
-        k = keypoints.data[idx].cpu().numpy()  # (17, 3)
-        kp[:, 0] = np.clip(k[:, 1] / max(h, 1), 0.0, 1.0)   # y first
-        kp[:, 1] = np.clip(k[:, 0] / max(w, 1), 0.0, 1.0)   # then x
-        kp[:, 2] = k[:, 2]
+        kp = _cache_row(keypoints.data[idx].cpu().numpy(), h, w)
     return kp, w / max(h, 1)
+
+
+@dataclass(frozen=True)
+class Sighting:
+    """One tracked person in one frame.
+
+    `row` is the cache convention (`subject_row`'s); `centre` is the box
+    centre as `(x, y)` fractions of the frame width and height, and `area` the
+    box's share of the frame.
+    """
+    track_id: int
+    row: np.ndarray
+    centre: tuple[float, float]
+    area: float
+
+
+def sightings(result) -> tuple[list[Sighting], float]:
+    """One tracked pose result -> every tracked person and the frame's width/height.
+
+    The per-subject counterpart of `subject_row`, for a result from
+    `model.track`: every box with a tracker id becomes a `Sighting`. A box the
+    tracker has not confirmed carries no id and is left out, since it cannot
+    be followed from one frame to the next.
+    """
+    h, w = result.orig_shape
+    out: list[Sighting] = []
+    boxes = getattr(result, "boxes", None)
+    keypoints = getattr(result, "keypoints", None)
+    if boxes is None or len(boxes) == 0 or getattr(boxes, "id", None) is None \
+            or keypoints is None or keypoints.data is None:
+        return out, w / max(h, 1)
+    xyxy = boxes.xyxy.cpu().numpy()
+    ids = boxes.id.int().cpu().tolist()
+    data = keypoints.data.cpu().numpy()
+    for i, tid in enumerate(ids):
+        x1, y1, x2, y2 = (float(v) for v in xyxy[i])
+        out.append(Sighting(
+            track_id=int(tid), row=_cache_row(data[i], h, w),
+            centre=((x1 + x2) / 2 / max(w, 1), (y1 + y2) / 2 / max(h, 1)),
+            area=(x2 - x1) * (y2 - y1) / max(w * h, 1)))
+    return out, w / max(h, 1)
 
 
 def pose_device(model, device: str = "cuda") -> str:

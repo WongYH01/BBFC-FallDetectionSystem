@@ -31,6 +31,9 @@ class DeployedDefaultsTest(unittest.TestCase):
         self.assertEqual(d.min_descent, 0.10)
         self.assertEqual(d.frame_stride, 2)
         self.assertEqual(d.step, 15)
+        self.assertEqual(d.subjects, "tracked")
+        self.assertEqual(d.reconnect_sec, 2.0)
+        self.assertEqual(d.reconnect_dist, 0.35)
 
 
 class EnvironmentOverrideTest(unittest.TestCase):
@@ -42,6 +45,9 @@ class EnvironmentOverrideTest(unittest.TestCase):
             ("FALL_CLEAR_WINDOWS", "3", "clear_windows", 3),
             ("FALL_MIN_DESCENT", "0", "min_descent", 0.0),
             ("STREAM_FRAME_STRIDE", "1", "frame_stride", 1),
+            ("FALL_SUBJECTS", "largest", "subjects", "largest"),
+            ("FALL_RECONNECT_SEC", "3", "reconnect_sec", 3.0),
+            ("FALL_RECONNECT_DIST", "0", "reconnect_dist", 0.0),
         ]
         default = FallDecision.from_env({})
         for var, raw, field, expected in cases:
@@ -52,6 +58,11 @@ class EnvironmentOverrideTest(unittest.TestCase):
                 self.assertEqual(d, FallDecision.from_env({}).replace(
                     **{field: expected}))
                 self.assertNotEqual(d, default)
+
+    def test_the_subject_rule_ignores_case_and_spaces(self):
+        d = FallDecision.from_env({"FALL_SUBJECTS": " Largest "})
+
+        self.assertEqual(d.subjects, "largest")
 
     def test_an_explicit_change_layers_on_top_of_the_environment(self):
         d = FallDecision.from_env({"FALL_MIN_DESCENT": "0"}).replace(threshold=0.7)
@@ -91,7 +102,9 @@ class SummaryTest(unittest.TestCase):
         for part in ("augnone_ms_coords_hn_s99.pt",
                      "probe_augnone_ms_coords_hn_s99.npz", "buffer=4",
                      "threshold=0.5", "clear_below=0.2", "clear_windows=2",
-                     "min_descent=0.1", "frame_stride=2", "step=15"):
+                     "min_descent=0.1", "frame_stride=2", "step=15",
+                     "subjects=tracked", "reconnect_sec=2.0",
+                     "reconnect_dist=0.35"):
             self.assertIn(part, line)
 
     def test_an_uncalibrated_checkpoint_says_so(self):
@@ -111,6 +124,9 @@ class RefusedOverrideTest(unittest.TestCase):
             ("FALL_CLEAR_WINDOWS", "0"),
             ("FALL_MIN_DESCENT", "-1"),
             ("STREAM_FRAME_STRIDE", "0"),
+            ("FALL_SUBJECTS", "everyone"),
+            ("FALL_RECONNECT_SEC", "-1"),
+            ("FALL_RECONNECT_DIST", "far"),
         ]
         for var, raw in cases:
             with self.subTest(var=var, raw=raw):
@@ -175,6 +191,27 @@ class BuildTest(unittest.TestCase):
         # frame stride 2), which is also what makes a window due at 120 frames.
         self.assertEqual(stream.buffer.seq_len, 60)
         self.assertEqual(stream.buffer.frames_per_window, 120)
+
+    def test_tracked_subjects_share_one_classifier_and_the_decisions_rule(self):
+        d = FallDecision().replace(frame_stride=1, reconnect_sec=3.0,
+                                   reconnect_dist=0.2)
+
+        streams = d.build_camera()
+
+        self.assertEqual(type(streams).__name__, "SubjectStreams")
+        self.assertEqual(streams.reconnect, 3 * 15)
+        self.assertEqual(streams.reconnect_dist, 0.2)
+        self.assertEqual(streams.keep, 60)
+        first, second = streams.template.fresh(), streams.template.fresh()
+        self.assertIs(first.classifier, streams.classifier)
+        self.assertIs(second.classifier, streams.classifier)
+        self.assertEqual(first.min_descent, 0.10)
+        self.assertEqual(first.decision.buffer, 4)
+
+    def test_the_largest_rule_builds_one_stream(self):
+        stream = FallDecision().replace(subjects="largest").build_camera()
+
+        self.assertEqual(type(stream).__name__, "EnsembleStream")
 
     def test_picam_scores_the_deployed_decision_unless_told_otherwise(self):
         from fallcore import picam

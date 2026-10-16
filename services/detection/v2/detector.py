@@ -4,15 +4,19 @@ Pulls frames from the MediaMTX RTSP feed, runs the frozen YOLO26-pose backbone
 (the ONNX export by default, so ONNX Runtime carries it on CPU), tracks people
 with ByteTrack, and draws the skeleton for the Flask `/video_feed` MJPEG route.
 
-The fall alarm is the **calibrated model**: the largest person's keypoints fill a
-4 s ring buffer, every second a window is scored by the backbone and read by a
+The fall alarm is the **calibrated model**: each tracked person's keypoints fill
+their own 4 s ring buffer, every second a window is scored by the backbone and read by a
 logistic head fitted on THIS room's own clips
 (`probe_augnone_ms_coords_hn_s99.npz`, scripts/fit_calibration_head.py), and that
-score goes into a rolling buffer of `BUFFER_LEN` windows; the alarm latches when
-the rolling mean clears `FALL_THRESHOLD`. `fallcore.stream` owns the arithmetic
-and `fallcore.calibrate` owns the head. Held-out estimate on the camera's five
-subjects: window AUC 0.992, rolling F1 0.967 (1 false alarm, 1 miss), against
-0.836 for the best single checkpoint and 0.853 for the four-model ensemble.
+score goes into a rolling buffer of `BUFFER_LEN` windows; that person's alarm
+latches when the rolling mean clears `FALL_THRESHOLD`, and the room's alarm is up
+while anyone's is. `fallcore.stream` owns the arithmetic (`SubjectStreams`, which
+also carries a person across a change of tracker id) and `fallcore.calibrate`
+owns the head. `FALL_SUBJECTS=largest` goes back to following the largest box
+alone, which misses a fall behind a closer bystander. Held-out estimate on the
+camera's five subjects: window AUC 0.992, rolling F1 0.967 (1 false alarm, 1
+miss), against 0.836 for the best single checkpoint and 0.853 for the
+four-model ensemble.
 
 `CALIBRATION_HEAD` empty falls back to the checkpoint's own classifier;
 `ENSEMBLE_CKPTS` takes an os.pathsep list to run several checkpoints (the old
@@ -47,7 +51,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from fallcore import onnxpose as fonnx
-from fallcore.extract import subject_row
+from fallcore.extract import sightings, subject_row
 from fallcore.fall_decision import FallDecision
 
 # ---------------------------------------------------------------------------
@@ -145,9 +149,20 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # window still covers ~4 s. Leaving it at 2 there would stretch the window to
 # ~9 s of wall clock.
 #
+# FALL_SUBJECTS: "tracked" (default) runs the rule above once per tracked
+# person; "largest" runs it on the largest box alone. FALL_RECONNECT_SEC and
+# FALL_RECONNECT_DIST decide when a new tracker id is the person who was just
+# lost -- the tracker re-identifies a faller in ~40% of falls, mid-descent.
+#
 # A value that does not parse or is out of range stops the detector here, with
 # the variable's name, rather than booting it mis-tuned.
 DECISION = FallDecision.from_env(os.environ)
+TRACKED = DECISION.subjects == "tracked"
+
+# The tracker behind the ids. ByteTrack is what the per-person rule was
+# measured with; Ultralytics' own default is BoT-SORT, whose camera-motion
+# compensation costs CPU a fixed camera does not need.
+POSE_TRACKER = os.environ.get("POSE_TRACKER", "bytetrack.yaml")
 # ---------------------------------------------------------------------------
 
 # Decode-and-score one frame in every VID_STRIDE. Ultralytics' loader still
@@ -328,21 +343,24 @@ def _boxes(result) -> list:
 
 
 def _update_falls(result) -> list:
-    """Feed one frame to the ensemble; returns this frame's people for drawing.
+    """Feed one frame to the decision; returns this frame's people for drawing.
 
-    The alarm state lives in `fallcore.stream`: the subject's keypoints go into
-    the ring buffer, and on the frames a window is due the four checkpoints are
-    scored and the rolling decision updates. `_last_state` carries the result to
+    The alarm state lives in `fallcore.stream`: each subject's keypoints go into
+    their ring buffer, and on the frames a window is due it is scored and that
+    subject's rolling decision updates. `_last_state` carries the result to
     the drawing, the recorder and `/fall/status`.
     """
     global _people, _last_state, _alarm_since, _last_update
-    # The training cache's rule: the biggest box is the subject, and a frame
-    # with no detection is zeros -- the classifier was trained with exactly
-    # those rows, so the absence is information, not something to hide. The
-    # aspect comes per frame because a reconnect can change resolution.
-    kp, _stream.aspect = subject_row(result)
+    # A frame where a subject is not seen is zeros in their buffer -- the
+    # classifier was trained with exactly those rows, so the absence is
+    # information, not something to hide. The aspect comes per frame because
+    # a reconnect can change resolution.
+    if TRACKED:
+        frame_input, _stream.aspect = sightings(result)
+    else:
+        frame_input, _stream.aspect = subject_row(result)
     with _fall_lock:
-        if _stream.observe(kp):
+        if _stream.observe(frame_input):
             _last_state = _stream.state()
             if _last_state["alarm"]:
                 if _alarm_since is None:
@@ -350,6 +368,12 @@ def _update_falls(result) -> list:
             else:
                 _alarm_since = None
         _people = _boxes(result)
+        # Whose box goes red: the subject's own alarm when each person is
+        # decided separately, the room's when only the largest box is.
+        room_alarm = bool(_last_state.get("alarm"))
+        for p in _people:
+            p["fallen"] = (_stream.alarm_of(p["track_id"]) if TRACKED
+                           else room_alarm)
         _last_update = time.time()
     return _people
 
@@ -359,7 +383,7 @@ def _draw_falls(canvas, people, state) -> None:
     alarm = bool(state.get("alarm"))
     for p in people:
         x1, y1, x2, y2 = p["bbox"]
-        if alarm:
+        if p.get("fallen"):
             cv2.rectangle(canvas, (x1, y1), (x2, y2), _RED, 3)
         if FALL_DEBUG:
             # Right-aligned at the box top — the one corner nothing else uses.
@@ -391,13 +415,17 @@ def get_fall_status() -> dict:
         state = dict(_last_state)
         alarm = bool(state.get("alarm"))
         people = [{"track_id": p["track_id"], "ratio": round(p["ratio"], 2),
-                   "fallen": alarm, "tracked": p["track_id"] is not None}
+                   "fallen": bool(p.get("fallen")),
+                   "tracked": p["track_id"] is not None}
                   for p in _people] if live else []
 
         return {
             "live": live,
             "any_fallen": alarm,
-            "count": 1 if alarm else 0,
+            # Only per-person decisions can say how many are down; the
+            # largest-box rule knows about one subject.
+            "count": (sum(s["alarm"] for s in state.get("subjects", []))
+                      if TRACKED else int(alarm)),
             "tracked": len(people),
             "since_sec": (round(time.time() - _alarm_since, 1)
                           if _alarm_since and alarm else 0),
@@ -420,6 +448,12 @@ def get_fall_status() -> dict:
             "models": state.get("models") or _stream.classifier.names,
             "model_probs": state.get("model_probs", []),
             "pose_backend": POSE_BACKEND,
+            # -- per person (FALL_SUBJECTS=tracked) --------------------------
+            # The numbers above are the lead subject's: the alarmed one, else
+            # the highest rolling mean.
+            "subject_rule": DECISION.subjects,
+            "subject": state.get("subject"),
+            "subjects": state.get("subjects", []) if live else [],
         }
 
 
@@ -459,7 +493,7 @@ if POSE_BACKEND == "onnx" and POSE_THREADS > 0:
     fonnx.use_tuned_sessions(threads=POSE_THREADS, spinning=False)
 
 model = YOLO(MODEL_NAME)
-_stream = DECISION.build(device="cpu")
+_stream = DECISION.build_camera(device="cpu")
 print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}, "
       f"threads={POSE_THREADS or 'ORT default'}), vid_stride={VID_STRIDE}, "
       f"decision {DECISION}")
@@ -773,6 +807,7 @@ def _capture_loop() -> None:
                 stream=True,
                 imgsz=IMGSZ,
                 vid_stride=VID_STRIDE,
+                tracker=POSE_TRACKER,
                 verbose=False,
                 **track_kwargs,
             )
