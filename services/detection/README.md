@@ -27,20 +27,20 @@ camera -> MediaMTX (Pi) --RTSP--> detection service --POST /events-----> notific
 
 ## Run
 
-Weights are artifacts and are bind-mounted, not baked into the image. Fetch
-them once on the host:
+The image fetches its own weights during the build (`scripts/fetch_weights.py`
+in a build stage), so nothing has to be on the host. The build reads
+`FALL_WEIGHTS_TOKEN` from `.env`, which compose passes in as a build secret: the
+token is not in any layer of the image, and the running container gets it
+blanked.
 
 ```
-python scripts/fetch_weights.py          # models/ + runs/checkpoints/ (token in .env)
-```
-
-Then:
-
-```
-copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*
+copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*, FALL_WEIGHTS_TOKEN
 copy ..\..\.env.example.local ..\..\.env              # notification settings
 docker compose up -d --build                          # repo root docker-compose.yml
 ```
+
+The weights stage is cached, so rebuilding for a code change does not download
+again; `docker compose build --no-cache detection` fetches them afresh.
 
 Detection and notification share the root project's network, so
 `http://notification:8081/api/v1/notification` resolves. The UI is published on
