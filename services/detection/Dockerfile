@@ -1,11 +1,22 @@
 # Detection service: v2 + the notification outbox.
 #
 # Build from services/detection (the root docker-compose.yml does this for you):
-#   docker build -t bbfc/detection .
+#   docker build --secret id=detection_env,src=.env -t bbfc/detection .
 #
-# Weights are not baked in. The root docker-compose.yml bind-mounts models/ and
-# runs/checkpoints/ read-only; fetch them on the host with
-# scripts/fetch_weights.py first.
+# The weights are baked in: the build fetches them itself, so nothing has to be
+# on the host. .env must hold FALL_WEIGHTS_TOKEN (see .env.example).
+
+# The three deployment files, fetched by the same script a host run uses, so the
+# pinned revision and the SHA-256 checks live in one place. .env reaches this
+# step as a BuildKit secret: the token is never in a layer, the image history or
+# the final image. A rebuild for a code change reuses this stage's cache and
+# does not download again.
+FROM python:3.12-slim AS weights
+ENV PIP_NO_CACHE_DIR=1     PIP_DISABLE_PIP_VERSION_CHECK=1
+RUN pip install huggingface_hub==1.29.0
+COPY scripts/fetch_weights.py /fetch/fetch_weights.py
+RUN --mount=type=secret,id=detection_env,required=true     python /fetch/fetch_weights.py --root /weights         --env-file /run/secrets/detection_env
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -37,7 +48,10 @@ RUN pip uninstall -y opencv-python opencv-python-headless \
     && pip install opencv-python-headless==5.0.0.93
 
 # The detection stack and the service, laid out as in services/detection:
-# fallcore, v2 and service side by side under /app.
+# fallcore, v2 and service side by side under /app, with the weights at the
+# paths v2 resolves by default (models/, runs/checkpoints/).
+COPY --from=weights /weights/models /app/models
+COPY --from=weights /weights/runs /app/runs
 COPY fallcore /app/fallcore
 COPY v2 /app/v2
 COPY service /app/service

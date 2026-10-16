@@ -4,8 +4,9 @@
 #   docker compose --env-file .env.cloud up -d --build  cloud: Cloud SQL + GCS, no db/storage
 #   docker compose up -d db storage                     infra only, for running Spring from the IDE
 #
-# Needs .env (copy .env.example.local), services/detection/.env (copy its
-# .env.example) and the weights on the host (services/detection/scripts/fetch_weights.py).
+# Needs .env (copy .env.example.local) and services/detection/.env (copy its
+# .env.example). The detection build fetches its own weights with the
+# FALL_WEIGHTS_TOKEN in that file; nothing has to be on the host.
 name: bbfc
 
 services:
@@ -76,6 +77,10 @@ services:
     profiles: ["local", "cloud"]
     build:
       context: services/detection
+      # The build fetches the weights into the image; this hands it the
+      # Hugging Face token as a secret, so it never lands in a layer.
+      secrets:
+        - detection_env
     image: bbfc/detection:latest
     restart: unless-stopped
     depends_on:
@@ -91,9 +96,9 @@ services:
       SERVICE_UI_HOST: 0.0.0.0
       SPOOL_DIR: /data/outbox
       NOTIFICATION_BASE_URL: http://notification:8081/api/v1/notification
+      # Build-time only: the weights are already in the image.
+      FALL_WEIGHTS_TOKEN: ""
     volumes:
-      - ./services/detection/models:/app/models:ro
-      - ./services/detection/runs/checkpoints:/app/runs/checkpoints:ro
       - clips:/app/v2/fall_clips
       - spool:/data/outbox
     ports:
@@ -104,3 +109,7 @@ volumes:
   clip-data: {}
   clips: {}
   spool: {}
+
+secrets:
+  detection_env:
+    file: ./services/detection/.env
