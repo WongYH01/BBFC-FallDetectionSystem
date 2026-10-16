@@ -39,10 +39,10 @@ jobs:
               - 'services/notification/**'
 
 
-#  detection:
-#    needs: changes
-#    if: needs.changes.outputs.detection == 'true'
-#    uses: ./.github/workflows/detection.yml
+  detection:
+    needs: changes
+    if: needs.changes.outputs.detection == 'true'
+    uses: ./.github/workflows/detection.yml
 
 
   notification:
@@ -51,14 +51,17 @@ jobs:
     uses: ./.github/workflows/notification.yml
 
 
-#  detection-image:
-#    needs: detection
-#    uses: ./.github/workflows/image.yml
-#    permissions:
-#      contents: read
-#      id-token: write
-#    with:
-#      service: detection
+  detection-image:
+    needs: changes
+    if: needs.changes.outputs.detection == 'true'
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+    secrets: inherit
+    with:
+      service: detection
 
 
   notification-image:
@@ -93,8 +96,7 @@ jobs:
 
   gate:
     if: always()
-#    needs: [changes, detection, notification, detection-image, notification-image, codeql, dependency-review]
-    needs: [changes, notification, notification-image, codeql, dependency-review]
+    needs: [changes, detection, notification, notification-image, detection-image, codeql, dependency-review]
     runs-on: ubuntu-latest
     steps:
       - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
