@@ -26,7 +26,7 @@ services/detection/scripts/render_picam.py
 services/detection/scripts/train_augmented_single.py
 
 # Environments
-.venv*/
+*venv*/
 demos/demo-cam/.venv/
 
 # Python

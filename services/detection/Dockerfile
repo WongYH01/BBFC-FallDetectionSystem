@@ -39,13 +39,18 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu \
         torch==2.13.0 torchvision==0.28.0
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install -r /app/requirements.txt
 # ultralytics depends on opencv-python, and both packages install into the same
 # cv2/ directory: uninstalling just opencv-python deletes files the headless
 # build also owns, leaving no importable cv2. Remove both, then reinstall the
-# headless build so it is the only cv2 in the image.
-RUN pip uninstall -y opencv-python opencv-python-headless \
+# headless build so it is the only cv2 in the image. Same RUN as the install, so
+# the discarded opencv-python files never reach a layer.
+RUN pip install -r /app/requirements.txt \
+    && pip uninstall -y opencv-python opencv-python-headless \
     && pip install opencv-python-headless==5.0.0.93
+
+# Trivy flags the setuptools, wheel and jaraco.context that python:3.12-slim ships
+# (HIGH, fixable). Upgrade them past the fixed versions.
+RUN pip install --upgrade "setuptools>=78.1.1" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 
 # The detection stack and the service, laid out as in services/detection:
 # fallcore, v2 and service side by side under /app, with the weights at the
@@ -79,5 +84,4 @@ EXPOSE 5005
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5005/stream/status', timeout=4)" || exit 1
 
-WORKDIR /app
 CMD ["python", "-m", "service.main"]

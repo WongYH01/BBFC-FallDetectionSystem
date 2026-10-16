@@ -20,3 +20,8 @@ data/
 videos/
 v2/fall_clips/
 v2/videos/
+tests/
+.pytest_cache/
+**/README.md
+pyproject.toml
+.env.example

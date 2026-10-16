@@ -21,3 +21,5 @@ lap==0.5.13
 flask==3.1.3
 python-dotenv==1.2.2
 requests==2.34.2
+# fallcore.picam imports pandas at module level, and the unit tests import picam.
+pandas==3.0.6
