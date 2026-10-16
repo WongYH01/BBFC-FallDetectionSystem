@@ -1,0 +1,6 @@
+code_review:
+  pull_request_opened:
+    summary: true
+ignore_patterns:
+  - "**/*.md"
+  - ".idea/**"
