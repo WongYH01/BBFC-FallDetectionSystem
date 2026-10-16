@@ -22,9 +22,10 @@ v1's camera plumbing and replaces the fall decision.
 
 ## How the alarm is decided
 
-`fallcore.stream.EnsembleStream` owns the arithmetic:
+`fallcore.stream.EnsembleStream` owns the arithmetic, and
+`fallcore.stream.SubjectStreams` runs one of them per tracked person:
 
-1. The **largest person's** keypoints fill a 4 s ring buffer (60 rows).
+1. **Each tracked person's** keypoints fill their own 4 s ring buffer (60 rows).
 2. Once a second that window is scored by `augnone_ms_coords_hn_s99.pt` and its
    pooled embedding read by a logistic head fitted on **this room's** clips
    (`probe_augnone_ms_coords_hn_s99.npz`, `scripts/fit_calibration_head.py`).
@@ -35,10 +36,32 @@ v1's camera plumbing and replaces the fall decision.
    `FALL_MIN_DESCENT` body lengths per second somewhere inside it. Latching and
    clearing are untouched, so a fall alarms on its descent and stays alarmed.
 
+5. The room's alarm is up while **anyone's** is, so one fall is one alarm.
+
 Step 4 exists because a motionless body carries no information about how it got
 there: without it the verdict is re-made every second on windows of someone
 simply lying still, and the head settles that tie on height in frame — which is
-furniture, and is read differently the moment the camera moves.
+furniture, and is read differently the moment the camera moves. With every
+person decided, it is also what keeps someone lying still on a bench, who
+scores ~0.97 on every window, from raising the alarm.
+
+**Why per person.** Following the largest box alone follows whoever is closest
+to the camera, so a fall behind a seated or lying bystander is decided on the
+bystander's keypoints. On the four picam-2 recordings with a second person in
+shot, replayed through this script's decision, the largest box catches 1 fall
+and per-person decisions catch all 4.
+
+**A person is not a tracker id.** ByteTrack gives the faller a new id in 34 of
+82 picam falls, usually 0.5–1 s into the descent, when the box turns from tall
+to wide. If a new id started a new stream, neither stream would hold the whole
+fall, and that loses 20 of 75 falls. So a lost person's stream keeps running on
+"nobody seen" rows for one window, and a new id that appears within
+`FALL_RECONNECT_SEC` and `FALL_RECONNECT_DIST` of a just-lost person continues
+that person's stream. With both, the single-person picam sets catch 75 of 82
+falls, the same as the largest box, with 9 false alarms in 82 everyday clips
+against its 7. Those 2 extra are lost streams running on empty rows, which the
+model partly reads as a fall. `FALL_SUBJECTS=largest` goes back to the largest
+box.
 
 Measured on two camera positions in the same room, 60 and 52 clips. The first is
 leave-one-subject-out on the position the head was fitted at; the second is that
@@ -102,6 +125,9 @@ Defaults shown; full list with commentary in `services/detection/.env.example`.
 | `BUFFER_LEN` / `FALL_THRESHOLD` | `4` / `0.5` | rolling mean length and the level that engages the alarm |
 | `FALL_MIN_DESCENT` | `0.10` | the descent gate, body lengths/s; `0` restores pre-gate behaviour |
 | `FALL_CLEAR_BELOW` / `FALL_CLEAR_WINDOWS` | `0.2` / `2` | hysteresis for clearing |
+| `FALL_SUBJECTS` | `tracked` | `tracked` decides every tracked person separately; `largest` the largest box alone |
+| `FALL_RECONNECT_SEC` / `FALL_RECONNECT_DIST` | `2.0` / `0.35` | a new tracker id continues a person lost at most this long ago and this far from its box centre (fractions of the frame); `0` never joins |
+| `POSE_TRACKER` | `bytetrack.yaml` | the Ultralytics tracker that supplies the ids |
 | `ALLOW_MANUAL_RECORDING` | `1` | `0` refuses the raw-footage Record button (403); automatic clips stay skeleton-only |
 | `VID_STRIDE` / `STREAM_FRAME_STRIDE` | `1` / `2` | decode-and-score one frame in N, then rows per window sample. Their product must keep rows ~67 ms apart (see below) |
 | `STREAM_STALL_SEC` / `STREAM_CONNECT_SEC` | `8` / `24` | force a reconnect when frames stop or never start |
