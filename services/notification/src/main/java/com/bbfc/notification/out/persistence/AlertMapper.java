@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.Confidence;
 import com.bbfc.notification.core.domain.EventId;
+import com.bbfc.notification.core.domain.KeypointsFile;
 import com.bbfc.notification.core.domain.RoomRef;
 import com.bbfc.notification.core.domain.SkeletonClip;
 
@@ -16,6 +17,7 @@ public class AlertMapper {
     // converts domain type to entity for DB calls
     public AlertEntity toEntity(Alert alert){
         SkeletonClip clip = alert.clip().orElse(null);
+        KeypointsFile keypoints = alert.keypoints().orElse(null);
         AlertEntity parsedAlertEntity = new AlertEntity(
                 alert.eventId().eventId(),
                 alert.room().roomId(),
@@ -36,7 +38,9 @@ public class AlertMapper {
                 clip == null ? null : clip.storageKey(),
                 clip == null ? null : clip.storedAt(),
                 clip == null ? null : clip.telegramFileId(),
-                clip == null ? null : clip.telegramMessageId()
+                clip == null ? null : clip.telegramMessageId(),
+                keypoints == null ? null : keypoints.storageKey(),
+                keypoints == null ? null : keypoints.storedAt()
         );
         return parsedAlertEntity;
     }
@@ -64,7 +68,10 @@ public class AlertMapper {
                         alertEntity.getClipStorageKey(),
                         alertEntity.getClipStoredAt(),
                         alertEntity.getClipTelegramFileId(),
-                        alertEntity.getClipMessageId())
+                        alertEntity.getClipMessageId()),
+                alertEntity.getKeypointsStorageKey() == null ? null : new KeypointsFile(
+                        alertEntity.getKeypointsStorageKey(),
+                        alertEntity.getKeypointsStoredAt())
         );
         return parsedAlertDomain;
     }

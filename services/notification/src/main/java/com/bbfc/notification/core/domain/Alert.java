@@ -23,6 +23,7 @@ public final class Alert {
     private final List<Long> escalationMessageIds = new ArrayList<>();
     private Long followUpMessageId;
     private SkeletonClip clip;
+    private KeypointsFile keypoints;
 
     private Alert(EventId eventId, RoomRef roomRef, Confidence confidence, Instant createdAt) {
         this.eventId = eventId;
@@ -52,7 +53,8 @@ public final class Alert {
             Long dispatchMessageId,
             List<Long> escalationMessageIds,
             Long followUpMessageId,
-            SkeletonClip clip) {
+            SkeletonClip clip,
+            KeypointsFile keypoints) {
         Alert alert = new Alert(eventId, roomRef, confidence, createdAt);
         alert.alertState = alertState;
         alert.acknowledgedBy = acknowledgedBy;
@@ -66,6 +68,7 @@ public final class Alert {
         alert.escalationMessageIds.addAll(escalationMessageIds);
         alert.followUpMessageId = followUpMessageId;
         alert.clip = clip;
+        alert.keypoints = keypoints;
         return alert;
     }
 
@@ -136,6 +139,20 @@ public final class Alert {
         this.clip = this.clip.delivered(telegramFileId, messageId);
     }
 
+    public void attachKeypoints(KeypointsFile keypoints) {
+        if (this.keypoints != null) {
+            throw new KeypointsAlreadyAttachedException(eventId);
+        }
+        this.keypoints = keypoints;
+    }
+
+    public void relocateKeypoints(String newKey) {
+        if (this.keypoints == null) {
+            throw new IllegalStateException("No keypoints attached for " + eventId.eventId());
+        }
+        this.keypoints = this.keypoints.relocated(newKey);
+    }
+
     /**
      * Every message this alert has produced, in send order — the set to close out on acknowledgement.
      *
@@ -197,6 +214,10 @@ public final class Alert {
 
     public Optional<SkeletonClip> clip() {
         return Optional.ofNullable(clip);
+    }
+
+    public Optional<KeypointsFile> keypoints() {
+        return Optional.ofNullable(keypoints);
     }
 
     public Instant createdAt() {

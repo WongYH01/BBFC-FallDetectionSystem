@@ -3,6 +3,7 @@ package com.bbfc.notification.out.storage;
 import com.bbfc.notification.config.ClipConfig;
 import com.bbfc.notification.config.GcsStorageConfig;
 import com.bbfc.notification.core.domain.EventId;
+import com.bbfc.notification.core.domain.Outcome;
 import com.bbfc.notification.core.port.ClipContent;
 import com.bbfc.notification.core.port.ClipStorageException;
 import com.bbfc.notification.core.port.ClipStore;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -84,6 +86,36 @@ class GcsClipStoreTest extends ClipStoreContract {
         });
 
         assertThatThrownBy(() -> store.store("room-12", new EventId("FE-1"), unreadable))
+                .isInstanceOf(ClipStorageException.class);
+    }
+
+    @Test
+    void movesIncomingKeypointsUnderTheirLabel() {
+        String incoming = store.storeKeypoints(
+                "room-12", new EventId("FE-1"), Optional.empty(), keypoints("FE-1.npz"));
+
+        String labelled = store.labelKeypoints(incoming, Outcome.GENUINE);
+
+        assertThat(labelled).isEqualTo("keypoints/labelled/genuine/room-12/FE-1.npz");
+        assertThat(storage.readAllBytes(BlobId.of(BUCKET, labelled))).isEqualTo(KEYPOINT_BYTES);
+        assertThat(storage.get(BlobId.of(BUCKET, incoming))).isNull();
+    }
+
+    @Test
+    void storesKeypointsWithTheirContentType() {
+        String key = store.storeKeypoints(
+                "room-12", new EventId("FE-1"), Optional.empty(), keypoints("FE-1.npz"));
+
+        assertThat(storage.get(BlobId.of(BUCKET, key)).getContentType()).isEqualTo("application/octet-stream");
+    }
+
+    @Test
+    void wrapsAMoveFailure() {
+        Storage failing = mock(Storage.class);
+        given(failing.moveBlob(any())).willThrow(new StorageException(403, "denied"));
+        GcsClipStore failingStore = new GcsClipStore(failing, new GcsStorageConfig(BUCKET), new ClipConfig(MAX_BYTES));
+
+        assertThatThrownBy(() -> failingStore.labelKeypoints("keypoints/incoming/room-12/FE-1.npz", Outcome.GENUINE))
                 .isInstanceOf(ClipStorageException.class);
     }
 

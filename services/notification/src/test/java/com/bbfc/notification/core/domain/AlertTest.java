@@ -257,4 +257,36 @@ class AlertTest {
         }
     }
 
+    @Nested
+    @DisplayName("keypoints attachment")
+    class KeypointsAttachment {
+
+        private static final Instant STORED_AT = Instant.parse("2026-09-16T10:05:00Z");
+        private static final String INCOMING = "keypoints/incoming/room-1/EE-01.npz";
+
+        @Test
+        void keypointsCanOnlyBeAttachedOnce() {
+            alert.attachKeypoints(new KeypointsFile(INCOMING, STORED_AT));
+
+            assertThatThrownBy(() -> alert.attachKeypoints(new KeypointsFile(INCOMING, STORED_AT)))
+                    .isInstanceOf(KeypointsAlreadyAttachedException.class);
+        }
+
+        @Test
+        void relocatingKeepsTheStoredTime() {
+            alert.attachKeypoints(new KeypointsFile(INCOMING, STORED_AT));
+
+            alert.relocateKeypoints("keypoints/labelled/genuine/room-1/EE-01.npz");
+
+            assertThat(alert.keypoints().orElseThrow())
+                    .isEqualTo(new KeypointsFile("keypoints/labelled/genuine/room-1/EE-01.npz", STORED_AT));
+        }
+
+        @Test
+        void cannotRelocateKeypointsThatWereNeverAttached() {
+            assertThatThrownBy(() -> alert.relocateKeypoints("keypoints/labelled/genuine/room-1/EE-01.npz"))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
 }

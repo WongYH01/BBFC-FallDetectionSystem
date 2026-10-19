@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.AlertState;
@@ -42,12 +43,15 @@ class TriageAlertServiceTest {
     @Mock
     private MessageRenderer messageRenderer;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private TriageAlertService service;
     private EventId eventId;
 
     @BeforeEach
     void setUp() {
-        service = new TriageAlertService(alertRepository, notificationChannel, messageRenderer);
+        service = new TriageAlertService(alertRepository, notificationChannel, messageRenderer, eventPublisher);
         eventId = new EventId("FE-1");
     }
 
@@ -73,6 +77,7 @@ class TriageAlertServiceTest {
         verify(alertRepository).save(alert);
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Recorded");
         verify(notificationChannel).closeMessage(504L, "🚫 Recorded: False alarm");
+        verify(eventPublisher).publishEvent(new AlertTriagedEvent(eventId));
     }
 
     @Test
@@ -98,6 +103,7 @@ class TriageAlertServiceTest {
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Already recorded as a genuine fall");
         verify(alertRepository, never()).save(any());
         verify(notificationChannel, never()).closeMessage(anyLong(), any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
