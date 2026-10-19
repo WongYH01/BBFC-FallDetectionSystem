@@ -23,6 +23,9 @@ public final class SupabaseRequests {
         }
     }
 
+    public record MoveObject(String bucketId, String sourceKey, String destinationKey) {
+    }
+
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record UploadResponse(@JsonProperty("Key") String key) {
     }

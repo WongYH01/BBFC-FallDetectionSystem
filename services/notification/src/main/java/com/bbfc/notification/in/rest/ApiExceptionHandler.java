@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import com.bbfc.notification.core.domain.ClipAlreadyAttachedException;
+import com.bbfc.notification.core.domain.KeypointsAlreadyAttachedException;
 import com.bbfc.notification.core.port.ClipStorageException;
 import com.bbfc.notification.core.service.AlertNotFoundException;
 import com.bbfc.notification.core.service.ClipTooLargeException;
@@ -43,6 +44,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ClipAlreadyAttachedException.class)
     public ProblemDetail handleClipAlreadyAttached(ClipAlreadyAttachedException ex) {
         return problem(HttpStatus.CONFLICT, "Clip already attached", ex.getMessage());
+    }
+
+    @ExceptionHandler(KeypointsAlreadyAttachedException.class)
+    public ProblemDetail handleKeypointsAlreadyAttached(KeypointsAlreadyAttachedException ex) {
+        return problem(HttpStatus.CONFLICT, "Keypoints already attached", ex.getMessage());
     }
 
     @ExceptionHandler(ClipTooLargeException.class)

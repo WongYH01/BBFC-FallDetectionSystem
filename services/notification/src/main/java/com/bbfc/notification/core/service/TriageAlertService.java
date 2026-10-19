@@ -3,6 +3,7 @@ package com.bbfc.notification.core.service;
 import java.time.Instant;
 import java.util.Optional;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,14 +21,17 @@ public class TriageAlertService {
     private final AlertRepository alertRepository;
     private final NotificationChannel notificationChannel;
     private final MessageRenderer messageRenderer;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TriageAlertService(
             AlertRepository alertRepository,
             NotificationChannel notificationChannel,
-            MessageRenderer messageRenderer) {
+            MessageRenderer messageRenderer,
+            ApplicationEventPublisher eventPublisher) {
         this.alertRepository = alertRepository;
         this.notificationChannel = notificationChannel;
         this.messageRenderer = messageRenderer;
+        this.eventPublisher = eventPublisher;
     }
 
     /** Same decide-answer-fan-out shape as acknowledgement; triage buttons get double-tapped too. */
@@ -47,6 +51,7 @@ public class TriageAlertService {
 
         alert.triage(outcome, at);
         alertRepository.save(alert);
+        eventPublisher.publishEvent(new AlertTriagedEvent(eventId));
 
         notificationChannel.answerCallback(callbackQueryId, "Recorded");
 

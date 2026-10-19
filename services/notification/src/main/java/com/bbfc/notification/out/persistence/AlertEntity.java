@@ -51,6 +51,9 @@ public class AlertEntity {
     private String clipTelegramFileId;
     private Long clipMessageId;
 
+    private String keypointsStorageKey;
+    private Instant keypointsStoredAt;
+
     protected AlertEntity(){}
 
     public AlertEntity(
@@ -60,7 +63,7 @@ public class AlertEntity {
             Instant outcomeAt, int repeatCount, Instant nextEscalationAt,
             Long dispatchMessageId, Long[] escalationMessageIds, Long followUpMessageId,
             String clipStorageKey, Instant clipStoredAt, String clipTelegramFileId,
-            Long clipMessageId) {
+            Long clipMessageId, String keypointsStorageKey, Instant keypointsStoredAt) {
         this.eventId = eventId;
         this.roomId = roomId;
         this.roomName = roomName;
@@ -81,6 +84,8 @@ public class AlertEntity {
         this.clipStoredAt = clipStoredAt;
         this.clipTelegramFileId = clipTelegramFileId;
         this.clipMessageId = clipMessageId;
+        this.keypointsStorageKey = keypointsStorageKey;
+        this.keypointsStoredAt = keypointsStoredAt;
     }
 
     public String getEventId() {
@@ -161,5 +166,13 @@ public class AlertEntity {
 
     public Long getClipMessageId() {
         return clipMessageId;
+    }
+
+    public String getKeypointsStorageKey() {
+        return keypointsStorageKey;
+    }
+
+    public Instant getKeypointsStoredAt() {
+        return keypointsStoredAt;
     }
 }

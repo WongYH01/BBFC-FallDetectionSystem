@@ -2,10 +2,13 @@ package com.bbfc.notification.out.storage;
 
 import com.bbfc.notification.config.SupabaseStorageConfig;
 import com.bbfc.notification.core.domain.EventId;
+import com.bbfc.notification.core.domain.Outcome;
 import com.bbfc.notification.core.port.ClipContent;
 import com.bbfc.notification.core.port.ClipStorageException;
 import com.bbfc.notification.core.port.ClipStore;
+import com.bbfc.notification.core.port.KeypointStore;
 import com.bbfc.notification.out.storage.dto.SupabaseRequests.CreateBucket;
+import com.bbfc.notification.out.storage.dto.SupabaseRequests.MoveObject;
 import com.bbfc.notification.out.storage.dto.SupabaseRequests.UploadResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,13 +21,16 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.io.InputStream;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 @ConditionalOnProperty(prefix = "clips", name = "store", havingValue = "supabase", matchIfMissing = true)
-public class SupabaseStorageClipStore implements ClipStore {
+public class SupabaseStorageClipStore implements ClipStore, KeypointStore {
 
     private static final Logger log = LoggerFactory.getLogger(SupabaseStorageClipStore.class);
     private static final MediaType MP4 = MediaType.valueOf("video/mp4");
+    private static final List<String> ALLOWED_TYPES =
+            List.of(MP4.toString(), "application/octet-stream", "application/vnd.apache.parquet");
     private static final long BUCKET_FILE_SIZE_LIMIT = 8_388_608L;
 
     private final RestClient restClient;
@@ -66,12 +72,55 @@ public class SupabaseStorageClipStore implements ClipStore {
     }
 
     @Override
+    public String storeKeypoints(String roomId, EventId eventId, Optional<Outcome> outcome, ClipContent content) {
+        String key = ClipObjectKey.keypoints(roomId, eventId, outcome, content.filename());
+        try {
+            // Key segments are already restricted to URL-safe characters, so no encoding is needed.
+            restClient.put()
+                    .uri("/object/" + bucket + "/" + key)
+                    .contentType(MediaType.valueOf(content.contentType()))
+                    .header(HttpHeaders.CONTENT_LENGTH, Long.toString(content.sizeBytes()))
+                    .header("x-upsert", "true")
+                    .body(out -> {
+                        try (InputStream in = content.open()) {
+                            in.transferTo(out);
+                        }
+                    })
+                    .retrieve()
+                    .toBodilessEntity();
+            return key;
+        } catch (RestClientResponseException e) {
+            throw new ClipStorageException(
+                    "Supabase Storage rejected the keypoints for " + eventId.eventId() + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public String labelKeypoints(String key, Outcome outcome) {
+        if (!ClipObjectKey.isUnlabelled(key)) {
+            return key;
+        }
+        String target = ClipObjectKey.labelled(key, outcome);
+        try {
+            restClient.post()
+                    .uri("/object/move")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new MoveObject(bucket, key, target))
+                    .retrieve()
+                    .toBodilessEntity();
+            return target;
+        } catch (RestClientResponseException e) {
+            throw new ClipStorageException("Supabase Storage could not move " + key + ": " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public void ensureBucket() {
         try {
             restClient.post()
                     .uri("/bucket")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new CreateBucket(bucket, bucket, false, BUCKET_FILE_SIZE_LIMIT, List.of(MP4.toString())))
+                    .body(new CreateBucket(bucket, bucket, false, BUCKET_FILE_SIZE_LIMIT, ALLOWED_TYPES))
                     .retrieve()
                     .toBodilessEntity();
             log.info("Created Supabase Storage bucket {}", bucket);

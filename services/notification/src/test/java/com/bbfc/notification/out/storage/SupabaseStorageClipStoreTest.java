@@ -2,6 +2,7 @@ package com.bbfc.notification.out.storage;
 
 import com.bbfc.notification.config.SupabaseStorageConfig;
 import com.bbfc.notification.core.domain.EventId;
+import com.bbfc.notification.core.domain.Outcome;
 import com.bbfc.notification.core.port.ClipStorageException;
 import com.bbfc.notification.core.port.ClipStore;
 import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
@@ -9,6 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.web.client.RestClient;
+
+import java.util.Optional;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.binaryEqualTo;
@@ -19,6 +22,8 @@ import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.put;
 import static com.github.tomakehurst.wiremock.client.WireMock.putRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -43,6 +48,45 @@ class SupabaseStorageClipStoreTest extends ClipStoreContract {
                 .withStatus(200)
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"Key\":\"skeleton-clips/room-12/FE-1.mp4\",\"Id\":\"abc\"}")));
+        wireMock.stubFor(put(urlPathMatching(OBJECT_PREFIX + "keypoints/.*")).willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"Key\":\"ignored\",\"Id\":\"abc\"}")));
+    }
+
+    @Test
+    void uploadsKeypointsWithTheirContentTypeAndUpsert() {
+        store.storeKeypoints("room-12", new EventId("FE-1"), Optional.empty(), keypoints("FE-1.npz"));
+
+        wireMock.verify(putRequestedFor(urlEqualTo(OBJECT_PREFIX + "keypoints/incoming/room-12/FE-1.npz"))
+                .withHeader("Authorization", equalTo("Bearer test-key"))
+                .withHeader("Content-Type", equalTo("application/octet-stream"))
+                .withHeader("x-upsert", equalTo("true")));
+    }
+
+    @Test
+    void movesIncomingKeypointsUnderTheirLabel() {
+        wireMock.stubFor(post(urlEqualTo("/object/move")).willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"message\":\"Successfully moved\"}")));
+
+        String key = store.labelKeypoints("keypoints/incoming/room-12/FE-1.npz", Outcome.GENUINE);
+
+        assertThat(key).isEqualTo("keypoints/labelled/genuine/room-12/FE-1.npz");
+        wireMock.verify(postRequestedFor(urlEqualTo("/object/move"))
+                .withRequestBody(equalToJson("""
+                        {"bucketId":"skeleton-clips",
+                         "sourceKey":"keypoints/incoming/room-12/FE-1.npz",
+                         "destinationKey":"keypoints/labelled/genuine/room-12/FE-1.npz"}""")));
+    }
+
+    @Test
+    void wrapsAMoveFailure() {
+        wireMock.stubFor(post(urlEqualTo("/object/move")).willReturn(aResponse().withStatus(500)));
+
+        assertThatThrownBy(() -> store.labelKeypoints("keypoints/incoming/room-12/FE-1.npz", Outcome.GENUINE))
+                .isInstanceOf(ClipStorageException.class);
     }
 
     @Override
@@ -86,7 +130,7 @@ class SupabaseStorageClipStoreTest extends ClipStoreContract {
     }
 
     @Test
-    void createsThePrivateBucketWithTheMp4Restriction() {
+    void createsThePrivateBucketRestrictedToClipAndKeypointTypes() {
         wireMock.stubFor(post(urlEqualTo(BUCKET)).willReturn(aResponse()
                 .withStatus(200)
                 .withHeader("Content-Type", "application/json")
@@ -98,7 +142,8 @@ class SupabaseStorageClipStoreTest extends ClipStoreContract {
                 .withHeader("Authorization", equalTo("Bearer test-key"))
                 .withRequestBody(equalToJson("""
                         {"id":"skeleton-clips","name":"skeleton-clips","public":false,
-                         "file_size_limit":8388608,"allowed_mime_types":["video/mp4"]}""")));
+                         "file_size_limit":8388608,
+                         "allowed_mime_types":["video/mp4","application/octet-stream","application/vnd.apache.parquet"]}""")));
     }
 
     @Test
