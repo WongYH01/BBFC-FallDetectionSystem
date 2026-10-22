@@ -13,22 +13,35 @@ from service.spool import Outbox
 
 
 class FakeClient:
-    def __init__(self, post_error=None, put_error=None):
+    def __init__(self, post_error=None, put_error=None, keypoints_errors=()):
         self.events: list[tuple] = []
         self.clips: list[tuple] = []
+        self.keypoints: list[tuple] = []
+        self.calls: list[str] = []
         self.post_error = post_error
         self.put_error = put_error
+        # Raised by successive put_keypoints calls, then they succeed.
+        self.keypoints_errors = list(keypoints_errors)
 
     def post_event(self, event_id, room_id, room_name, confidence):
         if self.post_error:
             raise self.post_error
+        self.calls.append("event")
         self.events.append((event_id, room_id, room_name, confidence))
         return "accepted"
 
     def put_clip(self, event_id, path):
         if self.put_error:
             raise self.put_error
+        self.calls.append("clip")
         self.clips.append((event_id, Path(path).name))
+        return "stored"
+
+    def put_keypoints(self, event_id, path):
+        if self.keypoints_errors:
+            raise self.keypoints_errors.pop(0)
+        self.calls.append("keypoints")
+        self.keypoints.append((event_id, Path(path).name))
         return "stored"
 
 
@@ -135,6 +148,126 @@ class OutboxDeliveryTest(unittest.TestCase):
         deliver_item(self.settings, client, self.outbox,
                      self.outbox.pending()[0], set())
         self.assertEqual(client.events, [("e2", "r1", "Room 1", 1.0)])
+
+
+class KeypointFileDeliveryTest(unittest.TestCase):
+    """The keypoint file goes after the clip, and never at the clip's expense."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.clips = root / "clips"
+        self.clips.mkdir()
+        self.settings = make_settings(root / "spool", self.clips)
+        self.outbox = Outbox(self.settings.spool_dir)
+        self.outbox.add_event("e1", "r1", "Room 1", 0.9, "fall_1.mp4")
+        self.clip = self.clips / "fall_1.mp4"
+        self.clip.write_bytes(b"video-bytes")
+        self.npz = self.clips / "fall_1.npz"
+        self.npz.write_bytes(b"PK\x03\x04keypoints")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _deliver(self, client, acked=None, outbox=None):
+        outbox = outbox or self.outbox
+        deliver_item(self.settings, client, outbox, outbox.pending()[0],
+                     set() if acked is None else acked)
+
+    def test_event_then_clip_then_keypoint_file(self):
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        client = FakeClient()
+        self._deliver(client)
+
+        self.assertEqual(client.calls, ["event", "clip", "keypoints"])
+        self.assertEqual(client.keypoints, [("e1", "fall_1.npz")])
+        self.assertFalse(self.clip.exists())
+        self.assertFalse(self.npz.exists())
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_waits_for_the_clip_to_finish(self):
+        client = FakeClient()
+        self._deliver(client)
+        self.assertEqual(client.calls, ["event"])
+        self.assertEqual(len(self.outbox.pending()), 1)
+
+    def test_keypoint_file_alone_when_the_clip_was_lost(self):
+        self.clip.unlink()
+        self.outbox.attach_files("e1", None, str(self.npz))
+        client = FakeClient()
+        self._deliver(client)
+
+        self.assertEqual(client.calls, ["event", "keypoints"])
+        self.assertFalse(self.npz.exists())
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_a_keypoint_retry_does_not_resend_the_clip(self):
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        client = FakeClient(keypoints_errors=[RetryableNotifyError("503")])
+        acked: set[str] = set()
+        with self.assertRaises(RetryableNotifyError):
+            self._deliver(client, acked)
+
+        # The clip went, and was cleaned up; the keypoint file waits.
+        self.assertEqual(client.clips, [("e1", "fall_1.mp4")])
+        self.assertFalse(self.clip.exists())
+        self.assertTrue(self.npz.exists())
+        self.assertTrue(self.outbox.pending()[0]["clipSent"])
+
+        self._deliver(client, acked)
+        self.assertEqual(client.calls, ["event", "clip", "keypoints"])
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_a_keypoint_retry_after_a_restart_does_not_resend_the_clip(self):
+        self.settings = dataclasses.replace(self.settings,
+                                            keep_uploaded_clips=True)
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        with self.assertRaises(RetryableNotifyError):
+            self._deliver(FakeClient(
+                keypoints_errors=[RetryableNotifyError("timeout")]))
+
+        # A new process: the journal is replayed, the in-memory acks are gone.
+        # The clip is still on disk (KEEP_UPLOADED_CLIPS), so only the journal
+        # can tell the worker it was already sent.
+        client = FakeClient()
+        self._deliver(client, outbox=Outbox(self.settings.spool_dir))
+        self.assertEqual(client.calls, ["event", "keypoints"])
+
+    def test_a_refused_keypoint_file_is_kept_for_inspection(self):
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        client = FakeClient(keypoints_errors=[PermanentNotifyError("415")])
+        # Propagates for the worker to drop, as any permanent failure does --
+        # with the clip already delivered and removed.
+        with self.assertRaises(PermanentNotifyError):
+            self._deliver(client)
+        self.assertEqual(client.clips, [("e1", "fall_1.mp4")])
+        self.assertFalse(self.clip.exists())
+        self.assertTrue(self.npz.exists())
+
+    def test_a_missing_keypoint_file_does_not_hold_up_the_event(self):
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        self.npz.unlink()
+        client = FakeClient()
+        self._deliver(client)
+        self.assertEqual(client.calls, ["event", "clip"])
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_an_oversize_clip_still_sends_its_keypoint_file(self):
+        self.settings = dataclasses.replace(self.settings, max_clip_bytes=4)
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        client = FakeClient()
+        self._deliver(client)
+        self.assertEqual(client.calls, ["event", "keypoints"])
+        self.assertTrue(self.clip.exists())
+        self.assertEqual(self.outbox.pending(), [])
+
+    def test_keep_uploaded_clips_keeps_the_keypoint_file_too(self):
+        self.settings = dataclasses.replace(self.settings,
+                                            keep_uploaded_clips=True)
+        self.outbox.attach_files("e1", str(self.clip), str(self.npz))
+        self._deliver(FakeClient())
+        self.assertTrue(self.clip.exists())
+        self.assertTrue(self.npz.exists())
 
 
 if __name__ == "__main__":

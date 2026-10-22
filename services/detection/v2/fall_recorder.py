@@ -39,11 +39,24 @@ event) and when it is finished (to upload it). Both are published as small
 dicts on an internal deque that the service drains with `pop_events()`:
 
     {"kind": "clip_started", "filename", "filepath", "started_at", "confidence"}
-    {"kind": "clip_ready",   "filename", "filepath", "ready_at"}
+    {"kind": "clip_ready",   "filename", "filepath", "keypoints_filepath",
+                             "ready_at"}
 
 Events are appended under the module lock and read by another thread, so the
 deque is the only shared state; callers that never call pop_events() (the
 demo app) are unaffected apart from the deque filling to its bound.
+
+KEYPOINT FILE
+-------------
+Beside every clip goes `fall_<ts>.npz`: the same frames as pose numbers --
+every tracked person's keypoints, and the alarm and score -- for training on
+the Alert's Outcome (format: fallcore/keypoint_file.py). The caller hands each
+frame's tracked people to push_frame() with the canvas; they are buffered and
+flushed with the frames, so the file spans exactly what the clip shows. It is
+written on the clip's writer thread before the ffmpeg pass, under a `.tmp`
+name until complete, and `clip_ready` carries its path (None when
+FALL_KEYPOINTS_ENABLED=0 or the write failed). It does not depend on the video
+writer: a clip whose writer never opened still leaves its keypoint file.
 
 FLOW
 ----
@@ -92,6 +105,8 @@ from datetime import datetime
 import cv2
 import numpy as np
 
+from fallcore import keypoint_file
+
 CLIPS_DIR = os.path.join(os.path.dirname(__file__), "fall_clips")
 
 # Same nominal FPS the manual recorder writes at (see RECORD_FPS in
@@ -114,6 +129,11 @@ FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 # single frame, not just while a clip is actually being written -- see the
 # `need_skel` check in detector.py's gen_frames().
 ENABLED = os.environ.get("FALL_CLIPS_ENABLED", "1") not in ("0", "")
+
+# Set to "0" to stop writing the keypoint file beside each clip (see KEYPOINT
+# FILE above). The clip itself is unaffected.
+KEYPOINTS_ENABLED = ENABLED and os.environ.get(
+    "FALL_KEYPOINTS_ENABLED", "1") not in ("0", "")
 
 # Seconds of rolling pre-event footage kept before a fall and flushed into
 # the front of every clip, counted back from the frame the alarm LATCHED on --
@@ -152,9 +172,11 @@ MAX_CLIP_SECONDS = float(os.environ.get("FALL_CLIP_MAX_SECONDS", "10"))
 # directions to assume it.
 _push_times: "deque" = deque(maxlen=120)
 
-# Skeleton frames, oldest first, as (timestamp, JPEG bytes). Trimmed by AGE rather
-# than by count, so the lead-in is PRE_EVENT_SECONDS whatever the rate does;
-# the maxlen is only a memory guard for an implausibly fast feed.
+# Skeleton frames, oldest first, as (timestamp, JPEG bytes, keypoint frame or
+# None). Trimmed by AGE rather than by count, so the lead-in is
+# PRE_EVENT_SECONDS whatever the rate does; the maxlen is only a memory guard
+# for an implausibly fast feed. The keypoints ride in the same entry so the
+# file's lead-in is the clip's, frame for frame.
 _buffer: "deque" = deque(maxlen=max(1, round(PRE_EVENT_SECONDS * 60)))
 
 # Clip lifecycle facts, drained by the detection service (see module docstring).
@@ -254,6 +276,10 @@ def _writer_worker(writer, q: "queue.Queue", rawpath: str, filepath: str,
         writer.write(frame)
     writer.release()
 
+    # Before the conversion: the keypoints are small and already complete, and
+    # a slow or crashing ffmpeg must not cost them.
+    keypoints_path = _save_keypoints(filepath, meta)
+
     # The header was written at the rate estimated when the clip opened; by now
     # the whole clip has been seen, so the conversion is stamped with the rate
     # it was actually captured at.
@@ -263,10 +289,32 @@ def _writer_worker(writer, q: "queue.Queue", rawpath: str, filepath: str,
             "kind": "clip_ready",
             "filename": os.path.basename(filepath),
             "filepath": filepath,
+            "keypoints_filepath": keypoints_path,
             "ready_at": time.time(),
         })
         if _state.get("last_clip_filename") == os.path.basename(filepath):
             _state["converting"] = False
+
+
+def _save_keypoints(filepath: str, meta: dict) -> str | None:
+    """Write the clip's keypoint file; its path, or None if there is none.
+
+    The name is the clip's with `.npz` (`fall_<ts>.npz`), which is how the
+    detection service finds it again after a restart. Never raises: this runs
+    on the writer thread ahead of `clip_ready`, and an exception here would
+    lose that event, which is what gets the clip uploaded.
+    """
+    frames = meta.get("keypoints")
+    if not frames:
+        return None
+    path = os.path.splitext(filepath)[0] + ".npz"
+    try:
+        keypoint_file.save(path, frames, meta["trigger"])
+    except Exception as exc:  # noqa: BLE001 - the clip must still be published
+        print(f"[fall_recorder] WARNING: could not write the keypoint file "
+              f"{os.path.basename(path)}: {exc!r}. The clip is unaffected.")
+        return None
+    return path
 
 
 def _convert_for_telegram(source: str, final: str,
@@ -366,7 +414,8 @@ def _convert_for_telegram(source: str, final: str,
     print(f"[fall_recorder] converted {os.path.basename(final)} for Telegram playback")
 
 
-def _start_clip_locked(size, now: float, confidence: float | None = None) -> None:
+def _start_clip_locked(size, now: float, confidence: float | None = None,
+                       keypoints: "keypoint_file.Frame | None" = None) -> None:
     global _write_queue, _writer_started, _clip_meta, _armed
     _armed = False
     fps = _measured_fps() or float(FPS)
@@ -379,10 +428,16 @@ def _start_clip_locked(size, now: float, confidence: float | None = None) -> Non
     # The clip starts at the oldest buffered frame, not at the trigger: that is
     # the timestamp the achieved rate has to be measured from.
     first_ts = _buffer[0][0] if _buffer else now
-    for _ts, buffered in _buffer:
+    for _ts, buffered, _kp in _buffer:
         q.put(buffered)
+    # The keypoint file gets the same lead-in, then the trigger frame, whose
+    # index marks where the alarm latched. push_frame() appends the rest.
+    lead_in = [kp for _ts, _jpg, kp in _buffer if kp is not None]
     _clip_meta = {"frames": len(_buffer) + 1, "first_ts": first_ts,
-                  "last_ts": now, "fps": fps}
+                  "last_ts": now, "fps": fps,
+                  "keypoints": (lead_in + [keypoints]
+                                if keypoints is not None else None),
+                  "trigger": len(lead_in)}
     _buffer.clear()
     threading.Thread(target=_writer_worker,
                      args=(writer, q, rawpath, filepath, _clip_meta),
@@ -423,7 +478,10 @@ def _close_clip_locked(now: float) -> None:
 
 
 def push_frame(skel_frame, fallen: bool,
-               confidence: float | None = None) -> None:
+               confidence: float | None = None,
+               people: "tuple[keypoint_file.Person, ...]" = (),
+               aspect: float | None = None,
+               lead: int | None = None) -> None:
     """Call exactly once per inference frame with the skeleton-only canvas.
 
     `fallen` is whatever the caller's own latch says right now, e.g.
@@ -434,6 +492,12 @@ def push_frame(skel_frame, fallen: bool,
     number the model actually decided on into the alert. It never influences
     the recording itself.
 
+    `people` is everyone tracked in this frame (`keypoint_file.people`),
+    `aspect` the frame's width / height, and `lead` the subject the alarm and
+    `confidence` are about, for the keypoint file: `lead` on the trigger frame
+    is the subject the Alert's Outcome will be about. The canvas's own shape
+    stands in when `aspect` is not given.
+
     Never blocks on video encoding -- see the module docstring.
     """
     global _armed
@@ -441,6 +505,11 @@ def push_frame(skel_frame, fallen: bool,
     now = time.time()
     h, w = skel_frame.shape[:2]
     size = (w, h)
+    keypoints = (keypoint_file.Frame(
+        t=now, aspect=float(aspect if aspect is not None else w / max(h, 1)),
+        alarm=bool(fallen), score=float(confidence or 0.0), people=tuple(people),
+        lead=-1 if lead is None else int(lead))
+        if KEYPOINTS_ENABLED else None)
 
     with _lock:
         _push_times.append(now)
@@ -449,6 +518,8 @@ def push_frame(skel_frame, fallen: bool,
             if _clip_meta is not None:
                 _clip_meta["frames"] += 1
                 _clip_meta["last_ts"] = now
+                if _clip_meta["keypoints"] is not None:
+                    _clip_meta["keypoints"].append(keypoints)
             elapsed = now - _writer_started
             # Fixed duration -- deliberately ignores `fallen` clearing early.
             # See MAX_CLIP_SECONDS above for why.
@@ -457,7 +528,7 @@ def push_frame(skel_frame, fallen: bool,
             return
 
         if fallen and _armed and now >= _state["cooldown_until"]:
-            _start_clip_locked(size, now, confidence)
+            _start_clip_locked(size, now, confidence, keypoints)
             _write_queue.put(skel_frame)  # the frame that tripped the trigger
             return
 
@@ -470,7 +541,7 @@ def push_frame(skel_frame, fallen: bool,
         ok, jpg = cv2.imencode(".jpg", skel_frame,
                                [cv2.IMWRITE_JPEG_QUALITY, _BUFFER_JPEG_QUALITY])
         if ok:
-            _buffer.append((now, jpg.tobytes()))
+            _buffer.append((now, jpg.tobytes(), keypoints))
         while _buffer and now - _buffer[0][0] > PRE_EVENT_SECONDS:
             _buffer.popleft()
 

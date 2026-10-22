@@ -5,7 +5,8 @@ Wires the unmodified v2 app to the notification service:
 * the shared capture thread is started at boot, not on the first viewer, so
   the room is watched whether or not anybody has the page open;
 * `fall_recorder`'s clip lifecycle events feed the durable outbox;
-* the outbox worker POSTs the alert and uploads the skeleton clip;
+* the outbox worker POSTs the alert and uploads the skeleton clip, then the
+  keypoint file recorded with it (for training on the Alert's Outcome);
 * the Flask UI stays available on SERVICE_UI_PORT for operators (the compose
   file publishes it on the host's loopback only -- it has no auth).
 
@@ -73,6 +74,10 @@ def main() -> int:
             "FALL_CLIPS_ENABLED is off. The detection service needs it on: "
             "the automatic skeleton clip is the alert payload, and it is also "
             "what keeps the RTSP reader alive with no browser attached.")
+
+    print("[service] keypoint files: " + (
+        "on" if fall_recorder.KEYPOINTS_ENABLED
+        else "off (FALL_KEYPOINTS_ENABLED=0) -- alerts carry the clip only"))
 
     recorded_clips = Path(fall_recorder.CLIPS_DIR)
     if recorded_clips != settings.clips_dir:

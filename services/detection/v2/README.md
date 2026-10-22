@@ -15,6 +15,10 @@ v1's camera plumbing and replaces the fall decision.
 - The **automatic fall clip** (`v2/fall_clips/fall_<ts>.mp4`) is **skeleton
   only**: the pose drawn on a blank canvas, no camera pixels. It is the file
   the detection service uploads to the notification service.
+- Beside it, the **keypoint file** (`v2/fall_clips/fall_<ts>.npz`): the same
+  frames as numbers -- every tracked person's keypoints, and the alarm and
+  score -- which the detection service uploads after the clip as training data
+  (format: `fallcore/keypoint_file.py`; `FALL_KEYPOINTS_ENABLED=0` stops it).
 - The **manual Record button** is the one path that writes raw camera footage
   (`v2/videos/pose_<ts>.mp4` is a side-by-side of the camera image and the
   annotated frame). Set `ALLOW_MANUAL_RECORDING=0` to refuse it with a 403;
@@ -199,9 +203,10 @@ and the watchdog that restarts it when the hardware encoder wedges.
 app.py            Flask routes: /, /video_feed, /stream/status, /record/*,
                   /fall/status, /fall_clips/status; reloader off by design
 detector.py       RTSP -> ONNX pose -> calibrated model -> MJPEG / status / recorder
-fall_recorder.py  pre-buffered skeleton-only fall clips; publishes clip_started /
-                  clip_ready events (pop_events) for the detection service, and
-                  only ever names a file `fall_<ts>.mp4` once it is complete
+fall_recorder.py  pre-buffered skeleton-only fall clips and their keypoint files;
+                  publishes clip_started / clip_ready events (pop_events) for
+                  the detection service, and only ever names a file
+                  `fall_<ts>.mp4` / `fall_<ts>.npz` once it is complete
 replay.py         offline replay of one video through the same decision stack
 ../pi/            Pi-side MediaMTX config + encoder watchdog (deploy there)
 ```

@@ -3,18 +3,20 @@
 `fall_recorder` publishes two facts (see v2/fall_recorder.py):
 
     clip_started  -- the alarm latched and a skeleton clip began recording
-    clip_ready    -- the clip is complete and playable
+    clip_ready    -- the clip is complete and playable, and its keypoint file
+                     (`fall_*.npz`, the same frames as pose numbers) written
 
 The alert goes out on `clip_started`, so the notification is not delayed by
-the 13 s the clip takes to record and convert; the clip is attached on
-`clip_ready`. One event per clip: the recorder's own cooldown and the latch
-hysteresis already collapse a single incident into one clip.
+the 13 s the clip takes to record and convert; the clip and its keypoint file
+are attached on `clip_ready`. One event per clip: the recorder's own cooldown
+and the latch hysteresis already collapse a single incident into one clip.
 
 A restart between the two facts would lose the `clip_ready` (the deque lives
-in memory), so `reconcile()` re-attaches any completed clip file whose event
-is still pending. That is only safe because fall_recorder renames the file
-into `fall_*.mp4` after it is complete -- a half-written clip exists only as
-`fall_*.raw.mp4`.
+in memory), so `reconcile()` re-attaches any completed clip and keypoint file
+whose event is still pending. That is only safe because fall_recorder renames
+each file into its final name after it is complete -- a half-written clip
+exists only as `fall_*.raw.mp4`, a half-written keypoint file as
+`fall_*.npz.tmp`.
 """
 from __future__ import annotations
 
@@ -71,32 +73,50 @@ class Watcher:
     def _on_clip_ready(self, event: dict) -> None:
         path = event.get("filepath")
         filename = event.get("filename")
+        keypoints = event.get("keypoints_filepath")
+        if keypoints and not Path(keypoints).exists():
+            print(f"[watcher] clip_ready for {filename!r} names a keypoint "
+                  f"file that is missing at {keypoints!r}; sending without it")
+            keypoints = None
         if not path or not Path(path).exists():
             print(f"[watcher] clip_ready for {filename!r} but the file is "
                   f"missing at {path!r}; the alert stands, the clip is lost")
-            closed = self.outbox.finish_clip_by_filename(filename)
-            if closed:
-                print(f"[watcher] closed event {closed} without a clip")
-            return
-        if not self.outbox.attach_clip_by_filename(filename, path):
+            if not keypoints:
+                closed = self.outbox.finish_clip_by_filename(filename)
+                if closed:
+                    print(f"[watcher] closed event {closed} without a clip")
+                return
+            # The keypoints do not depend on the video writer; send them alone.
+            path = None
+        if not self.outbox.attach_files_by_filename(filename, path, keypoints):
             print(f"[watcher] clip_ready for {filename!r} matches no pending "
                   f"event (already uploaded, or suppressed)")
 
     # -- restart recovery ----------------------------------------------------
 
     def reconcile(self) -> int:
-        """Attach completed clips to pending events that lost their `clip_ready`."""
+        """Attach completed clips and keypoint files to pending events that
+        lost their `clip_ready`. Returns how many events got files."""
         attached = 0
         for item in self.outbox.pending():
-            if item.get("clip"):
+            if item.get("clip") or item.get("keypoints"):
                 continue
             filename = item.get("clipFilename")
             if not filename:
                 continue
-            path = self.settings.clips_dir / filename
-            if path.exists() and self.outbox.attach_clip(item["eventId"], str(path)):
+            clip = self.settings.clips_dir / filename
+            # fall_recorder names the keypoint file after its clip.
+            keypoints = clip.with_suffix(".npz")
+            found = [p for p in (clip, keypoints) if p.exists()]
+            if not found:
+                continue
+            if self.outbox.attach_files(
+                    item["eventId"],
+                    str(clip) if clip in found else None,
+                    str(keypoints) if keypoints in found else None):
                 attached += 1
-                print(f"[watcher] reconciled {filename} with event "
+                print(f"[watcher] reconciled "
+                      f"{' + '.join(p.name for p in found)} with event "
                       f"{item['eventId']}")
         return attached
 

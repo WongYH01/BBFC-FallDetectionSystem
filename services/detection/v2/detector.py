@@ -50,6 +50,7 @@ import fall_recorder
 import numpy as np
 from ultralytics import YOLO
 
+from fallcore import keypoint_file
 from fallcore import onnxpose as fonnx
 from fallcore.extract import sightings, subject_row
 from fallcore.fall_decision import FallDecision
@@ -342,8 +343,9 @@ def _boxes(result) -> list:
     return out
 
 
-def _update_falls(result) -> list:
-    """Feed one frame to the decision; returns this frame's people for drawing.
+def _update_falls(result) -> tuple[list, tuple]:
+    """Feed one frame to the decision; returns this frame's people for drawing,
+    and everyone tracked in it for the Skeleton Clip's keypoint file.
 
     The alarm state lives in `fallcore.stream`: each subject's keypoints go into
     their ring buffer, and on the frames a window is due it is scored and that
@@ -356,9 +358,13 @@ def _update_falls(result) -> list:
     # information, not something to hide. The aspect comes per frame because
     # a reconnect can change resolution.
     if TRACKED:
-        frame_input, _stream.aspect = sightings(result)
+        seen, _stream.aspect = sightings(result)
+        frame_input = seen
     else:
         frame_input, _stream.aspect = subject_row(result)
+        # The largest box alone is decided on, but the keypoint file records
+        # everyone tracked either way.
+        seen = sightings(result)[0] if fall_recorder.KEYPOINTS_ENABLED else []
     with _fall_lock:
         if _stream.observe(frame_input):
             _last_state = _stream.state()
@@ -374,8 +380,15 @@ def _update_falls(result) -> list:
         for p in _people:
             p["fallen"] = (_stream.alarm_of(p["track_id"]) if TRACKED
                            else room_alarm)
+        if not fall_recorder.KEYPOINTS_ENABLED:
+            tracked = ()
+        elif TRACKED:
+            tracked = keypoint_file.people(seen, _stream.alarm_of,
+                                           _stream.subject_of)
+        else:
+            tracked = keypoint_file.people(seen, lambda _tid: room_alarm)
         _last_update = time.time()
-    return _people
+    return _people, tracked
 
 
 def _draw_falls(canvas, people, state) -> None:
@@ -821,7 +834,7 @@ def _capture_loop() -> None:
                 # every track's hits/misses, so scoring a second time to build
                 # the skeleton canvas below would double-count the debounce and
                 # latch the alert in ~1.5 frames instead of 3. Hold the result.
-                people = _update_falls(result)
+                people, tracked = _update_falls(result)
 
                 # Before the recording branch, so a saved clip captures the
                 # alert. plot() deep-copies orig_img, so drawing here cannot
@@ -852,10 +865,15 @@ def _capture_loop() -> None:
                     if fall_recorder.ENABLED:
                         # The rolling mean is the score the decision actually
                         # latched on; it rides the clip_started event so the
-                        # detection service can put it in the alert.
+                        # detection service can put it in the alert. The
+                        # tracked people become the clip's keypoint file, and
+                        # the lead subject (the alarmed one) is who the
+                        # Alert's Outcome will be about.
                         fall_recorder.push_frame(
                             skel, bool(_last_state.get("alarm")),
-                            confidence=float(_last_state.get("rolling_mean", 0.0)))
+                            confidence=float(_last_state.get("rolling_mean", 0.0)),
+                            people=tracked, aspect=_stream.aspect,
+                            lead=_last_state.get("subject"))
 
                     if _recording:
                         combined = np.hstack([result.orig_img, frame])
