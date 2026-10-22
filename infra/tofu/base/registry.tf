@@ -9,6 +9,10 @@ resource "google_artifact_registry_repository" "registry" {
   format                 = "DOCKER"
   cleanup_policy_dry_run = false
 
+  lifecycle {
+    prevent_destroy = true
+  }
+
   cleanup_policies {
     id     = "Keep 5 most recent version"
     action = "KEEP"
