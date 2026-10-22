@@ -190,7 +190,8 @@ belong to the cluster's lifetime.
   `alerts` schema itself (`spring.flyway.create-schemas=true`).
 - `google_sql_user` with `type = "CLOUD_IAM_SERVICE_ACCOUNT"` and
   `name = "notification@<project>.iam"` (the GSA email minus
-  `.gserviceaccount.com`). No password user, so no database password anywhere.
+  `.gserviceaccount.com`). The app has no password user; the only database
+  password is the built-in `postgres` one, set by hand below.
 
 **`secrets.tf`** — `google_secret_manager_secret` shells with
 `replication { auto {} }`, and **no** `google_secret_manager_secret_version`
@@ -199,20 +200,41 @@ belong to the cluster's lifetime.
 - `detection-stream-password`
 - `tailscale-operator-oauth` (client id + secret for the operator, step 7)
 
-**By hand after apply:**
-1. Add each secret value:
-   `gcloud secrets versions add <name> --data-file=-`.
-2. Let the IAM database user create the schema. As the built-in `postgres`
-   user (Cloud SQL Studio, or `gcloud sql connect`) run:
-   `GRANT CREATE ON DATABASE postgres TO "notification@<project>.iam";`
+**By hand after apply** (Cloud console):
+1. **Secret values.** Secret Manager → the secret → **+ New version** → paste
+   the value → **Add new version**. No trailing newline or space.
+   `telegram-bot-token` (BotFather) and `detection-stream-password` (MediaMTX
+   RTSP) now; `tailscale-operator-oauth` in step 7.
+2. **`postgres` password.** SQL → the instance (wait for RUNNABLE) →
+   **Users** → `postgres` → ⋮ → **Change password**. The instance is created
+   without one, and you cannot sign in until it is set. Nothing else uses it;
+   keep it in a password manager.
+3. **Schema grant.** Flyway runs `CREATE SCHEMA alerts` as the IAM user, which
+   starts with no database privileges, and `CREATE SCHEMA` needs `CREATE` on
+   the database. SQL → the instance → **Cloud SQL Studio**, sign in to
+   database `postgres` as `postgres` (built-in database authentication), run:
+   ```sql
+   GRANT CREATE ON DATABASE postgres TO "notification@<project>.iam";
+   SELECT has_database_privilege('notification@<project>.iam', 'postgres', 'CREATE');
+   ```
+   The `SELECT` returns `t`. Only needed before step 8; the grant lives in the
+   database, so it survives cluster teardown.
+   - If Studio cannot reach the instance (private IP only), run the `GRANT`
+     after step 5 from a throwaway pod instead:
+     `kubectl run psql --rm -it --restart=Never --image=postgres:15 -- psql "host=<private ip> dbname=postgres user=postgres sslmode=require"`.
+     `gcloud sql connect` does not work from a laptop: its `--private-ip`
+     still needs a route into the VPC.
+   - If the `GRANT` fails with `permission denied`, `postgres` does not own
+     the database (see [Unverified](#unverified)).
 
 **`outputs.tf`** — everything `cluster` and the manifests need:
 `project_id`, `project_number`, `region`, `zone`, `network`, `subnetwork`,
 `sql_connection_name` (`project:region:instance`), `clip_bucket_name`,
 `notification_gsa_email`, `gke_nodes_gsa_email`.
 
-**Done when:** the instance is `RUNNABLE`, the bucket exists, each secret
-has one version, and the `GRANT` has run.
+**Done when:** the instance is `RUNNABLE`, the bucket exists,
+`telegram-bot-token` and `detection-stream-password` each have one version,
+and the `SELECT` above returns `t`.
 
 ## Step 5 — `cluster` root: GKE
 
@@ -515,6 +537,9 @@ With the cluster destroyed: ~$13, or ~$2.40 with Cloud SQL stopped.
 - Public ingress / LoadBalancer — nothing needs to be reachable from outside.
 - A bootstrap Tofu config for the state bucket — created once by hand.
 - External Secrets Operator — GKE's built-in secret sync covers it.
+- `database_roles = ["cloudsqlsuperuser"]` on the notification SQL user —
+  it would remove the manual `GRANT` (step 4), but gives the app admin rights
+  on the instance.
 - Anything for training — [`training-plan.md`](training-plan.md).
 
 ## Unverified
@@ -525,5 +550,9 @@ With the cluster destroyed: ~$13, or ~$2.40 with Cloud SQL stopped.
 - Secret sync docs say "the secret version must be in the same region as the
   cluster", while their example uses a global `projects/…/secrets/…` path.
   Start with global secrets; switch to regional ones if sync rejects them.
+- Whether Cloud SQL Studio works on a private-IP-only instance (step 4).
+- That `cloudsqlsuperuser` owns the default `postgres` database, so
+  `postgres` can run the step 4 `GRANT`. The docs only say so for databases
+  created in the console.
 - Detection's CPU on an e2 vCPU (see step 9).
 - Disk and Artifact Registry storage prices (left out of [Cost](#cost)).
