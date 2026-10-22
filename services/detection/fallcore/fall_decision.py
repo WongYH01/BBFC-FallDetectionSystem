@@ -24,8 +24,10 @@ from pathlib import Path
 
 from . import config as cfg
 
-#: The calibrated pair the camera ships with. `scripts/fetch_weights.py` pins
-#: these two files by hash; a test keeps the two lists in agreement.
+#: The calibrated pair for yolo26n keypoints: what `FallDecision()` and picam
+#: scoring (which reads yolo26n caches) run. The detector swaps in the head of
+#: the pose backbone it runs (`fallcore.pose_backbone`). `scripts/fetch_weights.py`
+#: pins every one of these files by hash; a test keeps the lists in agreement.
 DEPLOYED_CHECKPOINT = "augnone_ms_coords_hn_s99.pt"
 DEPLOYED_HEAD = "probe_augnone_ms_coords_hn_s99.npz"
 

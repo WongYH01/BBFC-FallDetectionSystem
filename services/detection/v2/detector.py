@@ -23,9 +23,11 @@ four-model ensemble.
 four-model mean) instead. Either way the head is bound to one backbone, and a
 mismatch raises rather than returning confident nonsense.
 
-The pose scale is part of that pairing: the head was fitted on yolo26n keypoints
-at 640, so `POSE_SCALE=yolo26n` is the configuration that was measured. Another
-scale feeds the head an input distribution it has never seen.
+The pose backbone is part of that pairing: a head reads the keypoints of the
+backbone it was fitted on, so `POSE_SCALE` picks a backbone and its head
+together (`fallcore.pose_backbone`). yolo26m (INT8 ONNX at 384x640) runs by
+default; yolo26n is the backup, run when `POSE_SCALE=yolo26n` or when the
+yolo26m files are missing or its model will not load.
 
 The v1 box width/height rule still runs, but only as a debug overlay
 (`FALL_DEBUG=1`) -- the calibrated model decides.
@@ -52,6 +54,7 @@ from ultralytics import YOLO
 
 from fallcore import keypoint_file
 from fallcore import onnxpose as fonnx
+from fallcore import pose_backbone
 from fallcore.extract import sightings, subject_row
 from fallcore.fall_decision import FallDecision
 
@@ -64,35 +67,27 @@ MEDIAMTX_HOST   = os.environ["MEDIAMTX_HOST"]
 RTSP_PORT       = os.environ.get("MEDIAMTX_RTSP_PORT", "8554")
 STREAM_PATH     = os.environ.get("STREAM_PATH", "cam")
 
-# Pose weights: the ONNX export by default (notebook 18), either the shared
-# models/ copy or the one under runs/onnx/. Ultralytics
-# dispatches .onnx to ONNX Runtime when it is installed; set POSE_MODEL to a
-# .pt path to fall back to torch.
-#
-# POSE_SCALE selects the backbone size (yolo26n/s/m/...). It is yolo26n because
-# that is the scale the keypoint caches were extracted at and the scale the
-# fitted head was trained against -- at any other scale the head reads an input
-# distribution it never saw (and m costs ~83 ms/frame here against ~23 for n).
-IMGSZ      = int(os.environ.get("POSE_IMGSZ", "640"))  # drop to 480 if slow
-POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
+# Pose weights: an ONNX export in models/, which Ultralytics runs on ONNX
+# Runtime. POSE_SCALE picks the backbone and the head fitted on its keypoints
+# (fallcore.pose_backbone): yolo26m by default, yolo26n as the backup.
+# POSE_MODEL replaces the file (a .pt path runs on torch) and POSE_IMGSZ the
+# input size, which a static ONNX graph fixes at export -- leave it unset.
+# A value that does not parse stops the detector here.
+POSE_CHOICES = pose_backbone.from_env(os.environ)
 
 # ONNX Runtime thread pool for the pose graph. Ultralytics builds its session
 # with no session options at all -- every core, spinning between operators --
 # which burns CPU without buying wall time: measured at 640 raw, 8.4 ms wall /
 # 70 ms CPU per frame at the default, against 16.4 / 33 with two threads. 0
-# leaves ONNX Runtime's default. Only applies to the ONNX backend.
-POSE_THREADS = int(os.environ.get("POSE_THREADS", "2"))
+# leaves ONNX Runtime's default. Only applies to the ONNX backend. Four by
+# default so a yolo26m INT8 model holds a 15 fps camera: its whole loop runs
+# 18.2 fps on two threads and 24.8 on four (Ryzen 7 9800X3D); n needs only two.
+POSE_THREADS = int(os.environ.get("POSE_THREADS", "4"))
 
-# services/detection: models/ and runs/ sit next to this v2/ folder.
-ROOT       = Path(__file__).resolve().parents[1]
-MODELS_DIR = ROOT / "models"
-_POSE_CANDIDATES = [
-    MODELS_DIR / f"{POSE_SCALE}-pose.onnx",
-    ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz{IMGSZ}.onnx",
-]
-MODEL_NAME = os.environ.get("POSE_MODEL") or str(
-    next((p for p in _POSE_CANDIDATES if p.exists()), _POSE_CANDIDATES[0]))
-POSE_BACKEND = "onnx" if str(MODEL_NAME).lower().endswith(".onnx") else "torch"
+
+def _backend(path) -> str:
+    return "onnx" if str(path).lower().endswith(".onnx") else "torch"
+
 
 VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "videos")
 RECORD_FPS = int(os.environ.get("RECORD_FPS", "10"))  # nominal, not measured
@@ -145,7 +140,7 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # STREAM_FRAME_STRIDE: frames between the rows that build a classifier window.
 # The default 2 matches training (every 2nd frame of ~30 fps = ~67 ms per row).
 # If the pose backbone cannot run at ~30 fps and the loader is effectively
-# decimating for you (the yolo26m CPU path runs ~14 fps, ~73 ms per row), set
+# decimating for you (fp32 yolo26m on a CPU ran ~14 fps, ~73 ms per row), set
 # this to 1: the rows then arrive at roughly the trained spacing and a 60-row
 # window still covers ~4 s. Leaving it at 2 there would stretch the window to
 # ~9 s of wall clock.
@@ -157,7 +152,15 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 #
 # A value that does not parse or is out of range stops the detector here, with
 # the variable's name, rather than booting it mis-tuned.
-DECISION = FallDecision.from_env(os.environ)
+#
+# The head is the pose backbone's (POSE_CHOICES), so it is decided here for the
+# first choice and again below if that backbone does not load.
+def _decision_for(backbone) -> FallDecision:
+    head = str(backbone.head) if backbone.head is not None else ""
+    return FallDecision.from_env({**os.environ, "CALIBRATION_HEAD": head})
+
+
+DECISION = _decision_for(POSE_CHOICES[0])
 TRACKED = DECISION.subjects == "tracked"
 
 # The tracker behind the ids. ByteTrack is what the per-person rule was
@@ -485,12 +488,44 @@ def _rtsp_url() -> str:
 
 
 # Load the models once at import (shared across requests). The pose backbone
-# is the only heavy one; the four classifiers are ~1 MB each and run once a
-# second, so the ensemble is not where the CPU budget goes.
-if MODEL_NAME.lower().endswith(".onnx") and not Path(MODEL_NAME).exists():
+# is the only heavy one; the classifier is ~1 MB and runs once a second, so it
+# is not where the CPU budget goes.
+if POSE_THREADS > 0 and any(_backend(c.model) == "onnx" for c in POSE_CHOICES):
+    # Before the session exists: Ultralytics builds it with no session options,
+    # so this is the only seam that sets the thread pool.
+    fonnx.use_tuned_sessions(threads=POSE_THREADS, spinning=False)
+
+
+def _open_pose(backbone):
+    """The YOLO model for `backbone`, once a blank frame has run through it.
+
+    Ultralytics opens the ONNX session on the first frame, so without this a
+    model that cannot run here would fail inside the capture loop, not here
+    where the backup can still take over.
+    """
+    m = YOLO(str(backbone.model))
+    device = POSE_DEVICE or ("cpu" if _backend(backbone.model) == "onnx" else None)
+    m.predict(np.zeros((*backbone.imgsz, 3), np.uint8), imgsz=backbone.imgsz,
+              verbose=False, **({"device": device} if device else {}))
+    return m
+
+
+try:
+    POSE, model, _skipped = pose_backbone.open_first(POSE_CHOICES, _open_pose)
+except FileNotFoundError as exc:
     raise FileNotFoundError(
-        f"pose model {MODEL_NAME!r} not found. Export it with notebook 18 "
-        f"(runs/onnx/) or copy it into models/, or set POSE_MODEL.")
+        f"pose backbone: {exc}. Run scripts/fetch_weights.py, or set "
+        f"POSE_MODEL / CALIBRATION_HEAD.") from exc
+#: Why the backbone POSE_SCALE asked for is not the one running; None when it is.
+POSE_FALLBACK = "; ".join(_skipped) or None
+if POSE_FALLBACK:
+    print(f"[detector] WARNING: {POSE_FALLBACK} -- running the {POSE.scale} "
+          f"backup and its head")
+    DECISION = _decision_for(POSE)
+MODEL_NAME = str(POSE.model)
+POSE_BACKEND = _backend(POSE.model)
+IMGSZ = POSE.imgsz
+
 _missing = [str(p) for p in DECISION.checkpoints if not p.exists()]
 _missing += [str(h) for h in DECISION.heads if h is not None and not h.exists()]
 if _missing:
@@ -500,14 +535,9 @@ if _missing:
         "scripts/fit_calibration_head.py for the head, or set "
         "ENSEMBLE_CKPTS / CALIBRATION_HEAD (empty = uncalibrated).")
 
-if POSE_BACKEND == "onnx" and POSE_THREADS > 0:
-    # Before the session exists: Ultralytics builds it with no session options,
-    # so this is the only seam that sets the thread pool.
-    fonnx.use_tuned_sessions(threads=POSE_THREADS, spinning=False)
-
-model = YOLO(MODEL_NAME)
 _stream = DECISION.build_camera(device="cpu")
-print(f"[detector] pose {Path(MODEL_NAME).name} ({POSE_BACKEND}, "
+print(f"[detector] pose {POSE.scale} {Path(MODEL_NAME).name} at "
+      f"{IMGSZ[0]}x{IMGSZ[1]} ({POSE_BACKEND}, "
       f"threads={POSE_THREADS or 'ORT default'}), vid_stride={VID_STRIDE}, "
       f"decision {DECISION}")
 
@@ -579,6 +609,8 @@ def get_stream_status() -> dict:
     s["frame_stride"] = DECISION.frame_stride
     s["jpeg_quality"] = JPEG_QUALITY
     s["pose_backend"] = POSE_BACKEND
+    s["pose"] = POSE.scale
+    s["pose_fallback"] = POSE_FALLBACK
     s["stall_sec"] = STREAM_STALL_SEC
     s["idle_stop_sec"] = IDLE_STOP_SEC
     return s

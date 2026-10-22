@@ -160,6 +160,21 @@ class WeightsManifestTest(unittest.TestCase):
             with self.subTest(file=path.name):
                 self.assertIn(path.relative_to(cfg.ROOT).as_posix(), shipped)
 
+    def test_fetch_weights_ships_every_pose_backbone_and_its_head(self):
+        from fallcore.pose_backbone import BACKBONES
+
+        sys.path.insert(0, str(cfg.ROOT / "scripts"))
+        try:
+            from fetch_weights import FILES
+        finally:
+            sys.path.remove(str(cfg.ROOT / "scripts"))
+        shipped = {target for target, _sha in FILES.values()}
+
+        for b in BACKBONES.values():
+            for path in (b.model, b.head):
+                with self.subTest(file=path.name):
+                    self.assertIn(path.relative_to(cfg.ROOT).as_posix(), shipped)
+
 
 _DEPLOYED = FallDecision()
 _HAVE_WEIGHTS = all(p.exists() for p in _DEPLOYED.checkpoints + _DEPLOYED.heads)

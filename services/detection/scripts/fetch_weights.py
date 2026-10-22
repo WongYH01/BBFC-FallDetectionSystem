@@ -1,20 +1,24 @@
 """Fetch the deployment weights from the project's Hugging Face model repo.
 
-The three files the stream deployment needs -- the ONNX pose backbone and the
-calibrated fall model (one transformer checkpoint plus the logistic head fitted
-on the deployment camera) -- are artifacts, not source, so they are not in git.
-This script downloads them from
+The files the stream deployment needs -- two ONNX pose backbones, the
+transformer checkpoint, and for each backbone the camera head fitted on its
+keypoints -- are artifacts, not source, so they are not in git. This script
+downloads them from
 
     junyuu/fall-detection-bbfc
 
 into exactly the paths `v2` resolves by default (relative to services/detection):
 
-    models/yolo26n-pose.onnx
-    runs/checkpoints/augnone_ms_coords_hn_s99.pt
+    models/yolo26m-pose-384x640-int8.onnx                          deployed
+    runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz
+    models/yolo26n-pose.onnx                                       the backup
     runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz
+    runs/checkpoints/augnone_ms_coords_hn_s99.pt                   both
 
-The checkpoint without its head still runs (`CALIBRATION_HEAD=` empty) and
-scores lower; the head without its checkpoint is refused. The four
+The detector runs yolo26m and falls back to yolo26n when the yolo26m files are
+missing or will not load (`fallcore.pose_backbone`). The checkpoint without a
+head still runs (`CALIBRATION_HEAD=` empty) and scores lower; a head without
+its checkpoint is refused. The four
 single-corpus checkpoints the ensemble used to average
 (`final_yolo26n`, `hn10_full_hn_s99`, `hn10_coords_hn_s99`,
 `omnifall_cs_full`) were removed from the release when the calibrated model
@@ -65,6 +69,12 @@ DEFAULT_REVISION = "09c33ba5d37d0bf38ab3f42d4be631732daaef00"
 
 #: remote path in the repo -> (path under the target root, sha256)
 FILES = {
+    "pose/yolo26m-pose-384x640-int8.onnx": (
+        "models/yolo26m-pose-384x640-int8.onnx",
+        "45bf284c68e54b5bcb1137058c6f466ac40d94935062403e396005a5d882a9b0"),
+    "checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz": (
+        "runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz",
+        "f56d81e17d7c1f7fabdc66d77e03c1186cd2966a685377de4cbfe2c4ba09f639"),
     "pose/yolo26n-pose-imgsz640.onnx": (
         "models/yolo26n-pose.onnx",
         "ea6b37044a5784d279dd93837b2fd89aaa2e0db720ad0928b4de2d78ad1f5c57"),

@@ -18,9 +18,23 @@ The frozen backbone is never modified. The artefact is a ~1 KB head
 costs one extra dot product after the forward pass the demo already does. The
 head itself lives in `fallcore.calibrate`.
 
+A head is also a function of the pose backbone whose keypoints it was fitted
+on: `--scale` names that keypoint cache (`data/keypoints/<scale>/`), and the
+detector pairs each pose backbone with its own head (`fallcore.pose_backbone`).
+
     .venv-train/Scripts/python.exe scripts/fit_calibration_head.py
     .venv-train/Scripts/python.exe scripts/fit_calibration_head.py \
         --protocol fit-all --out runs/checkpoints/probe_coords_hn_s99.npz
+
+The two shipped heads, on the deployed checkpoint:
+
+    # yolo26n
+    ... --ckpt runs/checkpoints/augnone_ms_coords_hn_s99.pt --protocol fit-all \
+        --empty-negatives 10
+    # yolo26m INT8 (keypoints from models/yolo26m-pose-384x640-int8.onnx)
+    ... --ckpt runs/checkpoints/augnone_ms_coords_hn_s99.pt --protocol fit-all \
+        --empty-negatives 10 --scale yolo26m_r640_ortint8rr --labels segment \
+        --out runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz
 
 Results are appended to `runs/metrics/calibration_head.csv`.
 """
@@ -36,7 +50,51 @@ from sklearn.metrics import roc_auc_score
 from fallcore import calibrate, config as cfg, decide, picam, train as T
 
 
-def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10):
+#: Rows in half a second, at the row rate every window is cut at.
+HALF_S = round(0.5 * calibrate.ROW_HZ)
+
+
+def fall_row(scale: str, video_id: str) -> int:
+    """Start row of the fastest half second of hip descent in a whole clip.
+
+    The fall itself, as opposed to the standing before it or the lying after
+    it. Undetected rows are bridged, as `calibrate.window_kinematics` does.
+    """
+    from fallcore.extract import load_keypoints
+
+    kp = load_keypoints(scale, video_id)[::cfg.PREPROCESS.frame_stride]
+    hips = kp[:, [cfg.LEFT_HIP, cfg.RIGHT_HIP], :]
+    ok = (hips[:, :, 2] > 0.3).all(axis=1)
+    idx = np.flatnonzero(ok)
+    y = np.interp(np.arange(len(kp)), idx, hips[idx, :, 0].mean(axis=1))
+    return int(np.argmax(y[HALF_S:] - y[:-HALF_S]))
+
+
+def segment_labels(clips, scale: str, seq_len: int):
+    """`(keep, label)` per window when a fall clip's label follows its fall.
+
+    A fall clip is a few seconds of standing, about one second of falling, then
+    lying still. Clip labels call every one of its windows Fall; here a window
+    that ends before the fall is No-Fall (the same picture as walking), one that
+    holds the whole fastest half second or starts after it is Fall, and one
+    that cuts the fall in part is dropped. ADL windows stay No-Fall. On the
+    picam sessions this is what lets a yolo26m head keep the falls a clip-label
+    head misses in an unseen room (research/scripts/picam3_segments.py).
+    """
+    fall = clips.label.values == 1
+    rows = {v: fall_row(scale, v) for v in clips.video_id[fall].unique()}
+    e = clips.video_id.map(rows)
+    end = clips.start + seq_len - 1
+    pre = (end < e).values
+    holds = ((clips.start <= e) & (e + HALF_S <= end)).values
+    post = (clips.start > e + HALF_S).values
+    label = np.where(fall & pre, 0, clips.label.values)
+    keep = ~fall | pre | holds | post
+    return keep, label
+
+
+def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
+                   scale: str = "yolo26n"):
     """Synthetic "nobody visible" windows, to be fitted as No-Fall.
 
     The head otherwise inherits -- and amplifies -- the room's dropout artifact:
@@ -76,7 +134,7 @@ def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10):
 
     adl = clips[clips.label == 0].video_id.drop_duplicates().head(6).tolist()
     for vid in adl:
-        seq = prepare_sequence(load_keypoints("yolo26n", vid), None,
+        seq = prepare_sequence(load_keypoints(scale, vid), None,
                                cfg.PREPROCESS.frame_stride)
         ref = take_window(seq, T_, start=0)
         for frac in (0.25, 0.50, 0.75):
@@ -144,30 +202,43 @@ def main() -> int:
                          "room and slightly worse in an unseen one; the "
                          "descent gate is what carries. Kept because it is "
                          "measured and reproducible")
+    ap.add_argument("--scale", default="yolo26n",
+                    help="keypoint cache the windows are read from "
+                         "(data/keypoints/<scale>/): the pose backbone this "
+                         "head will be paired with")
+    ap.add_argument("--labels", choices=("clip", "segment"), default="clip",
+                    help="clip: every window of a fall clip is Fall (the yolo26n "
+                         "head). segment: a fall clip's windows before the fall "
+                         "are No-Fall and ones that cut it are dropped (the "
+                         "yolo26m head; see segment_labels)")
     args = ap.parse_args()
 
     man = picam.scan()
-    clips = picam.build_clips(man, scale="yolo26n", seq_len=cfg.FINAL_TRAIN.seq_len,
+    clips = picam.build_clips(man, scale=args.scale, seq_len=cfg.FINAL_TRAIN.seq_len,
                               stride=cfg.EVAL.sliding_stride)
     meta = man.set_index("video_id")
     subj = clips.video_id.map(meta.subject).values
     clip_labels = meta["label"]
+    keep, y = np.ones(len(clips), dtype=bool), clips.label.values
+    if args.labels == "segment":
+        keep, y = segment_labels(clips, args.scale, cfg.FINAL_TRAIN.seq_len)
 
     model, mcfg, tcfg, *_ = T.load_checkpoint(args.ckpt, device="cpu")
-    emb = calibrate.embeddings(model, mcfg, tcfg, clips, scale="yolo26n")
+    emb = calibrate.embeddings(model, mcfg, tcfg, clips, scale=args.scale)
     aspects = {v.video_id: float(v.width) / float(v.height)
                for _, v in man.iterrows()}
-    ext = (calibrate.window_extras(tcfg, clips, scale="yolo26n",
+    ext = (calibrate.window_extras(tcfg, clips, scale=args.scale,
                                    aspects=aspects)
            if args.extra_kinematics else None)
     extra_names = calibrate.KINEMATIC_NAMES if args.extra_kinematics else ()
-    print(f"{Path(args.ckpt).stem}: {len(clips)} windows, "
+    print(f"{Path(args.ckpt).stem} on {args.scale}: {len(clips)} windows "
+          f"({keep.sum()} fitted, {args.labels} labels), "
           f"{clips.video_id.nunique()} clips, embedding {emb.shape[1]}", flush=True)
 
     syn_emb = syn_y = None
     if args.empty_negatives > 0:
         windows = nobody_windows(model, mcfg, tcfg, clips, meta,
-                                 copies=args.empty_negatives)
+                                 copies=args.empty_negatives, scale=args.scale)
         syn_emb = embed_windows(model, mcfg, tcfg, windows, device="cpu")
         syn_y = np.zeros(len(syn_emb), dtype=int)
         # A window nobody is visible in has no measurable descent; zeros are
@@ -180,7 +251,8 @@ def main() -> int:
 
     def fit_fold(train_mask):
         """Fit a head on the masked real windows plus the synthetic negatives."""
-        e, lab = emb[train_mask], clips.label.values[train_mask]
+        train_mask = train_mask & keep
+        e, lab = emb[train_mask], y[train_mask]
         x = ext[train_mask] if ext is not None else None
         if syn_emb is not None:
             e = np.concatenate([e, syn_emb])

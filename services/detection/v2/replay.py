@@ -12,6 +12,10 @@ overrides one setting on top of that.
     python replay.py clip.mp4 --buffer 4 --threshold 0.5 --max-frames 900
     python replay.py clip.mp4 --pose ..\\models\\yolo26n-pose.pt --imgsz 480
 
+The pose backbone and its head are the detector's (`POSE_SCALE`, see
+`fallcore.pose_backbone`); `POSE_SCALE=yolo26n` replays the backup. Unlike the
+detector, replay never falls back: a missing file is an error.
+
 Exit code is 0 whenever the video was readable; the alarm outcome is printed,
 not encoded in the status.
 """
@@ -25,21 +29,11 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
+from fallcore import pose_backbone
 from fallcore.extract import sightings, subject_row
 from fallcore.fall_decision import FallDecision
 
-ROOT = Path(__file__).resolve().parents[1]
-POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
 POSE_TRACKER = os.environ.get("POSE_TRACKER", "bytetrack.yaml")
-_DEFAULT_ONNX = [
-    ROOT / "models" / f"{POSE_SCALE}-pose.onnx",
-    ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz640.onnx",
-]
-
-
-def _default_pose() -> str:
-    return os.environ.get("POSE_MODEL") or str(
-        next((p for p in _DEFAULT_ONNX if p.exists()), _DEFAULT_ONNX[0]))
 
 
 #: Each decision flag and the environment variable it overrides. A flag is that
@@ -60,6 +54,9 @@ _FLAG_VARS = {
 def _decision(args) -> FallDecision:
     """The detector's Fall Decision: the environment, then the flags given."""
     env = dict(os.environ)
+    # The head of the backbone the detector would run, unless one is named.
+    head = pose_backbone.from_env(env)[0].head
+    env.setdefault("CALIBRATION_HEAD", str(head) if head is not None else "")
     env.update({var: str(getattr(args, flag))
                 for flag, var in _FLAG_VARS.items()
                 if getattr(args, flag) is not None})
@@ -69,9 +66,19 @@ def _decision(args) -> FallDecision:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    try:
+        backbone = pose_backbone.from_env(os.environ)[0]
+    except ValueError as e:
+        print(e)
+        return 1
     ap.add_argument("video")
-    ap.add_argument("--pose", default=_default_pose())
-    ap.add_argument("--imgsz", type=int, default=640)
+    ap.add_argument("--pose", default=str(backbone.model),
+                    help="pose model file (POSE_MODEL); its head still follows "
+                         "POSE_SCALE, so change that to replay another backbone")
+    ap.add_argument("--imgsz", type=pose_backbone.parse_imgsz,
+                    default=backbone.imgsz,
+                    help="input size, 640 or 384,640 (POSE_IMGSZ); an ONNX "
+                         "export only runs at the size it was exported at")
     # Every decision flag defaults to "not given": the Fall Decision, with the
     # environment's overrides, is the default, exactly as the live detector
     # reads it. A flag replaces one setting on top of that.

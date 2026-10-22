@@ -54,6 +54,12 @@ docker compose up -d --build                          # repo root docker-compose
 The weights stage is cached, so rebuilding for a code change does not download
 again; `docker compose build --no-cache detection` fetches them afresh.
 
+The image holds two pose backbones, each with its own camera head. yolo26m
+(INT8) runs; yolo26n is the backup, which the detector switches to when the
+yolo26m files are missing or its model will not load, or when
+`POSE_SCALE=yolo26n`. `/stream/status` reports which one is running (`pose`)
+and why the backup took over (`pose_fallback`, `null` when it did not).
+
 Detection and notification share the root project's network, so
 `http://notification:8081/api/v1/notification` resolves. The UI is published on
 `127.0.0.1:5005` only (it has no auth). Logs: `docker compose logs -f detection`.

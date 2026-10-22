@@ -6,7 +6,7 @@ v1's camera plumbing and replaces the fall decision.
 
 | | v1 | v2 |
 |---|---|---|
-| pose | `yolo26n-pose.pt` (torch) | `yolo26n-pose.onnx` (ONNX Runtime), `.pt` fallback |
+| pose | `yolo26n-pose.pt` (torch) | `yolo26m-pose-384x640-int8.onnx` (ONNX Runtime), yolo26n as the backup |
 | decision | box width/height rule | transformer + room-fitted head, rolling mean, latch, descent gate |
 | box ratio | the alarm | debug overlay only (`FALL_DEBUG=1`) |
 
@@ -31,8 +31,11 @@ v1's camera plumbing and replaces the fall decision.
 
 1. **Each tracked person's** keypoints fill their own 4 s ring buffer (60 rows).
 2. Once a second that window is scored by `augnone_ms_coords_hn_s99.pt` and its
-   pooled embedding read by a logistic head fitted on **this room's** clips
-   (`probe_augnone_ms_coords_hn_s99.npz`, `scripts/fit_calibration_head.py`).
+   pooled embedding read by a logistic head fitted on **this room's** clips, as
+   seen by the pose backbone that is running
+   (`probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz` for yolo26m,
+   `probe_augnone_ms_coords_hn_s99.npz` for yolo26n;
+   `scripts/fit_calibration_head.py`).
 3. A rolling mean over the last `BUFFER_LEN=4` windows latches the alarm above
    `FALL_THRESHOLD`, and clears after `FALL_CLEAR_WINDOWS` below
    `FALL_CLEAR_BELOW`.
@@ -87,6 +90,35 @@ at four forward passes per window instead of one.
 
 Transfer to a *different room* is untested: every clip here comes from one.
 
+## Pose backbone
+
+yolo26m runs, as a static INT8 ONNX export at 384x640 (1280x720 frames
+letterbox to 384x640, so a square 640 input is 44% padding). Its weights are
+7-bit (`reduce_range`), so a CPU without VNNI cannot saturate them and scores
+the same as one with it. yolo26n is the backup, in the same image with the
+head fitted on its own keypoints (`fallcore.pose_backbone`).
+
+Both heads are fitted on picam-1 only. On the two sessions neither saw --
+picam-2 (camera re-aimed) and picam-3 (another room, 15 fps) -- under the live
+rule (buffer 2, clear after 1, descent gate):
+
+| | picam-2 TP/FP/FN | picam-3 TP/FP/FN | falls caught | false alarms |
+|---|---|---|---|---|
+| **yolo26m INT8** + its head | 24/1/0 | 26/3/2 | 50 / 52 | 4 / 52 |
+| yolo26n + its head | 24/2/0 | 26/5/2 | 50 / 52 | 7 / 52 |
+
+The difference is within the ±2-3 clips these sets resolve. The yolo26n head on
+yolo26m keypoints is worse than either (picam-3 24/3/4), which is why the head
+follows the backbone. The m head is fitted with segment labels
+(`fit_calibration_head.py --labels segment`): a fall clip's windows before the
+fall count as No-Fall rather than Fall.
+
+Speed, whole loop (track, draw, skeleton, JPEG) on a Ryzen 7 9800X3D: yolo26m
+INT8 18.2 fps on 2 ORT threads and 24.8 on 4, against ~43 for yolo26n on 2.
+A 15 fps camera needs ~20 with the 1.3x margin, hence `POSE_THREADS=4`. No other
+CPU has been timed: run `scripts/bench_pose.py` on the target first, and set
+`POSE_SCALE=yolo26n` where yolo26m does not keep up.
+
 ## Deploy on a new machine
 
 The venv is uv-managed (no pip) and shared with demo-cam v1. From the repo
@@ -121,10 +153,11 @@ Defaults shown; full list with commentary in `services/detection/.env.example`.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `POSE_SCALE` | `yolo26n` | backbone size; selects `{scale}-pose.onnx`. **Do not change** — the head was fitted on yolo26n at 640 |
-| `POSE_IMGSZ` | `640` | backbone input size; 480/320 are cheaper but lose falls |
-| `POSE_THREADS` | `2` | ONNX Runtime pool. ORT's default spins on every core: 8.4 ms wall / 70 ms CPU per frame, against 16.4 / 33 at two threads |
-| `CALIBRATION_HEAD` | `runs/checkpoints/probe_…_s99.npz` | the room head; empty falls back to the checkpoint's own classifier. A head whose backbone or feature variant disagrees with its checkpoint is refused |
+| `POSE_SCALE` | `yolo26m` | pose backbone and the head fitted on its keypoints: `yolo26m` (INT8, 384x640) or `yolo26n` (640). yolo26n also takes over by itself when the yolo26m files are missing or it will not load |
+| `POSE_MODEL` | — | replaces the backbone's file (a `.pt` runs on torch); the head still follows `POSE_SCALE`, and nothing falls back |
+| `POSE_IMGSZ` | the backbone's | input size, `640` or `384,640`; an ONNX export only runs at the size it was exported at |
+| `POSE_THREADS` | `4` | ONNX Runtime pool. ORT's default spins on every core: 8.4 ms wall / 70 ms CPU per frame, against 16.4 / 33 at two threads. Four lets a yolo26m INT8 model hold a 15 fps camera (whole loop 24.8 fps, against 18.2 on two) |
+| `CALIBRATION_HEAD` | the pose backbone's | the room head; empty falls back to the checkpoint's own classifier, and setting it turns the yolo26n fallback off. A head whose backbone or feature variant disagrees with its checkpoint is refused |
 | `ENSEMBLE_CKPTS` | `runs/checkpoints/augnone_ms_coords_hn_s99.pt` | one file = the calibrated model; several = their mean |
 | `BUFFER_LEN` / `FALL_THRESHOLD` | `4` / `0.5` | rolling mean length and the level that engages the alarm |
 | `FALL_MIN_DESCENT` | `0.10` | the descent gate, body lengths/s; `0` restores pre-gate behaviour |
@@ -159,14 +192,14 @@ Get it wrong and the window's time span changes, not just its cost: 15 fps with
   `tie shoelace`. The gate removes the lying-still ones, not these.
 - Multi-person scenes are the known weakness: the pipeline watches the largest
   box, as training did, so it can follow a bystander instead of the faller.
-- CPU: ~23 ms/frame for pose through `track()` (n-640, 2 ORT threads, 9800X3D);
-  the classifier adds ~0.7 ms once a second. One CPU serves one camera at 30 fps
-  with `VID_STRIDE=2`.
+- CPU: the yolo26m INT8 loop runs 24.8 fps on 4 ORT threads (9800X3D), enough
+  for a 15 fps camera; yolo26n's ~23 ms/frame on 2 threads serves 30 fps with
+  `VID_STRIDE=2`. The classifier adds ~0.7 ms once a second.
 
 ## Switching pose models
 
 Time the candidates offline, on the machine that will run the detector, before
-changing `POSE_MODEL`:
+changing `POSE_SCALE` or `POSE_MODEL`:
 
 ```
 python scripts/bench_pose.py                  # every .pt/.onnx in models/
