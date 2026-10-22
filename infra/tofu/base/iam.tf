@@ -28,3 +28,21 @@ resource "google_project_iam_member" "notification" {
   role     = each.value
   member   = google_service_account.notification.member
 }
+
+resource "google_service_account_iam_member" "notification_wi" {
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[bbfc/notification]"
+  role               = "roles/iam.workloadIdentityUser"
+  service_account_id = google_service_account.notification.name
+}
+
+resource "google_secret_manager_secret_iam_member" "ksa" {
+  for_each = {
+    "telegram-bot-token"        = "notification"
+    "detection-stream-password" = "detection"
+  }
+
+  member    = "principal://iam.googleapis.com/projects/${var.project_number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/bbfc/sa/${each.value}"
+  role      = "roles/secretmanager.secretAccessor"
+  secret_id = google_secret_manager_secret.secret[each.key].secret_id
+
+}

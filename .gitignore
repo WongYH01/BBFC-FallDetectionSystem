@@ -40,3 +40,6 @@ __pycache__/
 # Secrets
 /.env*
 !/.env.example.*
+
+
+.idea/terraform.xml
