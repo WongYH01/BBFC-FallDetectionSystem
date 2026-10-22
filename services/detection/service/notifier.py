@@ -8,11 +8,16 @@ The contract (services/notification, Spring Boot, context path
     PUT  /events/{id}/clip        multipart, field "file", video/mp4
                                   202 stored | 404 unknown event
                                   | 409 clip already attached | 413 too large
+    PUT  /events/{id}/keypoints   multipart, field "file", a .npz (or .parquet),
+                                  checked by extension and magic bytes
+                                  202 stored | 404 unknown event
+                                  | 409 already attached | 413 too large
+                                  | 415 not a .npz/.parquet
 
 Errors are split into the two kinds the outbox worker acts on: a permanent
-error (bad request, clip too large) is logged and dropped, a retryable one
-(timeout, connection failure, 5xx, or a 404 because the event POST has not
-landed yet) backs off and tries again.
+error (bad request, file too large or of the wrong kind) is logged and
+dropped, a retryable one (timeout, connection failure, 5xx, or a 404 because
+the event POST has not landed yet) backs off and tries again.
 """
 from __future__ import annotations
 
@@ -69,22 +74,37 @@ class NotificationClient:
 
     def put_clip(self, event_id: str, path: Path) -> str:
         """Upload the skeleton clip. Returns "stored" or "already attached"."""
+        return self._put_file(event_id, "clip", path, "video/mp4")
+
+    def put_keypoints(self, event_id: str, path: Path) -> str:
+        """Upload the fall's keypoint file (.npz). Returns "stored" or
+        "already attached".
+
+        The notification service names the stored file after the event and
+        trusts only its extension and magic bytes, so the content type sent
+        here is informational.
+        """
+        return self._put_file(event_id, "keypoints", path,
+                              "application/octet-stream")
+
+    def _put_file(self, event_id: str, kind: str, path: Path,
+                  content_type: str) -> str:
         filename = Path(path).name
         try:
             with open(path, "rb") as fh:
                 response = requests.put(
-                    self._url(f"events/{event_id}/clip"),
-                    files={"file": (filename, fh, "video/mp4")},
+                    self._url(f"events/{event_id}/{kind}"),
+                    files={"file": (filename, fh, content_type)},
                     timeout=self.timeout_sec,
                 )
         except requests.RequestException as exc:
-            raise RetryableNotifyError(f"PUT clip {filename}: {exc}") from exc
+            raise RetryableNotifyError(f"PUT {kind} {filename}: {exc}") from exc
 
         if response.status_code in (200, 202):
             return "stored"
         if response.status_code == 409:
             return "already attached"
-        raise self._error(f"PUT clip {filename}", response)
+        raise self._error(f"PUT {kind} {filename}", response)
 
     @staticmethod
     def _error(what: str, response: requests.Response) -> NotifyError:

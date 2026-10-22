@@ -140,6 +140,9 @@ class ReconnectionTest(unittest.TestCase):
 
         self.assertTrue(alarms[-1])
         self.assertEqual([x.track_ids for x in s.subjects], [[1, 7]])
+        self.assertEqual(s.subject_of(7), s.subjects[0].sid)
+        self.assertEqual(s.subject_of(1), s.subject_of(7))
+        self.assertIsNone(s.subject_of(99))
 
     def test_with_reconnection_off_the_new_id_is_a_new_subject(self):
         s = streams(reconnect_dist=0.0)
@@ -147,6 +150,7 @@ class ReconnectionTest(unittest.TestCase):
         run(s, self.switched(at=WINDOW + 4)[:WINDOW + 10])
 
         self.assertEqual(sorted(x.track_ids for x in s.subjects), [[1], [7]])
+        self.assertNotEqual(s.subject_of(1), s.subject_of(7))
 
     def test_a_new_id_far_from_the_lost_subject_is_a_new_subject(self):
         s = streams()

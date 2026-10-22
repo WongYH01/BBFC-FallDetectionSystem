@@ -3,14 +3,15 @@
 The worker walks the outbox's pending items in order and, for each:
 
 1. POSTs the event (idempotent -- a restart that re-POSTs gets 200 duplicate);
-2. uploads the clip once it exists, then deletes the local file unless
-   `KEEP_UPLOADED_CLIPS=1`.
+2. once the clip is finished, uploads it, then its keypoint file -- the clip
+   first, because it is what responders see -- deleting each local file once
+   it is uploaded unless `KEEP_UPLOADED_CLIPS=1`.
 
 Transient failures back off exponentially up to `NOTIFY_MAX_BACKOFF_SEC` and
 retry forever: a fall alert is not something to give up on. Permanent failures
-(400 invalid payload, 413 clip too large) are logged and dropped, with the
-clip file kept for inspection. `deliver_item` is a plain function so tests can
-drive it without the loop.
+(400 invalid payload, 413 file too large, 415 not a keypoint file) are logged
+and dropped, with the file kept for inspection. `deliver_item` is a plain
+function so tests can drive it without the loop.
 """
 from __future__ import annotations
 
@@ -44,15 +45,25 @@ def deliver_item(settings: Settings, client: NotificationClient, outbox: Outbox,
         print(f"[outbox] event {event_id} {status} "
               f"({item['roomName']}, P={confidence:.3f})")
 
-    path = item.get("clip")
-    if not path:
+    # The clip and its keypoint file are attached together when the clip
+    # finishes; either may be missing, and until then there is nothing to send.
+    clip, keypoints = item.get("clip"), item.get("keypoints")
+    if not clip and not keypoints:
         return
 
-    clip = Path(path)
+    if clip and not item.get("clipSent"):
+        _send_clip(settings, client, outbox, event_id, Path(clip))
+    if keypoints:
+        _send_keypoints(settings, client, event_id, Path(keypoints))
+
+    outbox.mark_done(event_id)
+
+
+def _send_clip(settings: Settings, client: NotificationClient, outbox: Outbox,
+               event_id: str, clip: Path) -> None:
     if not clip.exists():
         print(f"[outbox] event {event_id}: clip {clip} is gone; the alert "
               f"was sent, dropping the clip")
-        outbox.mark_done(event_id)
         return
 
     size = clip.stat().st_size
@@ -60,19 +71,37 @@ def deliver_item(settings: Settings, client: NotificationClient, outbox: Outbox,
         print(f"[outbox] event {event_id}: clip {clip.name} is {size} bytes, "
               f"over MAX_CLIP_BYTES={settings.max_clip_bytes} -- not "
               f"uploading it; the file is kept for inspection")
-        outbox.mark_done(event_id)
         return
 
     status = client.put_clip(event_id, clip)
     print(f"[outbox] clip {clip.name} for {event_id} {status} ({size} bytes)")
+    _remove_uploaded(settings, clip)
+    # Journalled, so a retry that is waiting on the keypoint file -- in this
+    # process or after a restart -- does not upload the clip a second time.
+    outbox.mark_clip_sent(event_id)
 
-    if not settings.keep_uploaded_clips:
-        try:
-            os.remove(clip)
-        except OSError as exc:
-            print(f"[outbox] could not remove {clip}: {exc}")
 
-    outbox.mark_done(event_id)
+def _send_keypoints(settings: Settings, client: NotificationClient,
+                    event_id: str, path: Path) -> None:
+    if not path.exists():
+        print(f"[outbox] event {event_id}: keypoint file {path} is gone; "
+              f"not sending it")
+        return
+
+    size = path.stat().st_size
+    status = client.put_keypoints(event_id, path)
+    print(f"[outbox] keypoint file {path.name} for {event_id} {status} "
+          f"({size} bytes)")
+    _remove_uploaded(settings, path)
+
+
+def _remove_uploaded(settings: Settings, path: Path) -> None:
+    if settings.keep_uploaded_clips:
+        return
+    try:
+        os.remove(path)
+    except OSError as exc:
+        print(f"[outbox] could not remove {path}: {exc}")
 
 
 def run_outbox(settings: Settings, client: NotificationClient, outbox: Outbox,

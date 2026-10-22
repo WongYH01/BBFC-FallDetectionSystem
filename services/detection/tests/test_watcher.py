@@ -121,6 +121,82 @@ class WatcherTest(unittest.TestCase):
         self.assertEqual(watcher.reconcile(), 0)
         self.assertIsNone(self.outbox.pending()[0]["clip"])
 
+    # -- the keypoint file ---------------------------------------------------
+
+    def _ready(self, watcher: Watcher, clip: bool = True,
+               keypoints: bool = True, filename: str = "fall_1.mp4") -> None:
+        path = self.clips / filename
+        npz = path.with_suffix(".npz")
+        if clip:
+            path.write_bytes(b"x")
+        if keypoints:
+            npz.write_bytes(b"PK\x03\x04")
+        watcher.handle({"kind": "clip_ready", "filename": filename,
+                        "filepath": str(path),
+                        "keypoints_filepath": str(npz), "ready_at": 1.0})
+
+    def test_clip_ready_attaches_the_keypoint_file_with_the_clip(self):
+        watcher = self._watcher()
+        self._start(watcher)
+        self._ready(watcher)
+        [item] = self._outbox_reloaded()
+        self.assertEqual(item["clip"], str(self.clips / "fall_1.mp4"))
+        self.assertEqual(item["keypoints"], str(self.clips / "fall_1.npz"))
+
+    def test_clip_ready_without_a_clip_still_sends_the_keypoint_file(self):
+        # The video writer never opened, but the keypoints were recorded: the
+        # event stays open to send them instead of being closed out.
+        watcher = self._watcher()
+        self._start(watcher)
+        self._ready(watcher, clip=False)
+        [item] = self._outbox_reloaded()
+        self.assertIsNone(item["clip"])
+        self.assertEqual(item["keypoints"], str(self.clips / "fall_1.npz"))
+
+    def test_clip_ready_naming_a_missing_keypoint_file_sends_the_clip_alone(self):
+        watcher = self._watcher()
+        self._start(watcher)
+        self._ready(watcher, keypoints=False)
+        [item] = self._outbox_reloaded()
+        self.assertEqual(item["clip"], str(self.clips / "fall_1.mp4"))
+        self.assertIsNone(item["keypoints"])
+
+    def test_clip_ready_with_neither_file_closes_the_event(self):
+        watcher = self._watcher()
+        self._start(watcher)
+        self._ready(watcher, clip=False, keypoints=False)
+        self.assertEqual(self._outbox_reloaded(), [])
+
+    def test_reconcile_attaches_the_keypoint_file_with_its_clip(self):
+        watcher = self._watcher()
+        self._start(watcher, filename="fall_7.mp4")
+        (self.clips / "fall_7.mp4").write_bytes(b"x")
+        (self.clips / "fall_7.npz").write_bytes(b"PK\x03\x04")
+        self.assertEqual(watcher.reconcile(), 1)
+        [item] = self._outbox_reloaded()
+        self.assertEqual(item["clip"], str(self.clips / "fall_7.mp4"))
+        self.assertEqual(item["keypoints"], str(self.clips / "fall_7.npz"))
+        self.assertEqual(watcher.reconcile(), 0)
+
+    def test_reconcile_attaches_a_keypoint_file_whose_clip_was_lost(self):
+        watcher = self._watcher()
+        self._start(watcher, filename="fall_7.mp4")
+        (self.clips / "fall_7.npz").write_bytes(b"PK\x03\x04")
+        self.assertEqual(watcher.reconcile(), 1)
+        [item] = self._outbox_reloaded()
+        self.assertIsNone(item["clip"])
+        self.assertEqual(item["keypoints"], str(self.clips / "fall_7.npz"))
+
+    def test_reconcile_ignores_a_half_written_keypoint_file(self):
+        watcher = self._watcher()
+        self._start(watcher, filename="fall_8.mp4")
+        (self.clips / "fall_8.raw.mp4").write_bytes(b"partial")
+        (self.clips / "fall_8.npz.tmp").write_bytes(b"PK\x03")
+        self.assertEqual(watcher.reconcile(), 0)
+        [item] = self.outbox.pending()
+        self.assertIsNone(item["clip"])
+        self.assertIsNone(item["keypoints"])
+
     def test_unknown_event_kind_is_ignored(self):
         watcher = self._watcher()
         watcher.handle({"kind": "something_else"})

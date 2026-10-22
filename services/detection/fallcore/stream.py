@@ -436,8 +436,17 @@ class SubjectStreams:
 
     def alarm_of(self, track_id) -> bool:
         """Whether the subject behind this tracker id has its alarm up."""
+        sid = self.subject_of(track_id)
+        return sid is not None and self._subjects[sid].stream.decision.alarm
+
+    def subject_of(self, track_id) -> int | None:
+        """The subject this tracker id is decided as, or None if none is.
+
+        Two ids share a subject when a reconnect joined them, which is how a
+        faller the tracker re-identified mid-fall stays one person.
+        """
         sid = self._by_track.get(track_id)
-        return sid in self._subjects and self._subjects[sid].stream.decision.alarm
+        return sid if sid in self._subjects else None
 
     def observe(self, sightings) -> bool:
         """Feed one frame's sightings; True when any subject scored a window."""

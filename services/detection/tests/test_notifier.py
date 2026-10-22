@@ -9,6 +9,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from fallcore import keypoint_file
 from service.notifier import (
     NotificationClient,
     PermanentNotifyError,
@@ -52,6 +53,10 @@ class NotifierTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.clip = Path(self._tmp.name) / "fall_1.mp4"
         self.clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+        # A real keypoint file, as fall_recorder writes it beside the clip.
+        self.keypoints = Path(self._tmp.name) / "fall_1.npz"
+        keypoint_file.save(self.keypoints, [keypoint_file.Frame(
+            t=1.0, aspect=16 / 9, alarm=True, score=0.9)], trigger=0)
 
     def tearDown(self):
         self.server.shutdown()
@@ -119,6 +124,55 @@ class NotifierTest(unittest.TestCase):
         self.server.statuses = [503]
         with self.assertRaises(RetryableNotifyError):
             self.client.put_clip("e1", self.clip)
+
+    # -- PUT /events/:id/keypoints -------------------------------------------
+
+    def test_put_keypoints_stored(self):
+        self.server.statuses = [202]
+        self.assertEqual(self.client.put_keypoints("e1", self.keypoints), "stored")
+        record = self.server.records[0]
+        self.assertEqual(record["method"], "PUT")
+        self.assertEqual(record["path"],
+                         "/api/v1/notification/events/e1/keypoints")
+        self.assertIn("multipart/form-data", record["content_type"])
+        self.assertIn(b'name="file"', record["body"])
+        self.assertIn(b"application/octet-stream", record["body"])
+
+    def test_put_keypoints_sends_what_the_service_accepts(self):
+        # KeypointsController keeps a part named "file" whose filename ends in
+        # .npz and whose bytes open with the zip header; anything else is 415.
+        self.server.statuses = [202]
+        self.client.put_keypoints("e1", self.keypoints)
+        body = self.server.records[0]["body"]
+        self.assertIn(b'filename="fall_1.npz"', body)
+        sent = self.keypoints.read_bytes()
+        self.assertTrue(sent.startswith(b"PK\x03\x04"))
+        self.assertIn(sent, body)
+
+    def test_put_keypoints_already_attached_is_success(self):
+        self.server.statuses = [409]
+        self.assertEqual(self.client.put_keypoints("e1", self.keypoints),
+                         "already attached")
+
+    def test_put_keypoints_missing_event_is_retryable(self):
+        self.server.statuses = [404]
+        with self.assertRaises(RetryableNotifyError):
+            self.client.put_keypoints("e1", self.keypoints)
+
+    def test_put_keypoints_refused_kind_is_permanent(self):
+        self.server.statuses = [415]
+        with self.assertRaises(PermanentNotifyError):
+            self.client.put_keypoints("e1", self.keypoints)
+
+    def test_put_keypoints_too_large_is_permanent(self):
+        self.server.statuses = [413]
+        with self.assertRaises(PermanentNotifyError):
+            self.client.put_keypoints("e1", self.keypoints)
+
+    def test_put_keypoints_server_error_is_retryable(self):
+        self.server.statuses = [500]
+        with self.assertRaises(RetryableNotifyError):
+            self.client.put_keypoints("e1", self.keypoints)
 
     # -- transport -----------------------------------------------------------
 
