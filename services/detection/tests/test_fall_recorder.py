@@ -118,21 +118,24 @@ class FallRecorderKeypointsTest(unittest.TestCase):
         fr._clip_meta = None
         fr._write_queue = None
 
-    def _push(self, n: int, fallen: bool, score: float = 0.0) -> None:
+    def _push(self, n: int, fallen: bool, score: float = 0.0,
+              lead: int | None = None) -> None:
         for _ in range(n):
             self.clock.now += 1 / HZ
             fr.push_frame(self.canvas, fallen, confidence=score,
-                          people=(walker(fallen=fallen),), aspect=16 / 9)
+                          people=(walker(fallen=fallen),), aspect=16 / 9,
+                          lead=lead)
 
     def _fall(self) -> float:
-        """Two seconds of walking, then a latch held past the clip's end.
+        """Two seconds of walking, then a latch held past the clip's end;
+        subject 2 leads until subject 1 falls and raises the alarm.
 
         Returns the trigger frame's time.
         """
-        self._push(int(2 * HZ), fallen=False, score=0.1)
-        self._push(1, fallen=True, score=0.9)
+        self._push(int(2 * HZ), fallen=False, score=0.1, lead=2)
+        self._push(1, fallen=True, score=0.9, lead=1)
         trigger_t = self.clock.now
-        self._push(int(2 * POST * HZ), fallen=True, score=0.9)
+        self._push(int(2 * POST * HZ), fallen=True, score=0.9, lead=1)
         return trigger_t
 
     def _ready(self) -> dict:
@@ -166,6 +169,9 @@ class FallRecorderKeypointsTest(unittest.TestCase):
             np.testing.assert_array_equal(f["alarm"][:trigger], False)
             np.testing.assert_array_equal(f["alarm"][trigger:], True)
             np.testing.assert_allclose(f["score"][trigger], 0.9, rtol=1e-6)
+            # The subject that led when the alarm latched raised the Alert.
+            self.assertEqual(int(f["raised_by"]), 1)
+            np.testing.assert_array_equal(f["lead"][:trigger], 2)
             np.testing.assert_allclose(f["aspect"], 16 / 9, rtol=1e-6)
             # The fixed post-trigger run, then the clip closes.
             self.assertAlmostEqual(t[-1] - trigger_t, POST, delta=1 / HZ)

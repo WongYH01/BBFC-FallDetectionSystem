@@ -345,7 +345,7 @@ def _boxes(result) -> list:
 
 def _update_falls(result) -> tuple[list, tuple]:
     """Feed one frame to the decision; returns this frame's people for drawing,
-    and everyone tracked in it for the fall clip's keypoint file.
+    and everyone tracked in it for the Skeleton Clip's keypoint file.
 
     The alarm state lives in `fallcore.stream`: each subject's keypoints go into
     their ring buffer, and on the frames a window is due it is scored and that
@@ -866,11 +866,14 @@ def _capture_loop() -> None:
                         # The rolling mean is the score the decision actually
                         # latched on; it rides the clip_started event so the
                         # detection service can put it in the alert. The
-                        # tracked people become the clip's keypoint file.
+                        # tracked people become the clip's keypoint file, and
+                        # the lead subject (the alarmed one) is who the
+                        # Alert's Outcome will be about.
                         fall_recorder.push_frame(
                             skel, bool(_last_state.get("alarm")),
                             confidence=float(_last_state.get("rolling_mean", 0.0)),
-                            people=tracked, aspect=_stream.aspect)
+                            people=tracked, aspect=_stream.aspect,
+                            lead=_last_state.get("subject"))
 
                     if _recording:
                         combined = np.hstack([result.orig_img, frame])

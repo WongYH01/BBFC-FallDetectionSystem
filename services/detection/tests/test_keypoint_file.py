@@ -45,11 +45,13 @@ class KeypointFileTest(unittest.TestCase):
         # reconnect has joined to the same subject.
         return [
             Frame(t=100.0, aspect=16 / 9, alarm=False, score=0.1,
-                  people=(person(1, 0.1, subject=1), person(2, 0.2, subject=2))),
-            Frame(t=100.1, aspect=16 / 9, alarm=False, score=0.2),
+                  people=(person(1, 0.1, subject=1), person(2, 0.2, subject=2)),
+                  lead=2),
+            Frame(t=100.1, aspect=16 / 9, alarm=False, score=0.2, lead=1),
             Frame(t=100.2, aspect=16 / 9, alarm=True, score=0.8,
                   people=(person(3, 0.3, fallen=True, subject=1),
-                          person(2, 0.4, subject=2))),
+                          person(2, 0.4, subject=2)),
+                  lead=1),
         ]
 
     def test_frames_read_back_in_the_documented_layout(self):
@@ -63,6 +65,9 @@ class KeypointFileTest(unittest.TestCase):
             np.testing.assert_allclose(f["aspect"], [16 / 9] * 3, rtol=1e-6)
             np.testing.assert_array_equal(f["alarm"], [False, False, True])
             np.testing.assert_allclose(f["score"], [0.1, 0.2, 0.8], rtol=1e-6)
+            np.testing.assert_array_equal(f["lead"], [2, 1, 1])
+            # Whom the Alert's Outcome is about: the lead when it latched.
+            self.assertEqual(int(f["raised_by"]), 1)
 
             # One row per sighting, frame-major; the empty frame has none.
             np.testing.assert_array_equal(f["frame"], [0, 0, 2, 2])
@@ -110,6 +115,9 @@ class KeypointFileTest(unittest.TestCase):
         keypoint_file.save(self.path, frames, trigger=1)
         with np.load(self.path) as f:
             self.assertEqual(f["t"].shape, (2,))
+            # No per-person decision: nobody in particular raised it.
+            self.assertEqual(int(f["raised_by"]), -1)
+            np.testing.assert_array_equal(f["lead"], [-1, -1])
             self.assertEqual(f["frame"].shape, (0,))
             self.assertEqual(f["keypoints"].shape, (0, cfg.N_KEYPOINTS, 3))
             self.assertEqual(f["centre"].shape, (0, 2))

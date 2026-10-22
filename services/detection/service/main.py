@@ -6,7 +6,7 @@ Wires the unmodified v2 app to the notification service:
   the room is watched whether or not anybody has the page open;
 * `fall_recorder`'s clip lifecycle events feed the durable outbox;
 * the outbox worker POSTs the alert and uploads the skeleton clip, then the
-  keypoint file recorded with it (for training on the triage verdict);
+  keypoint file recorded with it (for training on the Alert's Outcome);
 * the Flask UI stays available on SERVICE_UI_PORT for operators (the compose
   file publishes it on the host's loopback only -- it has no auth).
 

@@ -50,7 +50,7 @@ KEYPOINT FILE
 -------------
 Beside every clip goes `fall_<ts>.npz`: the same frames as pose numbers --
 every tracked person's keypoints, and the alarm and score -- for training on
-the triage verdict (format: fallcore/keypoint_file.py). The caller hands each
+the Alert's Outcome (format: fallcore/keypoint_file.py). The caller hands each
 frame's tracked people to push_frame() with the canvas; they are buffered and
 flushed with the frames, so the file spans exactly what the clip shows. It is
 written on the clip's writer thread before the ffmpeg pass, under a `.tmp`
@@ -480,7 +480,8 @@ def _close_clip_locked(now: float) -> None:
 def push_frame(skel_frame, fallen: bool,
                confidence: float | None = None,
                people: "tuple[keypoint_file.Person, ...]" = (),
-               aspect: float | None = None) -> None:
+               aspect: float | None = None,
+               lead: int | None = None) -> None:
     """Call exactly once per inference frame with the skeleton-only canvas.
 
     `fallen` is whatever the caller's own latch says right now, e.g.
@@ -491,9 +492,11 @@ def push_frame(skel_frame, fallen: bool,
     number the model actually decided on into the alert. It never influences
     the recording itself.
 
-    `people` is everyone tracked in this frame (`keypoint_file.people`) and
-    `aspect` the frame's width / height, for the keypoint file; the canvas's
-    own shape stands in when `aspect` is not given.
+    `people` is everyone tracked in this frame (`keypoint_file.people`),
+    `aspect` the frame's width / height, and `lead` the subject the alarm and
+    `confidence` are about, for the keypoint file: `lead` on the trigger frame
+    is the subject the Alert's Outcome will be about. The canvas's own shape
+    stands in when `aspect` is not given.
 
     Never blocks on video encoding -- see the module docstring.
     """
@@ -504,7 +507,8 @@ def push_frame(skel_frame, fallen: bool,
     size = (w, h)
     keypoints = (keypoint_file.Frame(
         t=now, aspect=float(aspect if aspect is not None else w / max(h, 1)),
-        alarm=bool(fallen), score=float(confidence or 0.0), people=tuple(people))
+        alarm=bool(fallen), score=float(confidence or 0.0), people=tuple(people),
+        lead=-1 if lead is None else int(lead))
         if KEYPOINTS_ENABLED else None)
 
     with _lock:

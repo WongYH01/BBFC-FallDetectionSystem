@@ -1,8 +1,8 @@
 """The keypoint file sent with a fall alert: the clip's span as pose numbers.
 
 The Skeleton Clip is what a responder triages; this file is the same frames of
-the same incident as the rows the Fall Decision read, so the triage verdict can
-be trained on. The notification service stores it beside the clip and, once the
+the same incident as the rows the Fall Decision read, so the Alert's Outcome
+can be trained on. The notification service stores it beside the clip and, once the
 Alert is triaged, files it under its Outcome (`keypoints/labelled/genuine/` or
 `.../false_alarm/`): every alert becomes a labelled example from this camera,
 and a False Alarm becomes a hard negative without anyone staging it again. It
@@ -19,7 +19,11 @@ per frame, F of them, oldest first (one per frame of the skeleton clip):
                                      of different lengths, so window kinematics
                                      need it to put them in the same units
     alarm      (F,)         bool     the room's alarm
-    score      (F,)         float32  the rolling mean the alarm is decided on
+    score      (F,)         float32  the rolling mean the alarm is decided on,
+                                     the lead subject's
+    lead       (F,)         int32    the subject the alarm and score are about:
+                                     the alarmed one, else the highest rolling
+                                     mean. -1 under FALL_SUBJECTS=largest
 
 per sighting, N of them, in frame order:
 
@@ -44,11 +48,19 @@ scalars:
     trigger    ()           int32    index of the frame the alarm latched on;
                                      the frames before it are the clip's
                                      pre-event lead-in
+    raised_by  ()           int32    the subject whose alarm raised the Alert,
+                                     `lead[trigger]`; -1 under
+                                     FALL_SUBJECTS=largest
+
+The Alert's Outcome is about `raised_by` alone. Another subject can be down in
+the same clip -- a carer kneeling beside the resident who fell -- and a Genuine
+Outcome says nothing about them.
 
 A frame in which nobody was tracked has no rows. Rebuilding one person's stream
 means taking their subject's rows and filling the frames without one with zero
 rows, which is how the keypoint caches store absence and what the classifier
-was trained on.
+was trained on. The subject that raised the Alert may have no row on the
+trigger frame at all: the detector can lose a faller as they land.
 """
 from __future__ import annotations
 
@@ -85,6 +97,7 @@ class Frame:
     alarm: bool
     score: float
     people: tuple[Person, ...] = ()
+    lead: int = -1                   # -1: not decided per person
 
 
 def people(seen: Iterable, fallen_of: Callable[[int], bool],
@@ -125,10 +138,12 @@ def save(path: str | Path, frames: Sequence[Frame], trigger: int) -> None:
     arrays = {
         "version": np.int32(FORMAT_VERSION),
         "trigger": np.int32(trigger),
+        "raised_by": np.int32(frames[trigger].lead),
         "t": np.array([f.t for f in frames], dtype=np.float64),
         "aspect": np.array([f.aspect for f in frames], dtype=np.float32),
         "alarm": np.array([f.alarm for f in frames], dtype=bool),
         "score": np.array([f.score for f in frames], dtype=np.float32),
+        "lead": np.array([f.lead for f in frames], dtype=np.int32),
         "frame": np.array([i for i, _ in rows], dtype=np.int32),
         "track_id": np.array([p.track_id for _, p in rows], dtype=np.int32),
         "subject": np.array([p.subject for _, p in rows], dtype=np.int32),
