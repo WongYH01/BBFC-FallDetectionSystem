@@ -1,6 +1,6 @@
 # Cloud infrastructure plan
 
-Status: draft · 2026-10-21 · nothing under `infra/` exists yet ·
+Status: draft · 2026-10-21 · steps 0–1 done ·
 prices and features checked against vendor docs on 2026-10-21
 
 ## Goal
