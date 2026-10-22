@@ -17,6 +17,9 @@ onnxruntime==1.30.0
 # may refuse. Pin it here so it is in the image.
 onnx==1.23.0
 ultralytics==8.4.104
+# Pillow comes in through ultralytics, torchvision and matplotlib. Pinned past
+# the CRITICAL/HIGH CVEs Trivy reports in 12.3.0, which 13.0.0 fixes.
+pillow==13.0.0
 lap==0.5.13
 flask==3.1.3
 python-dotenv==1.2.2
