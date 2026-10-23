@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-mediamtx
+  annotations:
+    tailscale.com/tailnet-fqdn: wyhrp3.taila04e86.ts.net
+spec:
+  type: ExternalName
+  externalName: placeholder
+  ports:
+    - name: rtsp
+      port: 8554
+      protocol: TCP

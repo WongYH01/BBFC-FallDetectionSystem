@@ -300,23 +300,72 @@ after a service account email, and a KSA principal has no email.
 
 **Done when:** `tofu apply` is clean and `tofu plan` shows no changes.
 
-## Step 7 — Tailscale operator (by hand, per cluster)
+## Step 7 — Tailscale operator (by hand)
 
-The Pi's MediaMTX is only reachable on the tailnet.
-
-1. **Tailnet policy, once:** `tag:k8s-operator` owns `tag:k8s`, the OAuth
-   client is created with `tag:k8s-operator`, and an ACL lets `tag:k8s`
-   reach the Pi on port 8554. Without the ACL the proxy comes up and RTSP
-   times out.
-2. **Per cluster:** `helm install` the `tailscale-operator` chart (1.104.x)
-   into its own `tailscale` namespace, with the client id and secret read
-   from `tailscale-operator-oauth`. Record the exact command here once it
-   works.
-
+The Pi's MediaMTX is only reachable on the tailnet. The operator joins the
+cluster to it, and step 9's egress Service reaches the Pi through it.
+Tailscale's [GCP reference architecture](https://tailscale.com/docs/reference/reference-architectures/gcp)
+recommends the operator for GKE; the install follows
+[Install the Kubernetes Operator](https://tailscale.com/docs/kubernetes-operator/install-operator).
 Not managed by Tofu or by `infra/k8s/`.
 
-**Done when:** the operator pod is `Running` and appears as a machine in the
-Tailscale admin console.
+**Once** (survives cluster rebuilds):
+1. **Tailnet policy.** Admin console → Access controls
+   ([grants syntax](https://tailscale.com/docs/reference/syntax/grants)).
+   Tag the Pi `tag:pi`, then add:
+   ```json
+   "tagOwners": {
+     "tag:k8s-operator": [],
+     "tag:k8s": ["tag:k8s-operator"],
+   },
+   "grants": [
+     {"src": ["tag:k8s"], "dst": ["tag:pi"], "ip": ["tcp:8554"]},
+   ],
+   ```
+   The operator tags itself `tag:k8s-operator` and its proxies `tag:k8s`.
+   Without the grant the proxy comes up and RTSP times out. Grants only add
+   access: if the default allow-all grant is still there, this one restricts
+   nothing.
+2. **OAuth client** ([OAuth clients](https://tailscale.com/docs/features/oauth-clients)).
+   [Trust credentials](https://console.tailscale.com/admin/settings/trust-credentials)
+   → **Credential** → **OAuth**. Write on **General → Services**,
+   **Devices → Core** and **Keys → Auth Keys**, each with tag
+   `tag:k8s-operator` → **Generate credential**. The secret is shown once;
+   use the copy buttons. OAuth client secrets do not expire.
+3. **Store it.** Secret Manager → `tailscale-operator-oauth` (step 4 created
+   it; do not create another) → **+ New version**, the value on one line:
+   ```json
+   {"client_id":"<client ID>","client_secret":"tskey-client-..."}
+   ```
+
+**Per cluster**, after every `tofu apply` in `cluster` (PowerShell, as run;
+`helm repo add` only once per machine):
+```powershell
+gcloud container clusters get-credentials bbfc --zone <zone> --dns-endpoint
+helm repo add tailscale https://pkgs.tailscale.com/helmcharts
+helm repo update
+$o = (gcloud secrets versions access latest --secret=tailscale-operator-oauth --project <project>) -join "" | ConvertFrom-Json
+helm upgrade --install tailscale-operator tailscale/tailscale-operator `
+  --version 1.104.2 `
+  --namespace tailscale --create-namespace `
+  --set-string "oauth.clientId=$($o.client_id)" `
+  --set-string "oauth.clientSecret=$($o.client_secret)" `
+  --wait
+Remove-Variable o
+```
+The keys are in the chart's
+[`values.yaml`](https://github.com/tailscale/tailscale/blob/v1.104.2/cmd/k8s-operator/deploy/chart/values.yaml).
+
+**If the pod crash-loops:** `kubectl -n tailscale logs deploy/operator`.
+`oauth2: cannot fetch token: 401 Unauthorized` means Tailscale rejects the
+client ID and secret: the client was revoked, or the secret was copied wrong.
+Create a new client, add it as a new secret version, rerun the block above,
+then `kubectl -n tailscale rollout restart deploy/operator`. More in
+[Troubleshooting](https://tailscale.com/docs/kubernetes-operator/reference/troubleshooting).
+
+**Done when:** `kubectl -n tailscale get pods` shows the operator `1/1
+Running`, and [Machines](https://console.tailscale.com/admin/machines) shows
+`tailscale-operator` tagged `tag:k8s-operator`.
 
 ## Step 8 — Notification on the cluster
 
@@ -462,13 +511,22 @@ commit the updated `kustomization.yaml` so git records what ran.
 **Tear down:**
 1. Check `/stream/status` and the detection log: the outbox has nothing
    pending. The PVC is deleted with the cluster.
-2. `helm uninstall` the Tailscale operator, so its machines leave the
-   tailnet instead of lingering offline.
+2. `kubectl -n bbfc delete svc pi-mediamtx` while the operator still runs.
+   The Service carries the operator's finalizer, so the operator deletes the
+   egress proxy's machine from the tailnet before the Service goes. Destroy
+   the cluster first and that machine stays behind.
 3. `tofu destroy` in `infra/tofu/cluster`.
-4. Optional: `gcloud sql instances patch <instance> --activation-policy=NEVER`
+4. [Remove](https://tailscale.com/docs/features/access-control/device-management/how-to/remove)
+   the offline `tailscale-operator` machine on
+   [Machines](https://console.tailscale.com/admin/machines). The operator
+   never logs itself out (`helm uninstall` does not remove it either), and its
+   state Secret dies with the cluster: left there, the next install registers
+   as `tailscale-operator-1`.
+5. Optional: `gcloud sql instances patch <instance> --activation-policy=NEVER`
    stops Cloud SQL; only its storage is billed. `ALWAYS` starts it again.
 
-**Bring up:** `tofu apply` in `infra/tofu/cluster`, then steps 7, 10 and 11.
+**Bring up:** `tofu apply` in `infra/tofu/cluster`, then step 7's per-cluster
+block, then steps 10 and 11.
 
 ---
 
@@ -526,7 +584,7 @@ With the cluster destroyed: ~$13, or ~$2.40 with Cloud SQL stopped.
 | `hashicorp/google` provider | 8.x (8.7.0 latest) | `versions.tf` |
 | GKE | `REGULAR` channel (1.35.x) | `gke.tf` |
 | Cloud SQL | PostgreSQL 15, `ENTERPRISE` edition | `sql.tf` |
-| Tailscale operator (Helm chart) | 1.104.x | step 7 |
+| Tailscale operator (Helm chart) | 1.104.2 | step 7 |
 | Cloud SQL JDBC socket factory | 1.30.x (pom has 1.30.0) | `services/notification/pom.xml` |
 
 ## Not done, on purpose
