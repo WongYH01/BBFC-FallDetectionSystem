@@ -43,3 +43,6 @@ __pycache__/
 
 
 .idea/terraform.xml
+
+infra/docs/infra-plan.md
+infra/docs/training-plan.md
