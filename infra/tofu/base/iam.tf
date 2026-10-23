@@ -35,6 +35,12 @@ resource "google_service_account_iam_member" "notification_wi" {
   service_account_id = google_service_account.notification.name
 }
 
+resource "google_secret_manager_secret_iam_member" "notification_gsa" {
+  member    = google_service_account.notification.member
+  role      = "roles/secretmanager.secretAccessor"
+  secret_id = google_secret_manager_secret.secret["telegram-bot-token"].secret_id
+}
+
 resource "google_secret_manager_secret_iam_member" "ksa" {
   for_each = {
     "telegram-bot-token"        = "notification"
