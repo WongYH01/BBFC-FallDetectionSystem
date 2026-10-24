@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  namespace: bbfc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: notification
+  template:
+    metadata:
+      labels:
+        app: notification
+    spec:
+      serviceAccountName: notification
+      containers:
+        - name: notification
+          image: notification
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: notification
+            - secretRef:
+                name: notification
+          startupProbe:
+            httpGet:
+              path: /api/v1/notification/health
+              port: 8081
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /api/v1/notification/health
+              port: 8081
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/v1/notification/health
+              port: 8081
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 1Gi

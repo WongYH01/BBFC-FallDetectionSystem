@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: detection
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: detection
+  template:
+    metadata:
+      labels:
+        app: detection
+    spec:
+      serviceAccountName: detection
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: detection
+          image: detection
+          ports:
+            - containerPort: 5005
+          envFrom:
+            - configMapRef:
+                name: detection
+            - secretRef:
+                name: detection
+          volumeMounts:
+            - name: data
+              mountPath: /data/outbox
+              subPath: outbox
+            - name: data
+              mountPath: /app/v2/fall_clips
+              subPath: clips
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              memory: 4Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
