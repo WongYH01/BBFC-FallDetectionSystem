@@ -1,4 +1,6 @@
 *.pdf
+*.mp4
+*.zip
 
 # Data and experiment outputs — large, regenerable, not source.
 data/
