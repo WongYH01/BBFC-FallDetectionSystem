@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.1</version>
+		<version>4.1.2</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.bbfc</groupId>
@@ -107,7 +107,7 @@
 		<dependency>
 			<groupId>com.google.cloud.sql</groupId>
 			<artifactId>postgres-socket-factory</artifactId>
-			<version>1.30.0</version>
+			<version>1.30.2</version>
 			<scope>runtime</scope>
 		</dependency>
 
