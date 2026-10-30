@@ -17,6 +17,15 @@ resource "google_artifact_registry_repository_iam_member" "gke_nodes" {
   location   = google_artifact_registry_repository.registry.location
 }
 
+# Giving flux read-only access to artifact registry
+resource "google_artifact_registry_repository_iam_member" "flux_image_reflector" {
+  member     = "principal://iam.googleapis.com/projects/${var.project_number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/flux-system/sa/image-reflector-controller"
+  repository = google_artifact_registry_repository.registry.name
+  role       = "roles/artifactregistry.reader"
+  project    = google_artifact_registry_repository.registry.project
+  location   = google_artifact_registry_repository.registry.location
+}
+
 resource "google_service_account" "notification" {
   account_id   = "notification"
   display_name = "Notification service"
