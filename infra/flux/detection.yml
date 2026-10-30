@@ -1,0 +1,28 @@
+# Tells flux which registry repo to watch
+
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: detection
+  namespace: flux-system
+spec:
+  image: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection
+  interval: 5m
+  provider: gcp
+---
+# Decide which tag in the repo to deploy
+
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImagePolicy
+metadata:
+  name: detection
+  namespace: flux-system
+spec:
+  imageRepositoryRef:
+    name: detection
+  filterTags:
+    pattern: '^main-[a-f0-9]+-(?P<ts>[0-9]+)$'
+    extract: '$ts'
+  policy:
+    numerical:
+      order: asc

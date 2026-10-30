@@ -12,20 +12,12 @@ resources:
 - detection/statefulset.yml
 - tailscale/egress-service.yml
 
-configMapGenerator:
-
-- envs:
-    - detection/config.env
-  name: detection
-- envs:
-  - notification/config.env
-  name: notification
-
+# newTag gets updated by flux automatically
 images:
-- digest: sha256:fca7394e3703878e8a96153ba81adbf4511f7ac830cd4c134dff172619de3b46
-  name: notification
+- name: notification
   newName: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/notification
+  newTag: main-eaf63e00-1793369108 # {"$imagepolicy": "flux-system:notification:tag"}
 
-- digest: sha256:a17163181ba4e11866927a5767da7fd917f8799d2229b30a65d1cca9124e7795
-  name: detection
+- name: detection
   newName: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection
+  newTag: main-eaf63e00-1793368908 # {"$imagepolicy": "flux-system:detection:tag"}
