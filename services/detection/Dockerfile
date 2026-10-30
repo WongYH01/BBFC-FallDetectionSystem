@@ -6,7 +6,8 @@
 # The weights are baked in: the build fetches them itself, so nothing has to be
 # on the host. .env must hold FALL_WEIGHTS_TOKEN (see .env.example).
 
-# The three deployment files, fetched by the same script a host run uses, so the
+# The deployment files (both pose backbones, their camera heads and the
+# checkpoint), fetched by the same script a host run uses, so the
 # pinned revision and the SHA-256 checks live in one place. .env reaches this
 # step as a BuildKit secret: the token is never in a layer, the image history or
 # the final image. A rebuild for a code change reuses this stage's cache and

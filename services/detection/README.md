@@ -54,6 +54,13 @@ docker compose up -d --build                          # repo root docker-compose
 The weights stage is cached, so rebuilding for a code change does not download
 again; `docker compose build --no-cache detection` fetches them afresh.
 
+The image holds one pose backbone, yolo26m (INT8, 384x640), and the camera
+head fitted on its keypoints. They are one choice, not settings: the detector
+refuses a head fitted on another backbone, stops when either file is missing,
+and refuses the variables that used to swap them (`POSE_SCALE`, `POSE_MODEL`,
+`POSE_IMGSZ`, `ENSEMBLE_CKPTS`, `CALIBRATION_HEAD`). `/stream/status` reports
+it as `pose`.
+
 Detection and notification share the root project's network, so
 `http://notification:8081/api/v1/notification` resolves. The UI is published on
 `127.0.0.1:5005` only (it has no auth). Logs: `docker compose logs -f detection`.
@@ -66,9 +73,11 @@ Local run without Docker (from this directory):
 
 ## Configuration
 
-All settings come from the environment; `.env.example` documents every one.
-The required three are `ROOM_ID`, `ROOM_NAME` and `MEDIAMTX_HOST`; the stream,
-pose and fall-decision variables are documented in `v2/README.md`.
+All settings come from the environment. `.env.example` holds only what a
+deployment must set; every other setting has a working default, in
+`service/config.py` for the service and in `v2/README.md` for the stream, pose
+and fall-decision variables. The required three are `ROOM_ID`, `ROOM_NAME` and
+`MEDIAMTX_HOST`.
 
 The startup guard refuses to run with `FALL_CLIPS_ENABLED=0`: with no viewer
 attached the capture watchdog would drop the RTSP connection after

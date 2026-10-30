@@ -3,14 +3,17 @@
 Feeds every frame through the same pose model and the same Fall Decision the
 detector builds (`fallcore.fall_decision`), printing each scored window
 (P(fall), rolling mean, latched alarm) and a summary at the end. Use it to
-sanity-check a checkpoint set, a buffer length or a threshold on a recording
+sanity-check a buffer length or a threshold on a recording
 before pointing v2 at the live feed -- the same decision runs here, read from
 the same environment variables, and only the frame source differs. A flag
 overrides one setting on top of that.
 
     python replay.py path\\to\\clip.mp4
     python replay.py clip.mp4 --buffer 4 --threshold 0.5 --max-frames 900
-    python replay.py clip.mp4 --pose ..\\models\\yolo26n-pose.pt --imgsz 480
+
+The pose backbone, checkpoint and head are the detector's and are not flags
+(`fallcore.pose_backbone`, `fallcore.fall_decision`): a head only reads the
+keypoints of the backbone it was fitted on.
 
 Exit code is 0 whenever the video was readable; the alarm outcome is printed,
 not encoded in the status.
@@ -25,28 +28,16 @@ from pathlib import Path
 import cv2
 from ultralytics import YOLO
 
+from fallcore import pose_backbone
 from fallcore.extract import sightings, subject_row
 from fallcore.fall_decision import FallDecision
 
-ROOT = Path(__file__).resolve().parents[1]
-POSE_SCALE = os.environ.get("POSE_SCALE", "yolo26n")
 POSE_TRACKER = os.environ.get("POSE_TRACKER", "bytetrack.yaml")
-_DEFAULT_ONNX = [
-    ROOT / "models" / f"{POSE_SCALE}-pose.onnx",
-    ROOT / "runs" / "onnx" / f"{POSE_SCALE}-pose-imgsz640.onnx",
-]
-
-
-def _default_pose() -> str:
-    return os.environ.get("POSE_MODEL") or str(
-        next((p for p in _DEFAULT_ONNX if p.exists()), _DEFAULT_ONNX[0]))
 
 
 #: Each decision flag and the environment variable it overrides. A flag is that
 #: variable for this run, parsed and checked exactly as the detector parses it.
 _FLAG_VARS = {
-    "checkpoints": "ENSEMBLE_CKPTS",
-    "head": "CALIBRATION_HEAD",
     "buffer": "BUFFER_LEN",
     "threshold": "FALL_THRESHOLD",
     "clear_below": "FALL_CLEAR_BELOW",
@@ -70,16 +61,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video")
-    ap.add_argument("--pose", default=_default_pose())
-    ap.add_argument("--imgsz", type=int, default=640)
     # Every decision flag defaults to "not given": the Fall Decision, with the
     # environment's overrides, is the default, exactly as the live detector
     # reads it. A flag replaces one setting on top of that.
-    ap.add_argument("--checkpoints", default=None,
-                    help="os.pathsep-separated model paths (ENSEMBLE_CKPTS)")
-    ap.add_argument("--head", default=None,
-                    help="logistic head fitted on this room's clips, or '' for "
-                         "the checkpoints' own classifier (CALIBRATION_HEAD)")
     ap.add_argument("--buffer", default=None, help="BUFFER_LEN")
     ap.add_argument("--threshold", default=None, help="FALL_THRESHOLD")
     ap.add_argument("--clear-below", default=None, help="FALL_CLEAR_BELOW")
@@ -111,29 +95,28 @@ def main() -> int:
     except ValueError as e:
         print(e)
         return 1
-    missing = [str(p) for p in decision.checkpoints + decision.heads
+    backbone = pose_backbone.DEPLOYED
+    missing = [str(p) for p in (backbone.model, *decision.checkpoints, *decision.heads)
                if p is not None and not p.exists()]
     if missing:
-        print("missing model file(s): " + ", ".join(missing))
-        return 1
-    if str(args.pose).endswith(".onnx") and not Path(args.pose).exists():
-        print(f"pose model not found: {args.pose}")
+        print("missing model file(s): " + ", ".join(missing) +
+              " -- run scripts/fetch_weights.py")
         return 1
 
-    pose = YOLO(str(args.pose))
+    pose = YOLO(str(backbone.model))
     ensemble = decision.build_camera(device="cpu")
     tracked = decision.subjects == "tracked"
-    print(f"pose {Path(args.pose).name} | decision {decision}")
+    print(f"pose {backbone.model.name} | decision {decision}")
     print(f"file {video.name} @ {fps:.1f} fps")
 
     # The detector tracks (ids are what tie a person's frames together), so
     # the per-person rule must be replayed through the same tracker.
     if tracked:
-        results = pose.track(source=str(video), stream=True, imgsz=args.imgsz,
+        results = pose.track(source=str(video), stream=True, imgsz=backbone.imgsz,
                              device="cpu", tracker=POSE_TRACKER, persist=True,
                              verbose=False)
     else:
-        results = pose.predict(source=str(video), stream=True, imgsz=args.imgsz,
+        results = pose.predict(source=str(video), stream=True, imgsz=backbone.imgsz,
                                device="cpu", verbose=False)
     events, frame_no = [], 0
     alarm_ever, alarm_first = False, None

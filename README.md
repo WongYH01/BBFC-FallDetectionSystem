@@ -76,10 +76,10 @@ refused (`ALLOW_MANUAL_RECORDING=0`) and the local clip is deleted after upload.
 ```bash
 cd services/detection
 pip install -e .
-python scripts/fetch_weights.py     # ONNX pose + the calibrated pair
+python scripts/fetch_weights.py     # ONNX pose (m and n) + their heads + the checkpoint
 ```
 
-`fetch_weights.py` pulls three files (~17 MB) from the private Hugging Face repo
+`fetch_weights.py` pulls five files (~47 MB) from the private Hugging Face repo
 `junyuu/fall-detection-bbfc`, pinned to a revision and each verified against its
 SHA-256. It reads the token from `services/detection/.env` only — `FALL_WEIGHTS_TOKEN=hf_…`
 with read scope, no other auth path. `--check` verifies local files without one.
@@ -90,8 +90,10 @@ with read scope, no other auth path. `--check` verifies local files without one.
 stores y first, Ultralytics emits x first, and a transposed cache still trains to
 a plausible-looking number.
 
-**The pose scale is part of the model.** The head was fitted on `yolo26n`
-keypoints at 640; another scale hands it an input distribution it never saw.
+**The pose backbone is part of the model.** A camera head reads the keypoints
+of the backbone it was fitted on, so the two ship as one pair: `yolo26m`
+(INT8, 384x640) and the head fitted on its keypoints. The detector refuses a
+head that records another backbone, and there is no setting that swaps one.
 
 **The head is a commissioning artefact, not a weight.** It is fitted on one
 installation's own falls and ADLs (`services/detection/scripts/fit_calibration_head.py`), and it is

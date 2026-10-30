@@ -1,20 +1,24 @@
 """Fetch the deployment weights from the project's Hugging Face model repo.
 
-The three files the stream deployment needs -- the ONNX pose backbone and the
-calibrated fall model (one transformer checkpoint plus the logistic head fitted
-on the deployment camera) -- are artifacts, not source, so they are not in git.
-This script downloads them from
+The three files the stream deployment needs -- the ONNX pose backbone, the
+transformer checkpoint and the camera head fitted on that backbone's keypoints
+-- are artifacts, not source, so they are not in git. This script downloads
+them from
 
     junyuu/fall-detection-bbfc
 
 into exactly the paths `v2` resolves by default (relative to services/detection):
 
-    models/yolo26n-pose.onnx
+    models/yolo26m-pose-384x640-int8.onnx
     runs/checkpoints/augnone_ms_coords_hn_s99.pt
-    runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz
+    runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz
 
-The checkpoint without its head still runs (`CALIBRATION_HEAD=` empty) and
-scores lower; the head without its checkpoint is refused. The four
+They are one choice (`fallcore.pose_backbone`, `fallcore.fall_decision`): the
+head reads only that pose backbone's keypoints, and the detector stops when any
+of the three is missing. The yolo26n backbone and its head, which the detector
+used to fall back to, are still in this revision of the repo
+(`pose/yolo26n-pose-imgsz640.onnx`, `checkpoints/probe_augnone_ms_coords_hn_s99.npz`)
+but are no longer fetched. The four
 single-corpus checkpoints the ensemble used to average
 (`final_yolo26n`, `hn10_full_hn_s99`, `hn10_coords_hn_s99`,
 `omnifall_cs_full`) were removed from the release when the calibrated model
@@ -58,22 +62,22 @@ from pathlib import Path
 TOKEN_VAR = "FALL_WEIGHTS_TOKEN"
 
 DEFAULT_REPO = "junyuu/fall-detection-bbfc"
-#: The commit the SHA-256s below were taken from -- the one that replaced the
-#: four single-corpus checkpoints with the calibrated pair. Move it forward only
+#: The commit the SHA-256s below were taken from -- the one that added the
+#: yolo26m INT8 backbone and its head beside yolo26n. Move it forward only
 #: when the model card in the repo is updated with new hashes.
-DEFAULT_REVISION = "09c33ba5d37d0bf38ab3f42d4be631732daaef00"
+DEFAULT_REVISION = "ee8ac04aac99454e9b134ec4258e606556610641"
 
 #: remote path in the repo -> (path under the target root, sha256)
 FILES = {
-    "pose/yolo26n-pose-imgsz640.onnx": (
-        "models/yolo26n-pose.onnx",
-        "ea6b37044a5784d279dd93837b2fd89aaa2e0db720ad0928b4de2d78ad1f5c57"),
+    "pose/yolo26m-pose-384x640-int8.onnx": (
+        "models/yolo26m-pose-384x640-int8.onnx",
+        "45bf284c68e54b5bcb1137058c6f466ac40d94935062403e396005a5d882a9b0"),
+    "checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz": (
+        "runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz",
+        "f56d81e17d7c1f7fabdc66d77e03c1186cd2966a685377de4cbfe2c4ba09f639"),
     "checkpoints/augnone_ms_coords_hn_s99.pt": (
         "runs/checkpoints/augnone_ms_coords_hn_s99.pt",
         "b65d8a35668a57a711660eeb2d584db34bd0cbc1f1aedbc78134b3a290f7d36a"),
-    "checkpoints/probe_augnone_ms_coords_hn_s99.npz": (
-        "runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz",
-        "6a97474e133b019ccbdf82c048251a33c7cb4dbcb8ae36d3520e0ac55cd0dc92"),
 }
 
 

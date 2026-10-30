@@ -68,6 +68,8 @@ class KeypointFileTest(unittest.TestCase):
             np.testing.assert_array_equal(f["lead"], [2, 1, 1])
             # Whom the Alert's Outcome is about: the lead when it latched.
             self.assertEqual(int(f["raised_by"]), 1)
+            # Which pose backbone's keypoints these are: the deployed one.
+            self.assertEqual(str(f["pose"]), "yolo26m_r640_ortint8rr")
 
             # One row per sighting, frame-major; the empty frame has none.
             np.testing.assert_array_equal(f["frame"], [0, 0, 2, 2])

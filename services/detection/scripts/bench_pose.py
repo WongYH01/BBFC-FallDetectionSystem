@@ -16,10 +16,11 @@ camera, which is the spacing the fall classifier was trained on. Pick the
 strides from here, not by feel: the wrong pair changes the time span of a
 60-row window, not just its cost (see v2/README.md, "Row spacing").
 
-Timing uses the settings the live detector reads -- `POSE_IMGSZ` (640),
-`POSE_THREADS` (2, ONNX Runtime's pool) and `POSE_DEVICE` (cpu for ONNX, CUDA
-when available for .pt) from the environment and .env -- so the
-numbers carry over. Each row is labelled with those settings.
+Timing uses the settings the live detector reads -- `POSE_THREADS` (4, ONNX
+Runtime's pool) and `POSE_DEVICE` (cpu for ONNX, CUDA when available for .pt)
+from the environment and .env -- so the numbers carry over. The input size is
+`--imgsz` (640): the detector's is fixed by its export, not a setting. Each row
+is labelled with those settings.
 
 Verdicts compare pose fps with the rate the recommended strides demand:
 
@@ -230,9 +231,9 @@ def main() -> int:
                     help=f"pose model files (default: every .pt/.onnx in {MODELS_DIR})")
     ap.add_argument("--camera-fps", type=float, default=30.0)
     ap.add_argument("--imgsz", type=int,
-                    default=int(os.environ.get("POSE_IMGSZ", "640")))
+                    default=640)
     ap.add_argument("--threads", type=int,
-                    default=int(os.environ.get("POSE_THREADS", "2")),
+                    default=int(os.environ.get("POSE_THREADS", "4")),
                     help="ONNX Runtime intra-op threads; 0 = ORT default")
     ap.add_argument("--video", type=Path,
                     help="time the first frame of this video instead of a blank one")

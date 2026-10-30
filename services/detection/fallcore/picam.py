@@ -36,7 +36,7 @@ import pandas as pd
 
 from . import calibrate
 from . import config as cfg
-from .fall_decision import DEPLOYED_CHECKPOINT, DEPLOYED_HEAD, FallDecision
+from .fall_decision import DEPLOYED_CHECKPOINT, FallDecision
 
 CLIPS_DIR = cfg.DATA_DIR / "picam"
 
@@ -87,7 +87,8 @@ MODELS: dict[str, str] = {
 }
 
 #: Backbone + room-fitted head pairs, as (checkpoint, head npz) filenames under
-#: `runs/checkpoints`. The head is fitted on the room's own clips by
+#: `runs/checkpoints`, plus the keypoint cache the head was fitted on (and so
+#: the only one it may score). The head is fitted on the room's own clips by
 #: `scripts/fit_calibration_head.py` (`fallcore.calibrate.ProbeHead`); it
 #: replaces the pretrained classifier on the checkpoint's pooled embedding, so
 #: inference is still one forward pass. Measured by leave-one-subject-out on
@@ -98,9 +99,12 @@ MODELS: dict[str, str] = {
 #: The head shipped here is fitted on all 60 picam clips, so scoring picam with
 #: it is in-sample and its numbers are a description of the fitted set, not a
 #: prediction. Quote the cross-subject figure, not this file's score.
-CALIBRATED: dict[str, tuple[str, str]] = {
-    # The pair demo-cam v2 deploys (`fallcore.fall_decision`).
-    "ms coords + room head": (DEPLOYED_CHECKPOINT, DEPLOYED_HEAD),
+CALIBRATED: dict[str, tuple[str, str, str]] = {
+    # The yolo26n pair demo-cam v2 deployed before it moved to yolo26m, kept
+    # because picam scoring reads the yolo26n caches. The camera now runs
+    # `fallcore.fall_decision.DEPLOYED_HEAD` on yolo26m keypoints.
+    "ms coords + room head": (DEPLOYED_CHECKPOINT,
+                              "probe_augnone_ms_coords_hn_s99.npz", "yolo26n"),
     # The same backbone and fitting recipe, plus the three scale-free descent
     # measures appended to every embedding (fit_calibration_head.py
     # --extra-kinematics).
@@ -113,7 +117,8 @@ CALIBRATED: dict[str, tuple[str, str]] = {
     # reproducible, not because it is better; the descent gate below is the
     # change that carries.
     "ms coords + kinematic head": ("augnone_ms_coords_hn_s99.pt",
-                                   "probe_augnone_ms_coords_hn_s99_kin.npz"),
+                                   "probe_augnone_ms_coords_hn_s99_kin.npz",
+                                   "yolo26n"),
 }
 
 #: Body lengths per second the hips must fall somewhere inside a window before
@@ -427,11 +432,11 @@ def load_detector(model: str | Path, device: str = "cpu",
     from . import train as T
 
     if isinstance(model, str) and model in CALIBRATED:
-        ckpt_name, head_name = CALIBRATED[model]
+        ckpt_name, head_name, pose = CALIBRATED[model]
         path = resolve_checkpoint(ckpt_name)
         head_path = resolve_head(head_name)
         decision = FallDecision(
-            checkpoints=(path,), heads=(head_path,), buffer=buffer,
+            checkpoints=(path,), heads=(head_path,), pose=pose, buffer=buffer,
             threshold=threshold, clear_below=clear_below,
             clear_windows=clear_windows, min_descent=min_descent)
         stream = decision.build(device=device)
