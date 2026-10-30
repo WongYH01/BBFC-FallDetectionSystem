@@ -1,0 +1,29 @@
+# Checks if image tag picked has changed and to update under k8s/kustomization.yml newTag
+
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: fluxbot
+        email: fluxbot@users.noreply.github.com
+      messageTemplate: |-
+        chore(infra): update deployed image tags
+
+        {{ .Changed.Summary }}
+    push:
+      branch: flux-image-updates
+  update:
+    path: ./infra/k8s
+    strategy: Setters

@@ -1,0 +1,17 @@
+# Telling flux to apply infra/k8s every 10mins or when main changes
+
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: bbfc-apps
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 10m
+  path: ./infra/k8s
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
