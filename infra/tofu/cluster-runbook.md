@@ -17,7 +17,7 @@ kubectl config use-context gke_fyp-elderly-detection_asia-southeast1-a_bbfc
    detection disk (GKE keeps disks when a cluster is deleted). Continue only
    when `get pv` shows `No resources found`.
    ```powershell
-   kubectl delete -k infra/tofu/k8s
+   kubectl delete -k infra/k8s
    kubectl get pv
    ```
 3. Destroy the cluster.
@@ -53,7 +53,7 @@ kubectl config use-context gke_fyp-elderly-detection_asia-southeast1-a_bbfc
 4. Optional: deploy the newest images instead of the pinned digests.
    ```powershell
    $reg = "asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry"
-   Push-Location infra/tofu/k8s
+   Push-Location infra/k8s
    foreach ($s in "notification", "detection") {
      $d = gcloud artifacts docker images describe "$reg/${s}:latest" --format="value(image_summary.digest)"
      kustomize edit set image "$s=$reg/$s@$d"
@@ -64,7 +64,7 @@ kubectl config use-context gke_fyp-elderly-detection_asia-southeast1-a_bbfc
    gitignored: recreate them first on a fresh clone. If it fails with
    `no matches for kind "SecretSync"`, wait a minute and rerun.
    ```powershell
-   kubectl apply -k infra/tofu/k8s
+   kubectl apply -k infra/k8s
    ```
 6. Check: both rollouts finish and the stream shows `"connected":true`.
    ```powershell
