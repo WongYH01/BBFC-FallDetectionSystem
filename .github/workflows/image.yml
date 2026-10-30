@@ -97,4 +97,5 @@ jobs:
         run: |
           docker tag "$LOCAL" "$REMOTE:${{ github.sha }}"
           docker tag "$LOCAL" "$REMOTE:latest"
+          docker tag "$LOCAL" "$REMOTE:main-${GITHUB_SHA::8}-$(date +%s)"
           docker push --all-tags "$REMOTE"
