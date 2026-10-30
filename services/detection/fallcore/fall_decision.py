@@ -16,7 +16,6 @@ stream, and with it the model code, when a stream is actually wanted.
 """
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 import dataclasses
 from dataclasses import dataclass
@@ -24,12 +23,15 @@ from pathlib import Path
 
 from . import config as cfg
 
-#: The calibrated pair for yolo26n keypoints: what `FallDecision()` and picam
-#: scoring (which reads yolo26n caches) run. The detector swaps in the head of
-#: the pose backbone it runs (`fallcore.pose_backbone`). `scripts/fetch_weights.py`
-#: pins every one of these files by hash; a test keeps the lists in agreement.
+#: The one calibrated pair the camera runs, and the keypoints its head was
+#: fitted on: the yolo26m INT8 export at 384x640 (`fallcore.pose_backbone`),
+#: whose keypoint cache is `data/keypoints/yolo26m_r640_ortint8rr/`. A head
+#: reads one pose backbone's keypoints only, so the three are one choice.
+#: `scripts/fetch_weights.py` pins these files by hash; a test keeps the lists
+#: in agreement.
 DEPLOYED_CHECKPOINT = "augnone_ms_coords_hn_s99.pt"
-DEPLOYED_HEAD = "probe_augnone_ms_coords_hn_s99.npz"
+DEPLOYED_HEAD = "probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz"
+DEPLOYED_POSE = "yolo26m_r640_ortint8rr"
 
 #: The environment variables demo-cam v2 has always read, and the field each
 #: one sets. Their names are a contract with every `.env` and compose file.
@@ -44,6 +46,10 @@ _RULE_VARS: dict[str, tuple[str, type]] = {
     "FALL_RECONNECT_SEC":  ("reconnect_sec", float),
     "FALL_RECONNECT_DIST": ("reconnect_dist", float),
 }
+#: Variables that once picked the pose model, checkpoints or head one by one,
+#: which let a head run on keypoints it was never fitted on. Refused.
+RETIRED_VARS = ("POSE_SCALE", "POSE_MODEL", "POSE_IMGSZ", "ENSEMBLE_CKPTS",
+                "CALIBRATION_HEAD")
 _RULE_FIELDS = ("buffer", "threshold", "clear_below", "clear_windows",
                 "min_descent", "frame_stride", "step", "subjects",
                 "reconnect_sec", "reconnect_dist")
@@ -73,6 +79,9 @@ def _out_of_range(field: str, value) -> str | None:
 class FallDecision:
     checkpoints: tuple[Path, ...] = (cfg.CKPT_DIR / DEPLOYED_CHECKPOINT,)
     heads: tuple[Path | None, ...] = (cfg.CKPT_DIR / DEPLOYED_HEAD,)
+    # The keypoints the heads read, named as their keypoint cache. A head that
+    # records another pose backbone is refused in `build`.
+    pose: str = DEPLOYED_POSE
     buffer: int = 4
     # The camera's own setting, not the paper's Algorithm 2 threshold
     # (`config.EVAL`), though both are 0.5 today: retuning the replication
@@ -109,7 +118,9 @@ class FallDecision:
 
         A value that does not parse or is out of range is refused with the
         variable's name, so a typo in `.env` stops the detector at startup
-        rather than booting it mis-tuned.
+        rather than booting it mis-tuned. So is a variable that used to swap
+        the pose model, checkpoint or head (`RETIRED_VARS`): the models are not
+        a setting, and an old `.env` must not be silently ignored.
         """
         changes = {}
         for var, (field, kind) in _RULE_VARS.items():
@@ -125,23 +136,13 @@ class FallDecision:
             if problem:
                 raise ValueError(f"{var} {problem}, not {env[var]!r}")
             changes[field] = value
-        checkpoints = tuple(Path(p) for p in
-                            env.get("ENSEMBLE_CKPTS", "").split(os.pathsep) if p)
-        if checkpoints:
-            changes["checkpoints"] = checkpoints
-        if "CALIBRATION_HEAD" in env:
-            # Empty runs every checkpoint on its own classifier.
-            head = env["CALIBRATION_HEAD"].strip()
-            changes["heads"] = ((Path(head),) if head else
-                                (None,) * len(checkpoints or cls.checkpoints))
-        n_ckpts = len(changes.get("checkpoints", cls.checkpoints))
-        n_heads = len(changes.get("heads", cls.heads))
-        if n_heads != n_ckpts:
-            # A head is fitted on one backbone, so it cannot follow a swap to
-            # several checkpoints on its own.
-            raise ValueError(f"ENSEMBLE_CKPTS names {n_ckpts} checkpoints but "
-                             f"CALIBRATION_HEAD gives {n_heads} head(s); set "
-                             f"CALIBRATION_HEAD= (empty) to run them uncalibrated")
+        retired = [var for var in RETIRED_VARS if var in env]
+        if retired:
+            raise ValueError(
+                f"{', '.join(retired)} no longer read: the camera runs one pose "
+                f"backbone and the head fitted on its keypoints "
+                f"({DEPLOYED_POSE}, {DEPLOYED_HEAD}). Remove "
+                f"{'it' if len(retired) == 1 else 'them'} from the environment")
         return cls(**changes)
 
     def replace(self, **changes) -> FallDecision:
@@ -154,7 +155,8 @@ class FallDecision:
         The window length is not a setting: it is read from the checkpoints,
         which must agree, so a checkpoint trained on a different window cannot
         be fed one cut to the training default. Each head is checked against
-        its checkpoint's backbone, features and window length before use.
+        its checkpoint's backbone, features and window length, and against
+        `pose`, before use.
         """
         from .calibrate import ProbeHead, validate
         from .stream import EnsembleStream
@@ -166,7 +168,7 @@ class FallDecision:
             lengths.add(train_cfg.seq_len)
             if head is not None:
                 validate(ProbeHead.load(head), path, model_cfg.features,
-                         train_cfg.seq_len)
+                         train_cfg.seq_len, pose=self.pose)
         if len(lengths) > 1:
             raise ValueError(f"checkpoints disagree on window length: "
                              f"{sorted(lengths)}")
@@ -199,4 +201,4 @@ class FallDecision:
             f"{c.name} + {h.name}" if h is not None else f"{c.name} (own classifier)"
             for c, h in zip(self.checkpoints, self.heads))
         rule = " ".join(f"{f}={getattr(self, f)}" for f in _RULE_FIELDS)
-        return f"{models} | {rule}"
+        return f"{models} on {self.pose} | {rule}"

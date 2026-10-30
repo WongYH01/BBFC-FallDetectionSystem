@@ -51,6 +51,12 @@ scalars:
     raised_by  ()           int32    the subject whose alarm raised the Alert,
                                      `lead[trigger]`; -1 under
                                      FALL_SUBJECTS=largest
+    pose       ()           <U32     the pose backbone the keypoints came from,
+                                     named as its keypoint cache
+                                     (`fall_decision.DEPLOYED_POSE`). A head is
+                                     fitted on one backbone's keypoints, so
+                                     training reads only the files whose pose
+                                     it is fitting on. Absent in version 1
 
 The Alert's Outcome is about `raised_by` alone. Another subject can be down in
 the same clip -- a carer kneeling beside the resident who fell -- and a Genuine
@@ -72,8 +78,9 @@ from pathlib import Path
 import numpy as np
 
 from . import config as cfg
+from .fall_decision import DEPLOYED_POSE
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -122,8 +129,12 @@ def people(seen: Iterable, fallen_of: Callable[[int], bool],
                  for s in seen)
 
 
-def save(path: str | Path, frames: Sequence[Frame], trigger: int) -> None:
+def save(path: str | Path, frames: Sequence[Frame], trigger: int,
+         pose: str = DEPLOYED_POSE) -> None:
     """Write `frames` to `path`, which only ever appears complete.
+
+    `pose` names the pose backbone that produced the keypoints; the detector
+    runs only the deployed one.
 
     The file is written beside its final name and renamed into place, so a
     process that dies mid-write leaves a `.tmp` nobody uploads -- the same
@@ -139,6 +150,8 @@ def save(path: str | Path, frames: Sequence[Frame], trigger: int) -> None:
         "version": np.int32(FORMAT_VERSION),
         "trigger": np.int32(trigger),
         "raised_by": np.int32(frames[trigger].lead),
+        # A plain unicode scalar, so loading never needs allow_pickle.
+        "pose": np.array(pose, dtype="<U32"),
         "t": np.array([f.t for f in frames], dtype=np.float64),
         "aspect": np.array([f.aspect for f in frames], dtype=np.float32),
         "alarm": np.array([f.alarm for f in frames], dtype=bool),

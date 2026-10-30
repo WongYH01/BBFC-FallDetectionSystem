@@ -7,10 +7,8 @@ deployed checkpoint is not on disk.
 """
 from __future__ import annotations
 
-import os
 import sys
 import unittest
-from pathlib import Path
 
 from fallcore import config as cfg
 from fallcore.fall_decision import FallDecision
@@ -23,7 +21,8 @@ class DeployedDefaultsTest(unittest.TestCase):
         self.assertEqual([p.name for p in d.checkpoints],
                          ["augnone_ms_coords_hn_s99.pt"])
         self.assertEqual([p.name for p in d.heads],
-                         ["probe_augnone_ms_coords_hn_s99.npz"])
+                         ["probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz"])
+        self.assertEqual(d.pose, "yolo26m_r640_ortint8rr")
         self.assertEqual(d.buffer, 4)
         self.assertEqual(d.threshold, 0.5)
         self.assertEqual(d.clear_below, 0.2)
@@ -71,27 +70,16 @@ class EnvironmentOverrideTest(unittest.TestCase):
         self.assertEqual(d.threshold, 0.7)
         self.assertEqual(d.buffer, 4)
 
-    def test_an_empty_calibration_head_runs_the_checkpoint_uncalibrated(self):
-        d = FallDecision.from_env({"CALIBRATION_HEAD": ""})
+    def test_the_variables_that_swapped_the_models_are_refused(self):
+        # Even empty: `CALIBRATION_HEAD=` used to mean "uncalibrated", and an
+        # old .env must not be silently ignored.
+        for var in ("POSE_SCALE", "POSE_MODEL", "POSE_IMGSZ", "ENSEMBLE_CKPTS",
+                    "CALIBRATION_HEAD"):
+            with self.subTest(var=var):
+                with self.assertRaises(ValueError) as caught:
+                    FallDecision.from_env({var: ""})
 
-        self.assertEqual([p.name for p in d.checkpoints],
-                         ["augnone_ms_coords_hn_s99.pt"])
-        self.assertEqual(d.heads, (None,))
-
-    def test_ensemble_checkpoints_replace_the_pair(self):
-        d = FallDecision.from_env({
-            "ENSEMBLE_CKPTS": os.pathsep.join([str(Path("w") / "a.pt"),
-                                               str(Path("w") / "b.pt")]),
-            "CALIBRATION_HEAD": "",
-        })
-
-        self.assertEqual(d.checkpoints, (Path("w") / "a.pt", Path("w") / "b.pt"))
-        self.assertEqual(d.heads, (None, None))
-
-    def test_a_calibration_head_path_is_used_as_given(self):
-        d = FallDecision.from_env({"CALIBRATION_HEAD": " other/probe.npz "})
-
-        self.assertEqual(d.heads, (Path("other/probe.npz"),))
+                self.assertIn(var, str(caught.exception))
 
 
 class SummaryTest(unittest.TestCase):
@@ -100,7 +88,8 @@ class SummaryTest(unittest.TestCase):
 
         self.assertNotIn("\n", line)
         for part in ("augnone_ms_coords_hn_s99.pt",
-                     "probe_augnone_ms_coords_hn_s99.npz", "buffer=4",
+                     "probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz",
+                     "on yolo26m_r640_ortint8rr", "buffer=4",
                      "threshold=0.5", "clear_below=0.2", "clear_windows=2",
                      "min_descent=0.1", "frame_stride=2", "step=15",
                      "subjects=tracked", "reconnect_sec=2.0",
@@ -108,7 +97,7 @@ class SummaryTest(unittest.TestCase):
             self.assertIn(part, line)
 
     def test_an_uncalibrated_checkpoint_says_so(self):
-        line = str(FallDecision.from_env({"CALIBRATION_HEAD": ""}))
+        line = str(FallDecision().replace(heads=(None,)))
 
         self.assertIn("augnone_ms_coords_hn_s99.pt (own classifier)", line)
 
@@ -136,10 +125,9 @@ class RefusedOverrideTest(unittest.TestCase):
                 self.assertIn(var, str(caught.exception))
 
     def test_more_checkpoints_than_heads_is_refused(self):
-        with self.assertRaises(ValueError) as caught:
-            FallDecision.from_env({"ENSEMBLE_CKPTS": os.pathsep.join(["a.pt", "b.pt"])})
-
-        self.assertIn("CALIBRATION_HEAD", str(caught.exception))
+        with self.assertRaises(ValueError):
+            FallDecision().replace(checkpoints=(cfg.CKPT_DIR / "a.pt",
+                                                cfg.CKPT_DIR / "b.pt"))
 
     def test_a_record_cannot_be_built_out_of_range(self):
         with self.assertRaises(ValueError):
@@ -160,8 +148,8 @@ class WeightsManifestTest(unittest.TestCase):
             with self.subTest(file=path.name):
                 self.assertIn(path.relative_to(cfg.ROOT).as_posix(), shipped)
 
-    def test_fetch_weights_ships_every_pose_backbone_and_its_head(self):
-        from fallcore.pose_backbone import BACKBONES
+    def test_fetch_weights_ships_the_pose_backbone_and_nothing_else(self):
+        from fallcore.pose_backbone import DEPLOYED
 
         sys.path.insert(0, str(cfg.ROOT / "scripts"))
         try:
@@ -169,11 +157,11 @@ class WeightsManifestTest(unittest.TestCase):
         finally:
             sys.path.remove(str(cfg.ROOT / "scripts"))
         shipped = {target for target, _sha in FILES.values()}
+        d = FallDecision()
 
-        for b in BACKBONES.values():
-            for path in (b.model, b.head):
-                with self.subTest(file=path.name):
-                    self.assertIn(path.relative_to(cfg.ROOT).as_posix(), shipped)
+        self.assertEqual(shipped, {p.relative_to(cfg.ROOT).as_posix()
+                                   for p in (DEPLOYED.model, *d.checkpoints,
+                                             *d.heads)})
 
 
 _DEPLOYED = FallDecision()
@@ -228,9 +216,24 @@ class BuildTest(unittest.TestCase):
 
         self.assertEqual(type(stream).__name__, "EnsembleStream")
 
-    def test_picam_scores_the_deployed_decision_unless_told_otherwise(self):
+    def test_a_head_fitted_on_another_pose_backbone_is_refused(self):
+        import tempfile
+        from pathlib import Path
+
+        from fallcore.calibrate import ProbeHead
+
+        head = ProbeHead.load(_DEPLOYED.heads[0])
+        head.pose = "yolo26n"
+        other = head.save(Path(tempfile.mkdtemp()) / "n_head.npz")
+
+        with self.assertRaisesRegex(ValueError, "yolo26n keypoints"):
+            FallDecision().replace(heads=(other,)).build()
+
+    def test_picam_scores_the_yolo26n_pair_its_caches_hold(self):
         from fallcore import picam
 
+        if not (cfg.CKPT_DIR / "probe_augnone_ms_coords_hn_s99.npz").exists():
+            self.skipTest("the retired yolo26n head is not on disk")
         det = picam.load_detector("ms coords + room head")
 
         self.assertEqual([p.name for p in det.checkpoints],
@@ -246,6 +249,8 @@ class BuildTest(unittest.TestCase):
     def test_picam_can_still_score_the_ungated_rule(self):
         from fallcore import picam
 
+        if not (cfg.CKPT_DIR / "probe_augnone_ms_coords_hn_s99.npz").exists():
+            self.skipTest("the retired yolo26n head is not on disk")
         det = picam.load_detector("ms coords + room head", min_descent=0.0)
 
         self.assertEqual(det.stream.min_descent, 0.0)

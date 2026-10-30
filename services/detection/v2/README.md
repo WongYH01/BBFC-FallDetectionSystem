@@ -6,7 +6,7 @@ v1's camera plumbing and replaces the fall decision.
 
 | | v1 | v2 |
 |---|---|---|
-| pose | `yolo26n-pose.pt` (torch) | `yolo26m-pose-384x640-int8.onnx` (ONNX Runtime), yolo26n as the backup |
+| pose | `yolo26n-pose.pt` (torch) | `yolo26m-pose-384x640-int8.onnx` (ONNX Runtime) |
 | decision | box width/height rule | transformer + room-fitted head, rolling mean, latch, descent gate |
 | box ratio | the alarm | debug overlay only (`FALL_DEBUG=1`) |
 
@@ -32,9 +32,8 @@ v1's camera plumbing and replaces the fall decision.
 1. **Each tracked person's** keypoints fill their own 4 s ring buffer (60 rows).
 2. Once a second that window is scored by `augnone_ms_coords_hn_s99.pt` and its
    pooled embedding read by a logistic head fitted on **this room's** clips, as
-   seen by the pose backbone that is running
-   (`probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz` for yolo26m,
-   `probe_augnone_ms_coords_hn_s99.npz` for yolo26n;
+   seen by the yolo26m backbone
+   (`probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz`,
    `scripts/fit_calibration_head.py`).
 3. A rolling mean over the last `BUFFER_LEN=4` windows latches the alarm above
    `FALL_THRESHOLD`, and clears after `FALL_CLEAR_WINDOWS` below
@@ -95,17 +94,21 @@ Transfer to a *different room* is untested: every clip here comes from one.
 yolo26m runs, as a static INT8 ONNX export at 384x640 (1280x720 frames
 letterbox to 384x640, so a square 640 input is 44% padding). Its weights are
 7-bit (`reduce_range`), so a CPU without VNNI cannot saturate them and scores
-the same as one with it. yolo26n is the backup, in the same image with the
-head fitted on its own keypoints (`fallcore.pose_backbone`).
+the same as one with it. It is the only backbone the detector runs, with the
+head fitted on its keypoints (`fallcore.pose_backbone`,
+`fallcore.fall_decision`): a head records the keypoints it was fitted on, a
+head fitted on another backbone is refused, and a missing file stops the
+detector rather than switching it to another pair.
 
-Both heads are fitted on picam-1 only. On the two sessions neither saw --
+It replaced yolo26n, which ran with its own head. Both heads are fitted on
+picam-1 only. On the two sessions neither saw --
 picam-2 (camera re-aimed) and picam-3 (another room, 15 fps) -- under the live
 rule (buffer 2, clear after 1, descent gate):
 
 | | picam-2 TP/FP/FN | picam-3 TP/FP/FN | falls caught | false alarms |
 |---|---|---|---|---|
 | **yolo26m INT8** + its head | 24/1/0 | 26/3/2 | 50 / 52 | 4 / 52 |
-| yolo26n + its head | 24/2/0 | 26/5/2 | 50 / 52 | 7 / 52 |
+| yolo26n + its head (retired) | 24/2/0 | 26/5/2 | 50 / 52 | 7 / 52 |
 
 The difference is within the ±2-3 clips these sets resolve. The yolo26n head on
 yolo26m keypoints is worse than either (picam-3 24/3/4), which is why the head
@@ -116,8 +119,9 @@ fall count as No-Fall rather than Fall.
 Speed, whole loop (track, draw, skeleton, JPEG) on a Ryzen 7 9800X3D: yolo26m
 INT8 18.2 fps on 2 ORT threads and 24.8 on 4, against ~43 for yolo26n on 2.
 A 15 fps camera needs ~20 with the 1.3x margin, hence `POSE_THREADS=4`. No other
-CPU has been timed: run `scripts/bench_pose.py` on the target first, and set
-`POSE_SCALE=yolo26n` where yolo26m does not keep up.
+CPU has been timed: run `scripts/bench_pose.py` on the target first. A
+machine where yolo26m does not keep up needs another backbone and a head
+refitted on its keypoints, which is a new deployed pair, not a setting.
 
 ## Deploy on a new machine
 
@@ -149,16 +153,12 @@ as `--min-descent 0` or `--threshold 0.6` overrides one setting on top:
 
 ## Settings
 
-Defaults shown; full list with commentary in `services/detection/.env.example`.
+Defaults shown. `services/detection/.env.example` sets only the ones a
+deployment changes.
 
 | Var | Default | Meaning |
 |---|---|---|
-| `POSE_SCALE` | `yolo26m` | pose backbone and the head fitted on its keypoints: `yolo26m` (INT8, 384x640) or `yolo26n` (640). yolo26n also takes over by itself when the yolo26m files are missing or it will not load |
-| `POSE_MODEL` | — | replaces the backbone's file (a `.pt` runs on torch); the head still follows `POSE_SCALE`, and nothing falls back |
-| `POSE_IMGSZ` | the backbone's | input size, `640` or `384,640`; an ONNX export only runs at the size it was exported at |
 | `POSE_THREADS` | `4` | ONNX Runtime pool. ORT's default spins on every core: 8.4 ms wall / 70 ms CPU per frame, against 16.4 / 33 at two threads. Four lets a yolo26m INT8 model hold a 15 fps camera (whole loop 24.8 fps, against 18.2 on two) |
-| `CALIBRATION_HEAD` | the pose backbone's | the room head; empty falls back to the checkpoint's own classifier, and setting it turns the yolo26n fallback off. A head whose backbone or feature variant disagrees with its checkpoint is refused |
-| `ENSEMBLE_CKPTS` | `runs/checkpoints/augnone_ms_coords_hn_s99.pt` | one file = the calibrated model; several = their mean |
 | `BUFFER_LEN` / `FALL_THRESHOLD` | `4` / `0.5` | rolling mean length and the level that engages the alarm |
 | `FALL_MIN_DESCENT` | `0.10` | the descent gate, body lengths/s; `0` restores pre-gate behaviour |
 | `FALL_CLEAR_BELOW` / `FALL_CLEAR_WINDOWS` | `0.2` / `2` | hysteresis for clearing |
@@ -193,20 +193,21 @@ Get it wrong and the window's time span changes, not just its cost: 15 fps with
 - Multi-person scenes are the known weakness: the pipeline watches the largest
   box, as training did, so it can follow a bystander instead of the faller.
 - CPU: the yolo26m INT8 loop runs 24.8 fps on 4 ORT threads (9800X3D), enough
-  for a 15 fps camera; yolo26n's ~23 ms/frame on 2 threads serves 30 fps with
-  `VID_STRIDE=2`. The classifier adds ~0.7 ms once a second.
+  for a 15 fps camera. The classifier adds ~0.7 ms once a second.
 
 ## Switching pose models
 
-Time the candidates offline, on the machine that will run the detector, before
-changing `POSE_SCALE` or `POSE_MODEL`:
+Time the candidates offline, on the machine that will run the detector,
+before fitting a head on one (`scripts/fit_calibration_head.py --scale`) and
+making the pair the deployed one (`fallcore.fall_decision`,
+`fallcore.pose_backbone`, `scripts/fetch_weights.py`):
 
 ```
 python scripts/bench_pose.py                  # every .pt/.onnx in models/
 python scripts/bench_pose.py --camera-fps 15 --imgsz 480 --threads 4
 ```
 
-It reads `POSE_IMGSZ` / `POSE_THREADS` / `POSE_DEVICE` from the environment,
+It reads `POSE_THREADS` / `POSE_DEVICE` from the environment,
 then `services/detection/.env`,
 and prints ms per frame, fps, the `VID_STRIDE` / `STREAM_FRAME_STRIDE` pair that
 keeps rows ~67 ms apart for that camera, and a verdict: `fits` (≥1.3× the rate

@@ -19,22 +19,19 @@ costs one extra dot product after the forward pass the demo already does. The
 head itself lives in `fallcore.calibrate`.
 
 A head is also a function of the pose backbone whose keypoints it was fitted
-on: `--scale` names that keypoint cache (`data/keypoints/<scale>/`), and the
-detector pairs each pose backbone with its own head (`fallcore.pose_backbone`).
+on: `--scale` names that keypoint cache (`data/keypoints/<scale>/`), the head
+records it (`ProbeHead.pose`), and the detector refuses a head whose pose
+backbone is not the one it runs (`fallcore.fall_decision.DEPLOYED_POSE`). The
+defaults are the deployed recipe: the deployed checkpoint, the deployed pose
+backbone's keypoints (yolo26m INT8 at 384x640), segment labels.
 
     .venv-train/Scripts/python.exe scripts/fit_calibration_head.py
+    # the shipped head
     .venv-train/Scripts/python.exe scripts/fit_calibration_head.py \
-        --protocol fit-all --out runs/checkpoints/probe_coords_hn_s99.npz
-
-The two shipped heads, on the deployed checkpoint:
-
-    # yolo26n
-    ... --ckpt runs/checkpoints/augnone_ms_coords_hn_s99.pt --protocol fit-all \
-        --empty-negatives 10
-    # yolo26m INT8 (keypoints from models/yolo26m-pose-384x640-int8.onnx)
-    ... --ckpt runs/checkpoints/augnone_ms_coords_hn_s99.pt --protocol fit-all \
-        --empty-negatives 10 --scale yolo26m_r640_ortint8rr --labels segment \
+        --protocol fit-all --empty-negatives 10 \
         --out runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz
+    # the retired yolo26n head
+    ... --protocol fit-all --empty-negatives 10 --scale yolo26n --labels clip
 
 Results are appended to `runs/metrics/calibration_head.csv`.
 """
@@ -48,6 +45,7 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from fallcore import calibrate, config as cfg, decide, picam, train as T
+from fallcore.fall_decision import DEPLOYED_CHECKPOINT, DEPLOYED_POSE
 
 
 #: Rows in half a second, at the row rate every window is cut at.
@@ -180,11 +178,13 @@ def report(name, prob, clips, clip_labels) -> list[dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", default=str(cfg.CKPT_DIR / "hn10_coords_hn_s99.pt"))
+    ap.add_argument("--ckpt", default=str(cfg.CKPT_DIR / DEPLOYED_CHECKPOINT))
     ap.add_argument("--protocol", choices=("loso", "fit-all", "curve"),
                     default="loso")
     ap.add_argument("--out", default=None,
-                    help="npz path for the fitted head (fit-all only)")
+                    help="npz path for the fitted head (fit-all only; default "
+                         "probe_<ckpt>_<scale>.npz, which never overwrites a "
+                         "shipped head)")
     ap.add_argument("--force", action="store_true",
                     help="overwrite the metrics rows instead of appending")
     ap.add_argument("--empty-negatives", type=int, default=0, metavar="COPIES",
@@ -202,11 +202,11 @@ def main() -> int:
                          "room and slightly worse in an unseen one; the "
                          "descent gate is what carries. Kept because it is "
                          "measured and reproducible")
-    ap.add_argument("--scale", default="yolo26n",
+    ap.add_argument("--scale", default=DEPLOYED_POSE,
                     help="keypoint cache the windows are read from "
                          "(data/keypoints/<scale>/): the pose backbone this "
-                         "head will be paired with")
-    ap.add_argument("--labels", choices=("clip", "segment"), default="clip",
+                         "head will be paired with, recorded in the head")
+    ap.add_argument("--labels", choices=("clip", "segment"), default="segment",
                     help="clip: every window of a fall clip is Fall (the yolo26n "
                          "head). segment: a fall clip's windows before the fall "
                          "are No-Fall and ones that cut it are dropped (the "
@@ -261,7 +261,7 @@ def main() -> int:
                 x = np.concatenate([x, syn_ext])
         return calibrate.fit(e, lab, backbone=args.ckpt, features=mcfg.features,
                              seq_len=tcfg.seq_len, extras=x,
-                             extra_names=extra_names)
+                             extra_names=extra_names, pose=args.scale)
 
     rows = []
     if args.protocol == "curve":
@@ -316,7 +316,8 @@ def main() -> int:
         np.save(cfg.METRICS_DIR / f"{name}_window_probs.npy", prob)
     else:
         head = fit_fold(np.ones(len(clips), dtype=bool))
-        out = Path(args.out or (cfg.CKPT_DIR / f"probe_{Path(args.ckpt).stem}.npz"))
+        out = Path(args.out or (cfg.CKPT_DIR /
+                                f"probe_{Path(args.ckpt).stem}_{args.scale}.npz"))
         head.save(out)
         print(f"wrote {out} (in-sample numbers follow -- descriptive only)")
         rows += report(f"fitall_{Path(args.ckpt).stem}", head.proba(emb, ext),

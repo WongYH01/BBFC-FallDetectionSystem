@@ -91,9 +91,9 @@ stores y first, Ultralytics emits x first, and a transposed cache still trains t
 a plausible-looking number.
 
 **The pose backbone is part of the model.** A camera head reads the keypoints
-of the backbone it was fitted on, so each backbone ships with its own:
-`yolo26m` (INT8, 384x640) runs, and `yolo26n` is the backup with the head
-fitted on its keypoints at 640. `POSE_SCALE` switches the pair.
+of the backbone it was fitted on, so the two ship as one pair: `yolo26m`
+(INT8, 384x640) and the head fitted on its keypoints. The detector refuses a
+head that records another backbone, and there is no setting that swaps one.
 
 **The head is a commissioning artefact, not a weight.** It is fitted on one
 installation's own falls and ADLs (`services/detection/scripts/fit_calibration_head.py`), and it is

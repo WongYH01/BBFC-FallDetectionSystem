@@ -125,6 +125,10 @@ class ProbeHead:
     #: order. Empty for a head fitted on the embedding alone -- which is what
     #: every head saved before 2026-09-24 is, so they keep loading unchanged.
     extra: tuple[str, ...] = ()
+    #: The keypoints the head was fitted on, named as their keypoint cache
+    #: (`data/keypoints/<pose>/`). Empty for a head saved before 2026-10-30,
+    #: which recorded only its checkpoint.
+    pose: str = ""
 
     @property
     def dim(self) -> int:
@@ -168,7 +172,7 @@ class ProbeHead:
                  intercept=self.intercept, backbone=self.backbone,
                  features=self.features, seq_len=self.seq_len,
                  # A plain unicode array, so loading never needs allow_pickle.
-                 extra=np.array(self.extra, dtype="<U32"))
+                 extra=np.array(self.extra, dtype="<U32"), pose=self.pose)
         return path
 
     @classmethod
@@ -180,13 +184,14 @@ class ProbeHead:
         return cls(mean=blob["mean"], scale=blob["scale"], coef=blob["coef"],
                    intercept=np.atleast_1d(blob["intercept"]),
                    backbone=str(blob["backbone"]), features=str(blob["features"]),
-                   seq_len=int(blob["seq_len"]), extra=extra)
+                   seq_len=int(blob["seq_len"]), extra=extra,
+                   pose=str(blob["pose"]) if "pose" in blob else "")
 
 
 def fit(embeddings: np.ndarray, labels, C: float = 1.0,
         backbone: str = "", features: str = "full",
         seq_len: int = 60, extras: np.ndarray | None = None,
-        extra_names: tuple[str, ...] = ()) -> ProbeHead:
+        extra_names: tuple[str, ...] = (), pose: str = "") -> ProbeHead:
     """Fit a head on pooled embeddings. `labels` is per-window, not per-clip.
 
     `extras` appends per-window inputs (see `window_kinematics`) to every
@@ -217,17 +222,25 @@ def fit(embeddings: np.ndarray, labels, C: float = 1.0,
                      coef=head.coef_.ravel().astype(np.float64),
                      intercept=head.intercept_.astype(np.float64),
                      backbone=backbone, features=features, seq_len=seq_len,
-                     extra=tuple(extra_names))
+                     extra=tuple(extra_names), pose=pose)
 
 
 def validate(head: "ProbeHead", checkpoint: str | Path, features: str,
-             seq_len: int) -> None:
+             seq_len: int, pose: str | None = None) -> None:
     """Refuse a head that was not fitted for this backbone, rather than apply it.
 
     A head is a function of one embedding space. On a different checkpoint it is
     a random linear map that still returns confident-looking numbers, and on a
     different feature variant the embedding does not even mean the same thing.
+    The same holds one step earlier for `pose`, the pose backbone whose
+    keypoints the windows are cut from: a yolo26n head on yolo26m keypoints
+    misses falls its own head catches. A head saved before it recorded its pose
+    (`ProbeHead.pose` empty) cannot be checked and is let through.
     """
+    if pose is not None and head.pose and head.pose != pose:
+        raise ValueError(
+            f"head was fitted on {head.pose} keypoints, not {pose} -- refit it "
+            f"on that pose backbone (scripts/fit_calibration_head.py --scale)")
     name = Path(checkpoint).name
     if head.backbone and Path(head.backbone).name != name:
         raise ValueError(

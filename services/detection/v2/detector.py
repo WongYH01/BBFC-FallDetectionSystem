@@ -7,27 +7,22 @@ with ByteTrack, and draws the skeleton for the Flask `/video_feed` MJPEG route.
 The fall alarm is the **calibrated model**: each tracked person's keypoints fill
 their own 4 s ring buffer, every second a window is scored by the backbone and read by a
 logistic head fitted on THIS room's own clips
-(`probe_augnone_ms_coords_hn_s99.npz`, scripts/fit_calibration_head.py), and that
+(`probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz`,
+scripts/fit_calibration_head.py), and that
 score goes into a rolling buffer of `BUFFER_LEN` windows; that person's alarm
 latches when the rolling mean clears `FALL_THRESHOLD`, and the room's alarm is up
 while anyone's is. `fallcore.stream` owns the arithmetic (`SubjectStreams`, which
 also carries a person across a change of tracker id) and `fallcore.calibrate`
 owns the head. `FALL_SUBJECTS=largest` goes back to following the largest box
-alone, which misses a fall behind a closer bystander. Held-out estimate on the
-camera's five subjects: window AUC 0.992, rolling F1 0.967 (1 false alarm, 1
-miss), against 0.836 for the best single checkpoint and 0.853 for the
-four-model ensemble.
+alone, which misses a fall behind a closer bystander.
 
-`CALIBRATION_HEAD` empty falls back to the checkpoint's own classifier;
-`ENSEMBLE_CKPTS` takes an os.pathsep list to run several checkpoints (the old
-four-model mean) instead. Either way the head is bound to one backbone, and a
-mismatch raises rather than returning confident nonsense.
-
-The pose backbone is part of that pairing: a head reads the keypoints of the
-backbone it was fitted on, so `POSE_SCALE` picks a backbone and its head
-together (`fallcore.pose_backbone`). yolo26m (INT8 ONNX at 384x640) runs by
-default; yolo26n is the backup, run when `POSE_SCALE=yolo26n` or when the
-yolo26m files are missing or its model will not load.
+The pose backbone, the checkpoint and the head are one choice, not settings: a
+head reads the keypoints of the pose backbone it was fitted on, so the detector
+runs the yolo26m INT8 export at 384x640 (`fallcore.pose_backbone`) and the head
+fitted on its keypoints (`fallcore.fall_decision`). A head that records another
+pose backbone is refused, a missing file stops the detector, and the variables
+that used to swap one half on its own (`POSE_SCALE`, `POSE_MODEL`,
+`POSE_IMGSZ`, `ENSEMBLE_CKPTS`, `CALIBRATION_HEAD`) are refused at startup.
 
 The v1 box width/height rule still runs, but only as a debug overlay
 (`FALL_DEBUG=1`) -- the calibrated model decides.
@@ -67,13 +62,12 @@ MEDIAMTX_HOST   = os.environ["MEDIAMTX_HOST"]
 RTSP_PORT       = os.environ.get("MEDIAMTX_RTSP_PORT", "8554")
 STREAM_PATH     = os.environ.get("STREAM_PATH", "cam")
 
-# Pose weights: an ONNX export in models/, which Ultralytics runs on ONNX
-# Runtime. POSE_SCALE picks the backbone and the head fitted on its keypoints
-# (fallcore.pose_backbone): yolo26m by default, yolo26n as the backup.
-# POSE_MODEL replaces the file (a .pt path runs on torch) and POSE_IMGSZ the
-# input size, which a static ONNX graph fixes at export -- leave it unset.
-# A value that does not parse stops the detector here.
-POSE_CHOICES = pose_backbone.from_env(os.environ)
+# Pose weights: the yolo26m INT8 ONNX export in models/, which Ultralytics runs
+# on ONNX Runtime at the 384x640 its graph is fixed at (fallcore.pose_backbone).
+POSE = pose_backbone.DEPLOYED
+MODEL_NAME = str(POSE.model)
+POSE_BACKEND = "onnx"
+IMGSZ = POSE.imgsz
 
 # ONNX Runtime thread pool for the pose graph. Ultralytics builds its session
 # with no session options at all -- every core, spinning between operators --
@@ -81,13 +75,8 @@ POSE_CHOICES = pose_backbone.from_env(os.environ)
 # 70 ms CPU per frame at the default, against 16.4 / 33 with two threads. 0
 # leaves ONNX Runtime's default. Only applies to the ONNX backend. Four by
 # default so a yolo26m INT8 model holds a 15 fps camera: its whole loop runs
-# 18.2 fps on two threads and 24.8 on four (Ryzen 7 9800X3D); n needs only two.
+# 18.2 fps on two threads and 24.8 on four (Ryzen 7 9800X3D).
 POSE_THREADS = int(os.environ.get("POSE_THREADS", "4"))
-
-
-def _backend(path) -> str:
-    return "onnx" if str(path).lower().endswith(".onnx") else "torch"
-
 
 VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "videos")
 RECORD_FPS = int(os.environ.get("RECORD_FPS", "10"))  # nominal, not measured
@@ -119,14 +108,11 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # stops working.
 #
 # All of it -- the pair, the rule and the sampling -- is `fallcore.fall_decision`,
-# which replay.py and picam scoring build from too. The environment overrides it
-# under the names below:
+# which replay.py and picam scoring build from too. The pair is not a setting;
+# the environment overrides the rule under the names below:
 #
-# ENSEMBLE_CKPTS takes an os.pathsep list of checkpoints. CALIBRATION_HEAD names
-# the head; `CALIBRATION_HEAD=` (empty) runs the checkpoints uncalibrated, and a
-# head fitted for another backbone is refused rather than silently applied,
-# because a head is a function of one backbone's embedding space. BUFFER_LEN,
-# FALL_THRESHOLD, FALL_CLEAR_BELOW and FALL_CLEAR_WINDOWS set the rolling rule.
+# BUFFER_LEN, FALL_THRESHOLD, FALL_CLEAR_BELOW and FALL_CLEAR_WINDOWS set the
+# rolling rule.
 #
 # FALL_MIN_DESCENT: body lengths per second the hips must fall somewhere inside
 # a window before that window may *raise* the alarm. Without it the verdict is
@@ -151,16 +137,9 @@ SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
 # lost -- the tracker re-identifies a faller in ~40% of falls, mid-descent.
 #
 # A value that does not parse or is out of range stops the detector here, with
-# the variable's name, rather than booting it mis-tuned.
-#
-# The head is the pose backbone's (POSE_CHOICES), so it is decided here for the
-# first choice and again below if that backbone does not load.
-def _decision_for(backbone) -> FallDecision:
-    head = str(backbone.head) if backbone.head is not None else ""
-    return FallDecision.from_env({**os.environ, "CALIBRATION_HEAD": head})
-
-
-DECISION = _decision_for(POSE_CHOICES[0])
+# the variable's name, rather than booting it mis-tuned. So does a variable
+# that used to swap the pose model, checkpoint or head.
+DECISION = FallDecision.from_env(os.environ)
 TRACKED = DECISION.subjects == "tracked"
 
 # The tracker behind the ids. ByteTrack is what the per-person rule was
@@ -490,53 +469,24 @@ def _rtsp_url() -> str:
 # Load the models once at import (shared across requests). The pose backbone
 # is the only heavy one; the classifier is ~1 MB and runs once a second, so it
 # is not where the CPU budget goes.
-if POSE_THREADS > 0 and any(_backend(c.model) == "onnx" for c in POSE_CHOICES):
+_missing = [str(p) for p in (POSE.model, *DECISION.checkpoints) if not p.exists()]
+_missing += [str(h) for h in DECISION.heads if h is not None and not h.exists()]
+if _missing:
+    raise FileNotFoundError("model file(s) missing: " + ", ".join(_missing) +
+                            ". Run scripts/fetch_weights.py.")
+
+if POSE_THREADS > 0:
     # Before the session exists: Ultralytics builds it with no session options,
     # so this is the only seam that sets the thread pool.
     fonnx.use_tuned_sessions(threads=POSE_THREADS, spinning=False)
 
-
-def _open_pose(backbone):
-    """The YOLO model for `backbone`, once a blank frame has run through it.
-
-    Ultralytics opens the ONNX session on the first frame, so without this a
-    model that cannot run here would fail inside the capture loop, not here
-    where the backup can still take over.
-    """
-    m = YOLO(str(backbone.model))
-    device = POSE_DEVICE or ("cpu" if _backend(backbone.model) == "onnx" else None)
-    m.predict(np.zeros((*backbone.imgsz, 3), np.uint8), imgsz=backbone.imgsz,
-              verbose=False, **({"device": device} if device else {}))
-    return m
-
-
-try:
-    POSE, model, _skipped = pose_backbone.open_first(POSE_CHOICES, _open_pose)
-except FileNotFoundError as exc:
-    raise FileNotFoundError(
-        f"pose backbone: {exc}. Run scripts/fetch_weights.py, or set "
-        f"POSE_MODEL / CALIBRATION_HEAD.") from exc
-#: Why the backbone POSE_SCALE asked for is not the one running; None when it is.
-POSE_FALLBACK = "; ".join(_skipped) or None
-if POSE_FALLBACK:
-    print(f"[detector] WARNING: {POSE_FALLBACK} -- running the {POSE.scale} "
-          f"backup and its head")
-    DECISION = _decision_for(POSE)
-MODEL_NAME = str(POSE.model)
-POSE_BACKEND = _backend(POSE.model)
-IMGSZ = POSE.imgsz
-
-_missing = [str(p) for p in DECISION.checkpoints if not p.exists()]
-_missing += [str(h) for h in DECISION.heads if h is not None and not h.exists()]
-if _missing:
-    raise FileNotFoundError(
-        "model file(s) missing: " + ", ".join(_missing) +
-        ". Run notebooks 02/10 to produce the checkpoints and "
-        "scripts/fit_calibration_head.py for the head, or set "
-        "ENSEMBLE_CKPTS / CALIBRATION_HEAD (empty = uncalibrated).")
-
+model = YOLO(MODEL_NAME)
+# Ultralytics opens the ONNX session on the first frame, so without this a
+# model that cannot run here would fail inside the capture loop, not at startup.
+model.predict(np.zeros((*IMGSZ, 3), np.uint8), imgsz=IMGSZ, verbose=False,
+              device=POSE_DEVICE or "cpu")
 _stream = DECISION.build_camera(device="cpu")
-print(f"[detector] pose {POSE.scale} {Path(MODEL_NAME).name} at "
+print(f"[detector] pose {POSE.name} {Path(MODEL_NAME).name} at "
       f"{IMGSZ[0]}x{IMGSZ[1]} ({POSE_BACKEND}, "
       f"threads={POSE_THREADS or 'ORT default'}), vid_stride={VID_STRIDE}, "
       f"decision {DECISION}")
@@ -609,8 +559,7 @@ def get_stream_status() -> dict:
     s["frame_stride"] = DECISION.frame_stride
     s["jpeg_quality"] = JPEG_QUALITY
     s["pose_backend"] = POSE_BACKEND
-    s["pose"] = POSE.scale
-    s["pose_fallback"] = POSE_FALLBACK
+    s["pose"] = POSE.name
     s["stall_sec"] = STREAM_STALL_SEC
     s["idle_stop_sec"] = IDLE_STOP_SEC
     return s

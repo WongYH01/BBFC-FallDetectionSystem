@@ -1,24 +1,24 @@
 """Fetch the deployment weights from the project's Hugging Face model repo.
 
-The files the stream deployment needs -- two ONNX pose backbones, the
-transformer checkpoint, and for each backbone the camera head fitted on its
-keypoints -- are artifacts, not source, so they are not in git. This script
-downloads them from
+The three files the stream deployment needs -- the ONNX pose backbone, the
+transformer checkpoint and the camera head fitted on that backbone's keypoints
+-- are artifacts, not source, so they are not in git. This script downloads
+them from
 
     junyuu/fall-detection-bbfc
 
 into exactly the paths `v2` resolves by default (relative to services/detection):
 
-    models/yolo26m-pose-384x640-int8.onnx                          deployed
+    models/yolo26m-pose-384x640-int8.onnx
+    runs/checkpoints/augnone_ms_coords_hn_s99.pt
     runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz
-    models/yolo26n-pose.onnx                                       the backup
-    runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz
-    runs/checkpoints/augnone_ms_coords_hn_s99.pt                   both
 
-The detector runs yolo26m and falls back to yolo26n when the yolo26m files are
-missing or will not load (`fallcore.pose_backbone`). The checkpoint without a
-head still runs (`CALIBRATION_HEAD=` empty) and scores lower; a head without
-its checkpoint is refused. The four
+They are one choice (`fallcore.pose_backbone`, `fallcore.fall_decision`): the
+head reads only that pose backbone's keypoints, and the detector stops when any
+of the three is missing. The yolo26n backbone and its head, which the detector
+used to fall back to, are still in this revision of the repo
+(`pose/yolo26n-pose-imgsz640.onnx`, `checkpoints/probe_augnone_ms_coords_hn_s99.npz`)
+but are no longer fetched. The four
 single-corpus checkpoints the ensemble used to average
 (`final_yolo26n`, `hn10_full_hn_s99`, `hn10_coords_hn_s99`,
 `omnifall_cs_full`) were removed from the release when the calibrated model
@@ -75,15 +75,9 @@ FILES = {
     "checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz": (
         "runs/checkpoints/probe_augnone_ms_coords_hn_s99_yolo26m-int8.npz",
         "f56d81e17d7c1f7fabdc66d77e03c1186cd2966a685377de4cbfe2c4ba09f639"),
-    "pose/yolo26n-pose-imgsz640.onnx": (
-        "models/yolo26n-pose.onnx",
-        "ea6b37044a5784d279dd93837b2fd89aaa2e0db720ad0928b4de2d78ad1f5c57"),
     "checkpoints/augnone_ms_coords_hn_s99.pt": (
         "runs/checkpoints/augnone_ms_coords_hn_s99.pt",
         "b65d8a35668a57a711660eeb2d584db34bd0cbc1f1aedbc78134b3a290f7d36a"),
-    "checkpoints/probe_augnone_ms_coords_hn_s99.npz": (
-        "runs/checkpoints/probe_augnone_ms_coords_hn_s99.npz",
-        "6a97474e133b019ccbdf82c048251a33c7cb4dbcb8ae36d3520e0ac55cd0dc92"),
 }
 
 
