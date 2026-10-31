@@ -299,6 +299,43 @@ class RefitTest(unittest.TestCase):
         self.assertIn("held-out session (3 clips, 2 falls): falls 2 -> 2, "
                       "False Alarms 1 -> 0", head.gate)
 
+    def test_a_held_out_fall_lost_is_gate_failed(self):
+        # False Alarms lying where a held-out fall lies teach the candidate
+        # to miss it, however many False Alarms it removes.
+        self.week(false_alarms=(0.35, 0.35, 0.35, 0.35))
+
+        verdict = self.run_refit()
+
+        self.assertEqual(verdict.kind, refit.GATE_FAILED, str(verdict))
+        self.assertEqual((verdict.gate.heldout.lost, verdict.gate.evals.lost),
+                         (1, 0))
+        self.assertIn("1 fall lost", verdict.reason)
+        self.assertIsNone(verdict.head)
+
+    def test_a_genuine_eval_alert_lost_is_gate_failed(self):
+        # A fall where the candidate was taught a False Alarm, with three
+        # False Alarms removed.
+        self.week(eval_genuine=(0.65,), eval_false_alarms=(0.55, 0.60))
+
+        verdict = self.run_refit()
+
+        self.assertEqual(verdict.kind, refit.GATE_FAILED, str(verdict))
+        self.assertEqual((verdict.gate.heldout.lost, verdict.gate.evals.lost),
+                         (0, 1))
+        self.assertIsNone(verdict.head)
+
+    def test_only_one_fewer_false_alarm_is_gate_failed(self):
+        # The False Alarm Eval Alert lies where a Genuine fall was taught, so
+        # only the held-out Controlled Descent goes quiet.
+        self.week(eval_false_alarms=(0.50,))
+
+        verdict = self.run_refit()
+
+        self.assertEqual(verdict.kind, refit.GATE_FAILED, str(verdict))
+        self.assertIn("1 fewer False Alarm, fewer than 2", verdict.reason)
+        self.assertIn("Promotion Gate failed", str(verdict))
+        self.assertIsNone(verdict.head)
+
     # -- the pinned base data -----------------------------------------------
 
     def test_a_pinned_object_that_changed_is_an_error_not_a_verdict(self):
