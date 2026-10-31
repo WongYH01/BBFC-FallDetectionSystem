@@ -113,7 +113,9 @@ MIN_NEW = 5
 #: window is Fall, the descent the alarm latched on; ending more than
 #: `ADL_BEFORE` before it, it is ADL, the upright activity before the fall.
 #: The windows between are neither, and so are the later ones, lying still
-#: on the floor, which a head must not learn is a fall (ADR 0002).
+#: on the floor, which a head must not learn is a fall (ADR 0002). Seconds
+#: of capture time, not windows or rows: how many of those a fall lasts
+#: depends on the camera's frame rate and the decision's stride and step.
 FALL_FROM, FALL_TO, ADL_BEFORE = -2.0, 3.0, -6.0
 #: Copies of each nobody-visible window flavour, as the shipped head was
 #: fitted (`fit_calibration_head.py --empty-negatives 10`).
