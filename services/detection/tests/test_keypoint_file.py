@@ -143,6 +143,49 @@ class KeypointFileTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             keypoint_file.save(self.path, [], trigger=0)
 
+    def test_load_gives_back_what_was_saved(self):
+        written = self._frames()
+        keypoint_file.save(self.path, written, trigger=2, pose="yolo26n_test")
+
+        read = keypoint_file.load(self.path)
+
+        self.assertEqual(read.trigger, 2)
+        self.assertEqual(read.raised_by, 1)
+        self.assertEqual(read.pose, "yolo26n_test")
+        self.assertEqual(len(read.frames), len(written))
+        for got, want in zip(read.frames, written):
+            self.assertAlmostEqual(got.t, want.t)
+            self.assertAlmostEqual(got.aspect, want.aspect, places=6)
+            self.assertEqual(got.alarm, want.alarm)
+            self.assertAlmostEqual(got.score, want.score, places=6)
+            self.assertEqual(got.lead, want.lead)
+            self.assertEqual(len(got.people), len(want.people))
+            for p, q in zip(got.people, want.people):
+                self.assertEqual((p.track_id, p.subject, p.fallen),
+                                 (q.track_id, q.subject, q.fallen))
+                np.testing.assert_allclose(p.centre, q.centre, rtol=1e-6)
+                self.assertAlmostEqual(p.area, q.area, places=6)
+                np.testing.assert_array_equal(p.keypoints, q.keypoints)
+
+    def test_load_reads_a_clip_with_nobody_in_it(self):
+        frames = [Frame(t=1.0, aspect=1.5, alarm=False, score=0.0),
+                  Frame(t=2.0, aspect=1.5, alarm=True, score=0.9)]
+        keypoint_file.save(self.path, frames, trigger=1)
+        read = keypoint_file.load(self.path)
+        self.assertEqual([f.people for f in read.frames], [(), ()])
+        self.assertEqual(read.raised_by, -1)
+        self.assertEqual(read.pose, "yolo26m_r640_ortint8rr")
+
+    def test_load_refuses_a_format_it_does_not_know(self):
+        keypoint_file.save(self.path, self._frames(), trigger=2)
+        with np.load(self.path) as f:
+            arrays = dict(f)
+        arrays["version"] = np.int32(keypoint_file.FORMAT_VERSION + 1)
+        with open(self.path, "wb") as fh:
+            np.savez_compressed(fh, **arrays)
+        with self.assertRaises(ValueError):
+            keypoint_file.load(self.path)
+
     def test_people_from_sightings(self):
         seen = [Sighting(track_id=4, row=row(0.5), centre=(0.1, 0.2), area=0.3),
                 Sighting(track_id=9, row=row(0.6), centre=(0.7, 0.8), area=0.05)]

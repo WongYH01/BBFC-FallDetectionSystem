@@ -58,6 +58,9 @@ scalars:
                                      training reads only the files whose pose
                                      it is fitting on. Absent in version 1
 
+`load` reads a file back as the `Frame`s `save` was given, with its trigger,
+`raised_by` and `pose`.
+
 The Alert's Outcome is about `raised_by` alone. Another subject can be down in
 the same clip -- a carer kneeling beside the resident who fell -- and a Genuine
 Outcome says nothing about them.
@@ -176,3 +179,46 @@ def save(path: str | Path, frames: Sequence[Frame], trigger: int,
     finally:
         if tmp.exists():
             tmp.unlink()
+
+
+@dataclass(frozen=True)
+class KeypointFile:
+    """A Keypoint File read back: what `save` was given, and whom it is about."""
+
+    frames: tuple[Frame, ...]
+    trigger: int
+    raised_by: int
+    #: Empty for a version-1 file, which did not record its pose backbone.
+    pose: str
+    version: int
+
+
+def load(path: str | Path) -> KeypointFile:
+    """Read a file `save` wrote, version 1 or 2, as the frames it was given.
+
+    Version 1 is version 2 without `pose`, so its `pose` reads as "": no pose
+    backbone's, and training on any one backbone leaves it out. A newer
+    version is refused rather than half-read.
+    """
+    with np.load(path, allow_pickle=False) as f:
+        version = int(f["version"])
+        if not 1 <= version <= FORMAT_VERSION:
+            raise ValueError(f"{Path(path).name} is keypoint file version "
+                             f"{version}; this reader knows 1 to {FORMAT_VERSION}")
+        a = {name: f[name] for name in f.files}
+    by_frame: list[list[Person]] = [[] for _ in a["t"]]
+    for i, frame in enumerate(a["frame"]):
+        by_frame[frame].append(Person(
+            track_id=int(a["track_id"][i]), keypoints=a["keypoints"][i],
+            centre=(float(a["centre"][i, 0]), float(a["centre"][i, 1])),
+            area=float(a["area"][i]), fallen=bool(a["fallen"][i]),
+            subject=int(a["subject"][i])))
+    frames = tuple(
+        Frame(t=float(a["t"][i]), aspect=float(a["aspect"][i]),
+              alarm=bool(a["alarm"][i]), score=float(a["score"][i]),
+              people=tuple(by_frame[i]), lead=int(a["lead"][i]))
+        for i in range(len(a["t"])))
+    return KeypointFile(frames=frames, trigger=int(a["trigger"]),
+                        raised_by=int(a["raised_by"]),
+                        pose=str(a["pose"]) if "pose" in a else "",
+                        version=version)
