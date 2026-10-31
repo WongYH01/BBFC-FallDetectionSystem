@@ -462,8 +462,8 @@ def _heldout(folder: Path, pose: str) -> list[Clip]:
         kf = keypoint_file.load(path)
         if kf.pose != pose:
             raise PinnedDataError(f"{HELDOUT}/{path.parent.name}/{path.name} "
-                                  f"is {kf.pose or 'no'} pose backbone's "
-                                  f"keypoints, not {pose}'s")
+                                  f"holds {kf.pose or 'unnamed'} keypoints, "
+                                  f"not {pose}")
         clips.append(Clip(kf.frames, fall=fall))
     return clips
 

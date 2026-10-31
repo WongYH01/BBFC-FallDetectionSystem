@@ -203,10 +203,12 @@ class RefitTest(unittest.TestCase):
             fh.write(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
         return path
 
-    def pin_clip(self, name: str, frames_: list[Frame]) -> Path:
+    def pin_clip(self, name: str, frames_: list[Frame],
+                 pose: str | None = None) -> Path:
         """Pin a held-out clip, a Keypoint File."""
         scratch = self.weights / "clip.npz"
-        keypoint_file.save(scratch, frames_, TRIGGER, pose=self.decision.pose)
+        keypoint_file.save(scratch, frames_, TRIGGER,
+                           pose=pose or self.decision.pose)
         path = self.pin(name, scratch.read_bytes())
         scratch.unlink()
         return path
@@ -404,6 +406,21 @@ class RefitTest(unittest.TestCase):
 
     def test_a_pinned_object_that_is_missing_is_an_error(self):
         (self.root / refit.COMMISSIONING / "fall/picam_fall_0.npy").unlink()
+        with self.assertRaises(refit.PinnedDataError):
+            self.run_refit()
+
+    def test_a_pinned_clip_not_filed_by_label_is_an_error(self):
+        # Pinned, so its hash matches, but nothing says whether it is a fall.
+        self.pin(f"{refit.COMMISSIONING}/picam_sit_chair_0.npy",
+                 npy(upright(0.5, 300)))
+        self.week()
+        with self.assertRaises(refit.PinnedDataError):
+            self.run_refit()
+
+    def test_a_held_out_clip_from_another_pose_backbone_is_an_error(self):
+        self.pin_clip(f"{refit.HELDOUT}/adl/p3_walk_0.npz",
+                      frames(BEFORE, upright(0.5, 300)), pose="yolo26n_r640")
+        self.week()
         with self.assertRaises(refit.PinnedDataError):
             self.run_refit()
 
