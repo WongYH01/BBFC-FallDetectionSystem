@@ -278,7 +278,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.PROMOTED, str(verdict))
+        self.assertEqual(verdict.kind, refit.Kind.PROMOTED, str(verdict))
         self.assertIn("Promotion Gate passed", str(verdict))
 
     def test_the_candidate_head_records_what_it_was_fitted_on(self):
@@ -308,7 +308,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.GATE_FAILED, str(verdict))
+        self.assertEqual(verdict.kind, refit.Kind.GATE_FAILED, str(verdict))
         self.assertEqual((verdict.gate.heldout.lost, verdict.gate.evals.lost),
                          (1, 0))
         self.assertIn("1 fall lost", verdict.reason)
@@ -321,7 +321,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.GATE_FAILED, str(verdict))
+        self.assertEqual(verdict.kind, refit.Kind.GATE_FAILED, str(verdict))
         self.assertEqual((verdict.gate.heldout.lost, verdict.gate.evals.lost),
                          (0, 1))
         self.assertIsNone(verdict.head)
@@ -333,7 +333,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.GATE_FAILED, str(verdict))
+        self.assertEqual(verdict.kind, refit.Kind.GATE_FAILED, str(verdict))
         self.assertIn("1 fewer False Alarm, fewer than 2", verdict.reason)
         self.assertIn("Promotion Gate failed", str(verdict))
         self.assertIsNone(verdict.head)
@@ -434,7 +434,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertEqual(verdict.kind, refit.Kind.SKIPPED)
         self.assertIn("4 new training alerts", verdict.reason.lower())
         self.assertIn("fewer than 5", verdict.reason.lower())
 
@@ -444,7 +444,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertEqual(verdict.kind, refit.Kind.SKIPPED)
         self.assertIn("no new genuine", verdict.reason.lower())
 
     def test_a_week_with_enough_new_data_is_not_skipped(self):
@@ -454,7 +454,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertIn(verdict.kind, (refit.PROMOTED, refit.GATE_FAILED))
+        self.assertIn(verdict.kind, (refit.Kind.PROMOTED, refit.Kind.GATE_FAILED))
 
     def test_alerts_raised_before_the_deployed_camera_head_was_fitted_are_not_new(self):
         for event_id in TRAINING_IDS[:5]:
@@ -464,7 +464,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertEqual(verdict.kind, refit.Kind.SKIPPED)
         self.assertIn("4 new training alerts", verdict.reason.lower())
         # Not new, but still training data the Candidate Head is fitted on.
         self.assertEqual(verdict.report.training, 9)
@@ -481,7 +481,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertIn(verdict.kind, (refit.PROMOTED, refit.GATE_FAILED))
+        self.assertIn(verdict.kind, (refit.Kind.PROMOTED, refit.Kind.GATE_FAILED))
         self.assertEqual(verdict.report.new_training, 5)
 
     # -- the eval split -----------------------------------------------------
@@ -495,7 +495,7 @@ class RefitTest(unittest.TestCase):
         verdict = self.run_refit()
 
         # Five new Genuine Alerts arrived, but all are Eval Alerts.
-        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertEqual(verdict.kind, refit.Kind.SKIPPED)
         self.assertIn("4 new training alerts", verdict.reason.lower())
         self.assertEqual(verdict.report.eval, 5)
         self.assertEqual(verdict.report.eval_genuine, 5)
@@ -530,7 +530,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertEqual(verdict.kind, refit.Kind.SKIPPED)
         self.assertIn("4 new training alerts", verdict.reason.lower())
         self.assertEqual(verdict.report.untriaged, 3)
         self.assertEqual(verdict.report.other_pose, 2)
@@ -552,7 +552,7 @@ class RefitTest(unittest.TestCase):
 
         for verdict in (skipped, promoted, failed):
             text = str(verdict)
-            self.assertIn(verdict.kind, text)
+            self.assertIn(verdict.kind.value, text)
             self.assertIn(verdict.report.training_hash, text)
             # So is the gate report a promoted head carries.
             if verdict.head is not None:
@@ -561,7 +561,7 @@ class RefitTest(unittest.TestCase):
             self.assertNotIn("2026", text)
             self.assertNotIn(str(int(AFTER))[:6], text)
         self.assertEqual((skipped.kind, promoted.kind, failed.kind),
-                         (refit.SKIPPED, refit.PROMOTED, refit.GATE_FAILED))
+                         (refit.Kind.SKIPPED, refit.Kind.PROMOTED, refit.Kind.GATE_FAILED))
 
     def test_keypoint_files_it_cannot_read_are_left_out_and_counted(self):
         for event_id in TRAINING_IDS[:4]:
@@ -580,7 +580,7 @@ class RefitTest(unittest.TestCase):
 
         verdict = self.run_refit()
 
-        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertEqual(verdict.kind, refit.Kind.SKIPPED)
         self.assertIn("4 new training alerts", verdict.reason.lower())
         self.assertEqual(verdict.report.unreadable, 2)
         self.assertEqual(verdict.report.untriaged, 1)

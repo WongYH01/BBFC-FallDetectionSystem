@@ -39,6 +39,7 @@ Results are appended to `runs/metrics/calibration_head.csv`.
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -103,6 +104,8 @@ def main() -> int:
                          "are No-Fall and ones that cut it are dropped (the "
                          "yolo26m head; see segment_labels)")
     args = ap.parse_args()
+    # fallcore.head_fitting reports what it adds through logging.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     man = picam.scan()
     clips = picam.build_clips(man, scale=args.scale, seq_len=cfg.FINAL_TRAIN.seq_len,
@@ -129,8 +132,8 @@ def main() -> int:
     negatives = None
     if args.empty_negatives > 0:
         negatives = NobodyNegatives(
-            tcfg, lambda w: embed_windows(model, mcfg, tcfg, w, device="cpu"),
-            copies=args.empty_negatives, scale=args.scale,
+            tcfg.seq_len, lambda w: embed_windows(model, mcfg, w, device="cpu"),
+            copies=args.empty_negatives, pose=args.scale,
             kinematics=args.extra_kinematics)
 
     def fit_fold(train_mask):

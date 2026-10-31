@@ -40,7 +40,9 @@ week's new data.
 A week that is not skipped fits a Candidate Head and judges it:
 
 1. Each training Alert's windows are cut as the live camera cut them, one
-   stream per subject, and labelled as ADR 0002 says. In a Genuine Alert only
+   stream per subject, short of the windows live keeps scoring on a lost
+   subject whose alarm is up (`_windows` says why), and labelled as ADR 0002
+   says. In a Genuine Alert only
    `raised_by` is labelled: its windows ending from `FALL_FROM` to `FALL_TO`
    seconds of the trigger frame are Fall, and those ending more than
    `ADL_BEFORE` seconds before it are ADL; the rest, the time spent lying
@@ -71,7 +73,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -112,15 +113,25 @@ MIN_NEW = 5
 #: window is Fall, the descent the alarm latched on; ending more than
 #: `ADL_BEFORE` before it, it is ADL, the upright activity before the fall.
 #: The windows between are neither, and so are the later ones, lying still
-#: on the floor, which a head must not learn is a fall (ADR 0002).
+#: on the floor, which a head must not learn is a fall (ADR 0002). Seconds
+#: of capture time, not windows or rows: how many of those a fall lasts
+#: depends on the camera's frame rate and the decision's stride and step.
 FALL_FROM, FALL_TO, ADL_BEFORE = -2.0, 3.0, -6.0
 #: Copies of each nobody-visible window flavour, as the shipped head was
-#: fitted (`fit_calibration_head.py --empty-negatives 10`).
+#: fitted (`fit_calibration_head.py --empty-negatives 10`). The rest of that
+#: recipe is fixed in `_commissioning` and `_fit` the same way: segment
+#: labels, `calibrate.fit`'s default C, and the embedding alone, no extras.
+#: `ProbeHead` does not record these, so a Refit cannot read them off the
+#: deployed head; they are the shipped recipe's, and change with it.
 EMPTY_NEGATIVES = 10
 
-SKIPPED = "skipped"
-PROMOTED = "promoted"
-GATE_FAILED = "gate failed"
+
+class Kind(Enum):
+    """What a week's Refit came to, valued as the run summary names it."""
+
+    SKIPPED = "skipped"
+    PROMOTED = "promoted"
+    GATE_FAILED = "gate failed"
 
 
 class PinnedDataError(RuntimeError):
@@ -167,7 +178,9 @@ def _pinned_clips(folder: Path, prefix: str, suffix: str
                   ) -> list[tuple[Path, bool]]:
     """Every pinned clip under `prefix`, in a fixed order, with whether it is
     a fall. Anything not filed as `{fall,adl}/<clip><suffix>` is an error:
-    the base set is not what this Refit knows how to read."""
+    the base set is not what this Refit knows how to read. Unlike an Alert's
+    file it is not left out and counted, which would quietly fit or judge on
+    less than the manifest pins."""
     clips = []
     for path in sorted((folder / prefix).rglob("*")):
         if not path.is_file():
@@ -248,7 +261,7 @@ class Verdict:
     A week that is not skipped carries what was fitted and the gate's report
     on it; a promoted one carries the Candidate Head too."""
 
-    kind: str
+    kind: Kind
     reason: str
     report: Report
     fit: Fit | None = None
@@ -256,7 +269,7 @@ class Verdict:
     head: ProbeHead | None = None
 
     def __str__(self) -> str:
-        parts = [f"Refit {self.kind}: {self.reason}", str(self.report)]
+        parts = [f"Refit {self.kind.value}: {self.reason}", str(self.report)]
         if self.fit is not None:
             parts.append(str(self.fit))
         if self.gate is not None:
@@ -339,7 +352,7 @@ class _Checkpoint:
     def embed(self, windows: np.ndarray) -> np.ndarray:
         """Pooled embeddings of raw `(n, T, 17, 3)` windows."""
         return head_fitting.embed_windows(self._model, self._model_cfg,
-                                          self._train_cfg, windows)
+                                          windows)
 
     def classifier(self, head: ProbeHead):
         """The classifier the camera runs: this Checkpoint with `head`."""
@@ -361,7 +374,7 @@ def _commissioning(folder: Path, checkpoint, pose: str
     clips = _pinned_clips(folder, COMMISSIONING, ".npy")
     keypoints = {path.stem: np.load(path) for path, _ in clips}
 
-    def load(_scale, video_id):
+    def load(_pose, video_id):
         return keypoints[video_id]
 
     fs, seq_len = cfg.PREPROCESS.frame_stride, checkpoint.seq_len
@@ -374,8 +387,8 @@ def _commissioning(folder: Path, checkpoint, pose: str
     table = pd.DataFrame(rows, columns=["video_id", "start", "label"])
     keep, labels = head_fitting.segment_labels(table, pose, seq_len, load=load)
     negatives = head_fitting.NobodyNegatives(
-        SimpleNamespace(seq_len=seq_len), checkpoint.embed,
-        copies=EMPTY_NEGATIVES, scale=pose, load=load)
+        seq_len, checkpoint.embed, copies=EMPTY_NEGATIVES, pose=pose,
+        load=load)
     embeddings, labels, _ = head_fitting.fold_fitting_set(
         np.ones(len(table), dtype=bool), table,
         checkpoint.embed(np.stack(windows)), labels, keep,
@@ -403,6 +416,12 @@ def _windows(kf: KeypointFile, subject: int, decision: FallDecision,
     subject's first row, the empty row on frames they were not seen, cut by
     the decision's buffer, and ended once they have been unseen for a
     window. Windows that ended before the file began cannot be rebuilt.
+
+    Unlike the live cut, it ends there even while the subject's alarm is up,
+    which live keeps them for up to a second window. Deliberately: those
+    windows are mostly empty rows, and labelling them Fall after a Genuine
+    trigger would teach the head that losing the person is a fall -- the
+    shortcut the Checkpoint already takes.
     """
     from .extract import empty_row
     from .stream import KeypointBuffer
@@ -457,6 +476,9 @@ def _eval_clip(alert: Alert) -> Clip:
 
 
 def _heldout(folder: Path, pose: str) -> list[Clip]:
+    """The held-out session as the Promotion Gate replays it. A clip from
+    another pose backbone is an error, as a misfiled one is (`_pinned_clips`):
+    every clip the manifest pins is judged on, or the Refit stops."""
     clips = []
     for path, fall in _pinned_clips(folder, HELDOUT, ".npz"):
         kf = keypoint_file.load(path)
@@ -529,13 +551,15 @@ def run(folder: str | Path, decision: FallDecision, checkpoint=None,
         eval_genuine=sum(a.outcome is Outcome.GENUINE for a in evals),
         training_hash=training_hash(a.event_id for a in training))
     if report.new_training < MIN_NEW:
-        return Verdict(SKIPPED, f"{report.new_training} new training Alerts "
-                                f"since the deployed Camera Head was fitted, "
-                                f"fewer than {MIN_NEW}", report)
+        return Verdict(Kind.SKIPPED,
+                       f"{report.new_training} new training Alerts since the "
+                       f"deployed Camera Head was fitted, fewer than {MIN_NEW}",
+                       report)
     if not report.new_genuine:
-        return Verdict(SKIPPED, f"no new Genuine training Alert among the "
-                                f"{report.new_training} since the deployed "
-                                f"Camera Head was fitted", report)
+        return Verdict(Kind.SKIPPED,
+                       f"no new Genuine training Alert among the "
+                       f"{report.new_training} since the deployed Camera Head "
+                       f"was fitted", report)
 
     if checkpoint is None:
         checkpoint = _Checkpoint(decision.checkpoints[0])
@@ -551,6 +575,6 @@ def run(folder: str | Path, decision: FallDecision, checkpoint=None,
         checkpoint.classifier(candidate), _heldout(folder, decision.pose),
         [_eval_clip(a) for a in evals], seq_len=checkpoint.seq_len)
     if not gate.passed:
-        return Verdict(GATE_FAILED, gate.reason, report, fit, gate)
+        return Verdict(Kind.GATE_FAILED, gate.reason, report, fit, gate)
     candidate = dataclasses.replace(candidate, gate=str(gate))
-    return Verdict(PROMOTED, gate.reason, report, fit, gate, candidate)
+    return Verdict(Kind.PROMOTED, gate.reason, report, fit, gate, candidate)
