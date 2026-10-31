@@ -35,7 +35,6 @@ class Calls:
     body lying down at `x`, 0.01 otherwise."""
 
     names = ["stub"]
-    heads = [None]
 
     def __init__(self, calls: dict[float, float]):
         self.calls = calls
