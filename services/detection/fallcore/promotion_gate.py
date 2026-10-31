@@ -29,10 +29,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import numpy as np
-
-from . import config as cfg
-from .extract import Sighting
+from .extract import Sighting, largest_row
 from .fall_decision import FallDecision
 from .keypoint_file import Frame
 
@@ -128,30 +125,28 @@ def _replay(decision: FallDecision, classifier, clip: Clip, seq_len: int
     with the track ids of the subject that scored it (None under
     FALL_SUBJECTS=largest, where the camera has one subject).
 
-    Under FALL_SUBJECTS=largest the camera decides on the largest box alone,
-    and a frame with nobody in it is a zero row, as the detector feeds it.
+    The camera is fed what the live loop feeds it: every tracked person, or
+    under FALL_SUBJECTS=largest `subject_row`'s row, taken here from the
+    tracked people (`extract.largest_row`) since that is what the clip holds.
     """
     camera = decision.build_camera(classifier=classifier, seq_len=seq_len)
     tracked = decision.subjects == "tracked"
-    empty = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
     raised = False
     scored = []
     for frame in clip.frames:
+        seen = [Sighting(track_id=p.track_id, row=p.keypoints,
+                         centre=p.centre, area=p.area) for p in frame.people]
         camera.aspect = frame.aspect
         if tracked:
             before = {s: s.stream.decision.n_windows for s in camera.subjects}
-            camera.observe([Sighting(track_id=p.track_id, row=p.keypoints,
-                                     centre=p.centre, area=p.area)
-                            for p in frame.people])
+            camera.observe(seen)
             # Before and after: a subject dropped on this frame scored first.
             for s in dict.fromkeys([*before, *camera.subjects]):
                 if s.stream.decision.n_windows > before.get(s, 0):
                     scored.append((s.stream.decision.window_p, s))
             raised |= camera.alarm
-        else:
-            largest = max(frame.people, key=lambda p: p.area, default=None)
-            if camera.observe(empty if largest is None else largest.keypoints):
-                scored.append((camera.decision.window_p, None))
+        elif camera.observe(largest_row(seen)):
+            scored.append((camera.decision.window_p, None))
             raised |= camera.decision.alarm
     # Track ids as of the clip's end, so a window scored before a Reconnect
     # joined the raising id to its subject is still that subject's.
