@@ -2,8 +2,9 @@
 
 The record is the one seam. These tests hand `FallDecision.from_env` a plain
 dict in place of the process environment, so no checkpoint, torch or camera is
-needed; only the build test at the bottom loads a model, and it skips when the
-deployed checkpoint is not on disk.
+needed; the given-classifier tests build streams on a stub, and only the build
+test at the bottom loads a model, skipping when the deployed checkpoint is not
+on disk.
 """
 from __future__ import annotations
 
@@ -132,6 +133,34 @@ class RefusedOverrideTest(unittest.TestCase):
     def test_a_record_cannot_be_built_out_of_range(self):
         with self.assertRaises(ValueError):
             FallDecision().replace(buffer=0)
+
+
+class GivenClassifierTest(unittest.TestCase):
+    """`build` on a classifier already built, as the Promotion Gate runs a
+    Candidate Head: the rule is the record's, and nothing is loaded."""
+
+    class Stub:
+        names = ["stub"]
+
+        def proba(self, window, aspect=1.0):
+            return 0.5, [0.5]
+
+    def test_the_rule_is_the_records_on_the_given_classifier(self):
+        stub = self.Stub()
+        d = FallDecision().replace(buffer=6, min_descent=0.05, frame_stride=1,
+                                   reconnect_dist=0.2)
+
+        streams = d.build_camera(classifier=stub, seq_len=45)
+
+        self.assertIs(streams.classifier, stub)
+        self.assertEqual(streams.reconnect_dist, 0.2)
+        self.assertEqual(streams.template.decision.buffer, 6)
+        self.assertEqual(streams.template.min_descent, 0.05)
+        self.assertEqual(streams.template.buffer.seq_len, 45)
+
+    def test_a_given_classifier_needs_its_window_length(self):
+        with self.assertRaisesRegex(ValueError, "seq_len"):
+            FallDecision().build(classifier=self.Stub())
 
 
 
