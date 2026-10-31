@@ -232,6 +232,59 @@ class PromotionGateTest(unittest.TestCase):
         self.assertIsNone(report.evals.candidate.auc)
 
 
+class WindowAucLabelsSubjectsAsTheOutcomeDoesTest(unittest.TestCase):
+    """A Genuine Outcome is about the subject that raised the Alert alone
+    (ADR 0002); a False Alarm is about everyone in it."""
+
+    #: Fires on the resident lying at 0.50 and on nobody else.
+    HEAD = Calls.at(0.50)
+
+    def auc(self, *evals: Clip) -> float | None:
+        return promotion_gate.judge(DECISION, self.HEAD, self.HEAD, [],
+                                    list(evals), seq_len=WINDOW
+                                    ).evals.candidate.auc
+
+    def test_a_carer_beside_a_genuine_fall_is_left_out(self):
+        # Kneeling beside the resident who fell: a Controlled Descent.
+        alone = Clip(frames(descending(0.50)), fall=True)
+        with_carer = Clip(frames(descending(0.50), descending(0.56)),
+                          fall=True, raised_by=1)
+
+        self.assertEqual(self.auc(with_carer, descent(0.60)),
+                         self.auc(alone, descent(0.60)))
+
+    def test_without_raised_by_every_subject_of_a_fall_clip_is_a_fall(self):
+        alone = Clip(frames(descending(0.50)), fall=True)
+        with_carer = Clip(frames(descending(0.50), descending(0.56)),
+                          fall=True)
+
+        self.assertNotEqual(self.auc(with_carer, descent(0.60)),
+                            self.auc(alone, descent(0.60)))
+
+    def test_everyone_in_a_false_alarm_is_an_adl(self):
+        # The head fires on the second person lying down at 0.66: an ADL
+        # windowed high, which ranks worse than the false alarm alone.
+        self.HEAD = Calls.at(0.50, 0.66)
+        genuine = Clip(frames(descending(0.50)), fall=True, raised_by=1)
+        alone = Clip(frames(descending(0.60)), fall=False, raised_by=1)
+        both = Clip(frames(descending(0.60), descending(0.66)), fall=False,
+                    raised_by=1)
+
+        self.assertLess(self.auc(genuine, both), self.auc(genuine, alone))
+
+    def test_a_genuine_alert_is_caught_whoever_raises_the_alarm(self):
+        # The room's alarm is what a responder sees, so a fall clip counts
+        # caught on anyone's alarm; only window AUC follows `raised_by`.
+        carer_only = Calls.at(0.56)
+        clip = Clip(frames(descending(0.50), descending(0.56)), fall=True,
+                    raised_by=1)
+
+        report = promotion_gate.judge(DECISION, carer_only, carer_only, [],
+                                      [clip], seq_len=WINDOW)
+
+        self.assertEqual(report.evals.candidate.falls, 1)
+
+
 class TheFallDecisionRunsUnderneathTest(unittest.TestCase):
     """The gate scores each head under the deployed rule, not per window."""
 
