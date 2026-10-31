@@ -118,7 +118,11 @@ MIN_NEW = 5
 #: depends on the camera's frame rate and the decision's stride and step.
 FALL_FROM, FALL_TO, ADL_BEFORE = -2.0, 3.0, -6.0
 #: Copies of each nobody-visible window flavour, as the shipped head was
-#: fitted (`fit_calibration_head.py --empty-negatives 10`).
+#: fitted (`fit_calibration_head.py --empty-negatives 10`). The rest of that
+#: recipe is fixed in `_commissioning` and `_fit` the same way: segment
+#: labels, `calibrate.fit`'s default C, and the embedding alone, no extras.
+#: `ProbeHead` does not record these, so a Refit cannot read them off the
+#: deployed head; they are the shipped recipe's, and change with it.
 EMPTY_NEGATIVES = 10
 
 
