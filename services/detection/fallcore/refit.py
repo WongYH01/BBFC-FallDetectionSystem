@@ -71,7 +71,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 
@@ -339,7 +338,7 @@ class _Checkpoint:
     def embed(self, windows: np.ndarray) -> np.ndarray:
         """Pooled embeddings of raw `(n, T, 17, 3)` windows."""
         return head_fitting.embed_windows(self._model, self._model_cfg,
-                                          self._train_cfg, windows)
+                                          windows)
 
     def classifier(self, head: ProbeHead):
         """The classifier the camera runs: this Checkpoint with `head`."""
@@ -374,8 +373,8 @@ def _commissioning(folder: Path, checkpoint, pose: str
     table = pd.DataFrame(rows, columns=["video_id", "start", "label"])
     keep, labels = head_fitting.segment_labels(table, pose, seq_len, load=load)
     negatives = head_fitting.NobodyNegatives(
-        SimpleNamespace(seq_len=seq_len), checkpoint.embed,
-        copies=EMPTY_NEGATIVES, scale=pose, load=load)
+        seq_len, checkpoint.embed, copies=EMPTY_NEGATIVES, scale=pose,
+        load=load)
     embeddings, labels, _ = head_fitting.fold_fitting_set(
         np.ones(len(table), dtype=bool), table,
         checkpoint.embed(np.stack(windows)), labels, keep,

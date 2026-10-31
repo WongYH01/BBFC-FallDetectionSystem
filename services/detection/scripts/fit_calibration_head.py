@@ -129,7 +129,7 @@ def main() -> int:
     negatives = None
     if args.empty_negatives > 0:
         negatives = NobodyNegatives(
-            tcfg, lambda w: embed_windows(model, mcfg, tcfg, w, device="cpu"),
+            tcfg.seq_len, lambda w: embed_windows(model, mcfg, w, device="cpu"),
             copies=args.empty_negatives, scale=args.scale,
             kinematics=args.extra_kinematics)
 

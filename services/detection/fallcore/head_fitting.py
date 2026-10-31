@@ -66,7 +66,7 @@ def segment_labels(clips, scale: str, seq_len: int, load=None):
     return keep, label
 
 
-def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
+def nobody_windows(clips, seq_len: int, copies: int = 10,
                    scale: str = "yolo26n", load=None):
     """Synthetic "nobody visible" windows, to be fitted as No-Fall.
 
@@ -97,7 +97,7 @@ def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
     if load is None:
         from .extract import load_keypoints as load
 
-    T_, K = tcfg.seq_len, cfg.N_KEYPOINTS
+    T_, K = seq_len, cfg.N_KEYPOINTS
     rng = np.random.default_rng(0)
     out = [np.zeros((T_, K, 3), dtype=np.float32)]
 
@@ -125,7 +125,7 @@ def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
     return np.stack(windows)
 
 
-def embed_windows(model, mcfg, tcfg, windows, device: str = "cpu"):
+def embed_windows(model, mcfg, windows, device: str = "cpu"):
     """Pooled embeddings for raw (n, T, 17, 3) windows, backbone frozen."""
     import torch
 
@@ -148,18 +148,17 @@ class NobodyNegatives:
     folds that share those clips share one build.
     """
 
-    def __init__(self, tcfg, embed, copies: int = 10, scale: str = "yolo26n",
-                 kinematics: bool = False, load=None):
-        self.tcfg, self.embed, self.copies = tcfg, embed, copies
+    def __init__(self, seq_len: int, embed, copies: int = 10,
+                 scale: str = "yolo26n", kinematics: bool = False, load=None):
+        self.seq_len, self.embed, self.copies = seq_len, embed, copies
         self.scale, self.kinematics, self.load = scale, kinematics, load
         self._built = {}
 
     def __call__(self, clips):
         key = tuple(clips[clips.label == 0].video_id.drop_duplicates().head(6))
         if key not in self._built:
-            windows = nobody_windows(None, None, self.tcfg, clips, None,
-                                     copies=self.copies, scale=self.scale,
-                                     load=self.load)
+            windows = nobody_windows(clips, self.seq_len, copies=self.copies,
+                                     scale=self.scale, load=self.load)
             # A window nobody is visible in has no measurable descent; zeros
             # are the honest value and are what `window_kinematics` returns.
             kin = (np.stack([calibrate.window_kinematics(w) for w in windows])

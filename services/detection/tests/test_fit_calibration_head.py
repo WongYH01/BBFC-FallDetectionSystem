@@ -11,7 +11,6 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -64,8 +63,7 @@ def room():
 class LeaveOneSubjectOutTest(unittest.TestCase):
     def test_no_window_a_fold_fits_on_comes_from_the_subject_it_scores(self):
         clips, subj, emb = room()
-        negatives = NobodyNegatives(SimpleNamespace(seq_len=SEQ_LEN), embed,
-                                    copies=2, load=load)
+        negatives = NobodyNegatives(SEQ_LEN, embed, copies=2, load=load)
         keep = np.ones(len(clips), dtype=bool)
 
         for held_out in SUBJECTS:
