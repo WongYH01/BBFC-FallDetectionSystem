@@ -149,7 +149,8 @@ class FallDecision:
         """This decision with the given fields changed."""
         return dataclasses.replace(self, **changes)
 
-    def build(self, device: str = "cpu"):
+    def build(self, device: str = "cpu", classifier=None,
+              seq_len: int | None = None):
         """An `EnsembleStream` that runs this decision.
 
         The window length is not a setting: it is read from the checkpoints,
@@ -157,9 +158,19 @@ class FallDecision:
         be fed one cut to the training default. Each head is checked against
         its checkpoint's backbone, features and window length, and against
         `pose`, before use.
+
+        `classifier` runs this decision's rule on an already-built classifier
+        instead of `checkpoints` and `heads` -- the Promotion Gate scores a
+        Candidate Head this way -- and nothing is loaded or checked. `seq_len`
+        must then say the window its checkpoints were trained on.
         """
+        if classifier is not None:
+            if seq_len is None:
+                raise ValueError("a classifier given as built needs its "
+                                 "window length, seq_len")
+            return self._stream([], None, seq_len, device, classifier)
+
         from .calibrate import ProbeHead, validate
-        from .stream import EnsembleStream
         from .train import load_checkpoint
 
         lengths = set()
@@ -172,14 +183,22 @@ class FallDecision:
         if len(lengths) > 1:
             raise ValueError(f"checkpoints disagree on window length: "
                              f"{sorted(lengths)}")
+        return self._stream(list(self.checkpoints), list(self.heads),
+                            lengths.pop(), device)
+
+    def _stream(self, checkpoints, heads, seq_len: int, device: str,
+                classifier=None):
+        from .stream import EnsembleStream
+
         return EnsembleStream(
-            list(self.checkpoints), heads=list(self.heads), buffer=self.buffer,
+            checkpoints, heads=heads, buffer=self.buffer,
             threshold=self.threshold, clear_below=self.clear_below,
             clear_windows=self.clear_windows, min_descent=self.min_descent,
-            seq_len=lengths.pop(), frame_stride=self.frame_stride,
-            step=self.step, device=device)
+            seq_len=seq_len, frame_stride=self.frame_stride,
+            step=self.step, device=device, classifier=classifier)
 
-    def build_subjects(self, device: str = "cpu"):
+    def build_subjects(self, device: str = "cpu", classifier=None,
+                       seq_len: int | None = None):
         """A `SubjectStreams` that runs this decision once per tracked subject.
 
         Every subject's stream is `build`'s rule on one shared classifier, so
@@ -187,14 +206,16 @@ class FallDecision:
         """
         from .stream import SubjectStreams
 
-        return SubjectStreams(self.build(device), reconnect_sec=self.reconnect_sec,
+        return SubjectStreams(self.build(device, classifier, seq_len),
+                              reconnect_sec=self.reconnect_sec,
                               reconnect_dist=self.reconnect_dist)
 
-    def build_camera(self, device: str = "cpu"):
+    def build_camera(self, device: str = "cpu", classifier=None,
+                     seq_len: int | None = None):
         """What a camera runs: `build_subjects` for "tracked", `build` for "largest"."""
         if self.subjects == "tracked":
-            return self.build_subjects(device)
-        return self.build(device)
+            return self.build_subjects(device, classifier, seq_len)
+        return self.build(device, classifier, seq_len)
 
     def __str__(self) -> str:
         models = ", ".join(
