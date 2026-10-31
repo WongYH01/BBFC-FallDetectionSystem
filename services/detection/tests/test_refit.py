@@ -336,6 +336,48 @@ class RefitTest(unittest.TestCase):
         self.assertIn("Promotion Gate failed", str(verdict))
         self.assertIsNone(verdict.head)
 
+    # -- the labels (ADR 0002) ------------------------------------------------
+    #
+    # A subject in view from an Alert's first frame has a window ending every
+    # second from 9 s before the trigger frame to 5 s after it: 15 windows.
+
+    def false_alarms(self, n: int = 4):
+        for event_id in TRAINING_IDS[1:1 + n]:
+            self.alert(event_id, FALSE_ALARM)
+
+    def test_a_genuine_alert_is_a_fall_around_the_trigger_and_adl_well_before(self):
+        self.alert(TRAINING_IDS[0], GENUINE, x=0.50)
+        self.false_alarms()
+
+        fit = self.run_refit().fit
+
+        # Fall: the windows ending 2 s before to 3 s after, both included.
+        self.assertEqual(fit.fall, 6)
+        # ADL: ending more than 6 s before, so 9, 8 and 7 s; then every
+        # window of the four single-subject False Alarms. From 6 s to 3 s
+        # before, and the 4 and 5 s after, lying on the floor, are neither.
+        self.assertEqual(fit.adl, 3 + 4 * 15)
+
+    def test_only_the_subject_that_raised_a_genuine_alert_is_labelled(self):
+        # A carer kneeling beside the resident who fell.
+        self.alert(TRAINING_IDS[0], GENUINE, x=0.50,
+                   others=(descending(0.55),))
+        self.false_alarms()
+
+        fit = self.run_refit().fit
+
+        self.assertEqual((fit.fall, fit.adl), (6, 3 + 4 * 15))
+
+    def test_everyone_in_a_false_alarm_is_adl(self):
+        self.alert(TRAINING_IDS[0], GENUINE, x=0.50)
+        self.false_alarms(3)
+        self.alert(TRAINING_IDS[4], FALSE_ALARM, x=0.60,
+                   others=(upright(0.40, STANDING + DOWN + LYING),))
+
+        fit = self.run_refit().fit
+
+        self.assertEqual((fit.fall, fit.adl), (6, 3 + 3 * 15 + 2 * 15))
+
     # -- the pinned base data -----------------------------------------------
 
     def test_a_pinned_object_that_changed_is_an_error_not_a_verdict(self):
