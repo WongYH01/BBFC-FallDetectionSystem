@@ -1,0 +1,139 @@
+"""fallcore.promotion_gate: a Candidate Head judged against the deployed one.
+
+The seam is `promotion_gate.judge(decision, deployed, candidate, heldout,
+evals, seq_len)`. Each test builds clips of synthetic bodies -- upright,
+descending, lying -- as Keypoint File frames, and hands the gate a stub
+classifier per head in place of the checkpoint and its Camera Head. A stub
+calls a window a fall when the body in its last row is lying down at one of
+the positions it was given, so each case chooses which clips each head fires
+on, and the real rolling buffer, latch, descent gate and per-subject streams
+decide underneath. Assertions are on the verdict and the report only.
+"""
+from __future__ import annotations
+
+import unittest
+
+import numpy as np
+
+from fallcore import config as cfg
+from fallcore import promotion_gate
+from fallcore.fall_decision import FallDecision
+from fallcore.keypoint_file import Frame, Person
+from fallcore.promotion_gate import Clip
+
+HZ = 15          # rows per second, the live rate at frame_stride 1
+WINDOW = 60      # rows per window
+T0 = 1_792_000_000.0                 # capture time of every clip's first frame
+
+#: The deployed rule at the live rate: buffer 4, threshold 0.5, latch, and
+#: the descent gate, one stream per tracked subject.
+DECISION = FallDecision(frame_stride=1)
+
+
+class Calls:
+    """Stub classifier: P(fall) `calls[x]` when the window's last row is a
+    body lying down at `x`, 0.01 otherwise."""
+
+    names = ["stub"]
+    heads = [None]
+
+    def __init__(self, calls: dict[float, float]):
+        self.calls = calls
+
+    @classmethod
+    def at(cls, *xs: float) -> Calls:
+        """A head that calls a fall on whoever lies down at `xs`."""
+        return cls({x: 0.99 for x in xs})
+
+    def proba(self, window, aspect=1.0):
+        last = window[-1]
+        seen = last[:, 2] > 0.3
+        p = 0.01
+        if seen.any() and np.ptp(last[seen, 0]) < 0.2:
+            x = round(float(last[seen, 1].mean()), 2)
+            p = self.calls.get(x, 0.01)
+        return p, [p]
+
+
+def body(hip_y: float, x: float, lying: float = 0.0) -> np.ndarray:
+    """A `(17, 3)` cache row: a body with its hips at `hip_y`, centred on `x`.
+
+    `lying` goes from 0 (upright: head 0.3 above the hips, feet 0.3 below) to
+    1 (flat: every keypoint at hip height, spread 0.4 across).
+    """
+    row = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+    span = np.linspace(-0.3, 0.3, cfg.N_KEYPOINTS)
+    row[:, 0] = hip_y + (1 - lying) * span
+    row[:, 1] = x + lying * span * (0.2 / 0.3)
+    row[cfg.LEFT_HIP, 0] = row[cfg.RIGHT_HIP, 0] = hip_y
+    row[:, 2] = 0.9
+    return row
+
+
+def descending(x: float) -> list[np.ndarray]:
+    """Rows of someone standing at `x`, going down over half a second, then
+    lying: a fall or a Controlled Descent, as the clip's label says."""
+    rows = [body(0.5, x) for _ in range(WINDOW)]
+    steps = HZ // 2
+    rows += [body(0.5 + 0.35 * (i + 1) / steps, x, lying=(i + 1) / steps)
+             for i in range(steps)]
+    rows += [body(0.85, x, lying=1.0) for _ in range(2 * WINDOW)]
+    return rows
+
+
+def frames(*people: list[np.ndarray]) -> list[Frame]:
+    """Keypoint File frames of each person's rows, track ids 1, 2, ...; the
+    first person's box the largest."""
+    out = []
+    for f in range(max(len(rows) for rows in people)):
+        here = []
+        for i, rows in enumerate(people):
+            if f >= len(rows):
+                continue
+            r = rows[f]
+            here.append(Person(track_id=i + 1, keypoints=r, fallen=False,
+                               centre=(float(r[:, 1].mean()),
+                                       float(r[:, 0].mean())),
+                               area=0.1 / (i + 1), subject=i + 1))
+        out.append(Frame(t=T0 + f / HZ, aspect=1.0, alarm=False, score=0.0,
+                         people=tuple(here), lead=1))
+    return out
+
+
+def fall(x: float) -> Clip:
+    return Clip(frames(descending(x)), fall=True)
+
+
+def descent(x: float) -> Clip:
+    """A Controlled Descent: the same movement as a fall, not one."""
+    return Clip(frames(descending(x)), fall=False)
+
+
+def judge(deployed, candidate, heldout, evals):
+    return promotion_gate.judge(DECISION, deployed, candidate, heldout, evals,
+                                seq_len=WINDOW)
+
+
+class PromotionGateTest(unittest.TestCase):
+    #: The held-out session: one fall, two Controlled Descents...
+    HELDOUT = (0.30, 0.40, 0.45)
+    #: ...and the Eval Alerts: one Genuine, one False Alarm.
+    EVALS = (0.50, 0.55)
+
+    def sets(self):
+        heldout = [fall(0.30), descent(0.40), descent(0.45)]
+        evals = [fall(0.50), descent(0.55)]
+        return heldout, evals
+
+    def test_no_fall_lost_and_two_fewer_false_alarms_passes(self):
+        deployed = Calls.at(0.30, 0.40, 0.45, 0.50, 0.55)
+        # Quiet on one held-out descent and on the False Alarm Eval Alert.
+        candidate = Calls.at(0.30, 0.40, 0.50)
+
+        report = judge(deployed, candidate, *self.sets())
+
+        self.assertTrue(report.passed)
+
+
+if __name__ == "__main__":
+    unittest.main()
