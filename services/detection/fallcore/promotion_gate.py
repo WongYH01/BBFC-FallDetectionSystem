@@ -111,11 +111,16 @@ def _auc_text(auc: float | None) -> str:
     return "n/a" if auc is None else f"{auc:.3f}"
 
 
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
 def _line(name: str, s: SetReport) -> str:
-    d, c = s.deployed, s.candidate
-    return (f"{name}: falls {d.falls} -> {c.falls}, False Alarms "
-            f"{d.false_alarms} -> {c.false_alarms}, window AUC "
-            f"{_auc_text(d.auc)} -> {_auc_text(c.auc)}")
+    deployed, candidate = s.deployed, s.candidate
+    return (f"{name}: falls {deployed.falls} -> {candidate.falls}, False "
+            f"Alarms {deployed.false_alarms} -> {candidate.false_alarms}, "
+            f"window AUC {_auc_text(deployed.auc)} -> "
+            f"{_auc_text(candidate.auc)}")
 
 
 def _replay(decision: FallDecision, classifier, clip: Clip, seq_len: int
@@ -181,7 +186,7 @@ def _score(clips: Sequence[Clip], replays) -> Score:
                  auc=_auc(clips, [ws for _, ws in replays]))
 
 
-def _set(decision, deployed, candidate, clips, seq_len) -> SetReport:
+def _judge_set(decision, deployed, candidate, clips, seq_len) -> SetReport:
     before = [_replay(decision, deployed, c, seq_len) for c in clips]
     after = [_replay(decision, candidate, c, seq_len) for c in clips]
     return SetReport(clips=len(clips), fall_clips=sum(c.fall for c in clips),
@@ -200,24 +205,23 @@ def judge(decision: FallDecision, deployed, candidate,
     or anything with its `proba`), each run under `decision`'s rule;
     `seq_len` is the window their checkpoint was trained on.
     """
-    sets = [_set(decision, deployed, candidate, clips, seq_len)
+    sets = [_judge_set(decision, deployed, candidate, clips, seq_len)
             for clips in (heldout, evals)]
     heldout, evals = sets
     lost = heldout.lost + evals.lost
     fewer = sum(s.deployed.false_alarms - s.candidate.false_alarms
                 for s in sets)
-    alarms = (f"{fewer} fewer False Alarm{'' if abs(fewer) == 1 else 's'}"
-              if fewer >= 0 else
-              f"{-fewer} more False Alarm{'' if fewer == -1 else 's'}")
-    if lost:
-        reason = (f"{lost} fall{'' if lost == 1 else 's'} lost ({heldout.lost} "
-                  f"on the held-out session, {evals.lost} on the Eval "
-                  f"Alerts), {alarms}")
-    elif fewer < MIN_FEWER_FALSE_ALARMS:
+    alarms = (_count(fewer, "fewer False Alarm") if fewer >= 0 else
+              _count(-fewer, "more False Alarm"))
+    passed = not lost and fewer >= MIN_FEWER_FALSE_ALARMS
+    if passed:
+        reason = f"no fall lost, {alarms}"
+    elif lost:
+        reason = (f"{_count(lost, 'fall')} lost ({heldout.lost} on the "
+                  f"held-out session, {evals.lost} on the Eval Alerts), "
+                  f"{alarms}")
+    else:
         reason = (f"no fall lost, but {alarms}, fewer than "
                   f"{MIN_FEWER_FALSE_ALARMS}")
-    else:
-        reason = f"no fall lost, {alarms}"
-    return GateReport(heldout=heldout, evals=evals,
-                      passed=not lost and fewer >= MIN_FEWER_FALSE_ALARMS,
+    return GateReport(heldout=heldout, evals=evals, passed=passed,
                       reason=reason)
