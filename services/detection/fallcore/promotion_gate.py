@@ -58,6 +58,10 @@ class Score:
     falls: int
     #: Clips that are not falls the alarm went up in.
     false_alarms: int
+    #: ROC AUC of every window the head scored, on every subject, each
+    #: labelled as its clip is. Reported only: it ranks windows, and the
+    #: gate decides on alarms. None when the set does not hold both kinds.
+    auc: float | None
 
 
 @dataclass(frozen=True)
@@ -81,47 +85,72 @@ class GateReport:
     passed: bool
 
 
-def _raised(decision: FallDecision, classifier, clip: Clip,
-            seq_len: int) -> bool:
+class _Recording:
+    """A classifier that keeps every window P(fall) it returns."""
+
+    def __init__(self, classifier):
+        self.classifier = classifier
+        self.names = getattr(classifier, "names", [])
+        self.probs: list[float] = []
+
+    def proba(self, window, aspect: float = 1.0):
+        p, per_model = self.classifier.proba(window, aspect)
+        self.probs.append(p)
+        return p, per_model
+
+
+def _replay(decision: FallDecision, classifier, clip: Clip,
+            seq_len: int) -> tuple[bool, list[float]]:
     """Whether the room's alarm goes up anywhere in `clip`, replayed from its
-    first frame.
+    first frame to its last, and every window P(fall) scored on the way.
 
     Under FALL_SUBJECTS=largest the camera decides on the largest box alone,
     and a frame with nobody in it is a zero row, as the detector feeds it.
     """
-    camera = decision.build_camera(classifier=classifier, seq_len=seq_len)
+    recording = _Recording(classifier)
+    camera = decision.build_camera(classifier=recording, seq_len=seq_len)
     tracked = decision.subjects == "tracked"
     empty = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+    raised = False
     for frame in clip.frames:
         camera.aspect = frame.aspect
         if tracked:
             camera.observe([Sighting(track_id=p.track_id, row=p.keypoints,
                                      centre=p.centre, area=p.area)
                             for p in frame.people])
-            alarm = camera.alarm
+            raised |= camera.alarm
         else:
             largest = max(frame.people, key=lambda p: p.area, default=None)
             camera.observe(empty if largest is None else largest.keypoints)
-            alarm = camera.decision.alarm
-        if alarm:
-            return True
-    return False
+            raised |= camera.decision.alarm
+    return raised, recording.probs
 
 
-def _score(clips: Sequence[Clip], raised: Sequence[bool]) -> Score:
+def _auc(clips: Sequence[Clip], probs: Sequence[list[float]]) -> float | None:
+    from sklearn.metrics import roc_auc_score
+
+    labels = [c.fall for c, ps in zip(clips, probs) for _ in ps]
+    if len(set(labels)) < 2:
+        return None
+    return float(roc_auc_score(labels, [p for ps in probs for p in ps]))
+
+
+def _score(clips: Sequence[Clip], replays) -> Score:
+    raised = [r for r, _ in replays]
     return Score(falls=sum(r and c.fall for r, c in zip(raised, clips)),
                  false_alarms=sum(r and not c.fall
-                                  for r, c in zip(raised, clips)))
+                                  for r, c in zip(raised, clips)),
+                 auc=_auc(clips, [ps for _, ps in replays]))
 
 
 def _set(decision, deployed, candidate, clips, seq_len) -> SetReport:
-    before = [_raised(decision, deployed, c, seq_len) for c in clips]
-    after = [_raised(decision, candidate, c, seq_len) for c in clips]
+    before = [_replay(decision, deployed, c, seq_len) for c in clips]
+    after = [_replay(decision, candidate, c, seq_len) for c in clips]
     return SetReport(clips=len(clips), fall_clips=sum(c.fall for c in clips),
                      deployed=_score(clips, before),
                      candidate=_score(clips, after),
-                     lost=sum(c.fall and b and not a
-                              for c, b, a in zip(clips, before, after)))
+                     lost=sum(c.fall and b and not a for c, (b, _), (a, _)
+                              in zip(clips, before, after)))
 
 
 def judge(decision: FallDecision, deployed, candidate,

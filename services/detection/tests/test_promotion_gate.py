@@ -181,6 +181,26 @@ class PromotionGateTest(unittest.TestCase):
                          report.heldout.candidate.falls)
         self.assertFalse(report.passed)
 
+    def test_window_auc_is_reported_but_never_decides(self):
+        # Quiet on every descent, so it ranks the windows better, but it
+        # scores one fall's lying windows under the threshold and loses it.
+        candidate = Calls({0.30: 0.49, 0.35: 0.99, 0.50: 0.99, 0.55: 0.99})
+
+        report = judge(DEPLOYED, candidate, *sets())
+
+        self.assertGreater(report.heldout.candidate.auc,
+                           report.heldout.deployed.auc)
+        self.assertGreater(report.evals.candidate.auc,
+                           report.evals.deployed.auc)
+        self.assertEqual(report.heldout.lost, 1)
+        self.assertFalse(report.passed)
+
+    def test_window_auc_on_a_set_with_one_kind_of_clip_is_not_a_number(self):
+        report = judge(DEPLOYED, DEPLOYED, [fall(0.30)], [])
+
+        self.assertIsNone(report.heldout.deployed.auc)
+        self.assertIsNone(report.evals.candidate.auc)
+
 
 class TheFallDecisionRunsUnderneathTest(unittest.TestCase):
     """The gate scores each head under the deployed rule, not per window."""
