@@ -40,7 +40,9 @@ week's new data.
 A week that is not skipped fits a Candidate Head and judges it:
 
 1. Each training Alert's windows are cut as the live camera cut them, one
-   stream per subject, and labelled as ADR 0002 says. In a Genuine Alert only
+   stream per subject, short of the windows live keeps scoring on a lost
+   subject whose alarm is up (`_windows` says why), and labelled as ADR 0002
+   says. In a Genuine Alert only
    `raised_by` is labelled: its windows ending from `FALL_FROM` to `FALL_TO`
    seconds of the trigger frame are Fall, and those ending more than
    `ADL_BEFORE` seconds before it are ADL; the rest, the time spent lying
@@ -406,6 +408,12 @@ def _windows(kf: KeypointFile, subject: int, decision: FallDecision,
     subject's first row, the empty row on frames they were not seen, cut by
     the decision's buffer, and ended once they have been unseen for a
     window. Windows that ended before the file began cannot be rebuilt.
+
+    Unlike the live cut, it ends there even while the subject's alarm is up,
+    which live keeps them for up to a second window. Deliberately: those
+    windows are mostly empty rows, and labelling them Fall after a Genuine
+    trigger would teach the head that losing the person is a fall -- the
+    shortcut the Checkpoint already takes.
     """
     from .extract import empty_row
     from .stream import KeypointBuffer
