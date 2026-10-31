@@ -378,6 +378,18 @@ class RefitTest(unittest.TestCase):
 
         self.assertEqual((fit.fall, fit.adl), (6, 3 + 3 * 15 + 2 * 15))
 
+    def test_no_eval_alerts_windows_reach_the_fit(self):
+        self.week()
+        before = self.run_refit()
+        self.alert(EVAL_IDS[2], GENUINE, x=0.40)
+        self.alert(EVAL_IDS[3], FALSE_ALARM, x=0.30,
+                   others=(upright(0.60, STANDING),))
+
+        after = self.run_refit()
+
+        self.assertEqual(after.report.eval, before.report.eval + 2)
+        self.assertEqual(after.fit, before.fit)
+
     # -- the pinned base data -----------------------------------------------
 
     def test_a_pinned_object_that_changed_is_an_error_not_a_verdict(self):
