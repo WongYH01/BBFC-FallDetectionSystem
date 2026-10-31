@@ -51,6 +51,8 @@ services:
 
   notification:
     profiles: ["local", "cloud"]
+    # :latest on purpose, against "pin every version": a deployment follows
+    # what main's CI pushed, and rollback is reverting the change on main.
     image: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/notification:latest
     pull_policy: always
     depends_on:
@@ -82,6 +84,8 @@ services:
     profiles: ["local", "cloud"]
     # The image main's CI pushed last, weights and camera head baked in, so a
     # start (or infra/local/update-detection.ps1) runs the newest promoted head.
+    # :latest on purpose: Promotions ship this way (ADR 0003) and roll back by
+    # reverting their pull request, and a pinned digest would freeze them.
     image: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection:latest
     pull_policy: always
     restart: unless-stopped

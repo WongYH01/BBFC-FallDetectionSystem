@@ -40,6 +40,7 @@ import torch
 from . import config as cfg
 from .calibrate import KINEMATIC_NAMES, window_kinematics
 from .data import build_features
+from .extract import empty_row
 from .train import load_checkpoint
 
 
@@ -424,7 +425,7 @@ class SubjectStreams:
         self._next_sid = 1
         self._subjects: dict[int, _Subject] = {}
         self._by_track: dict[int, int] = {}
-        self._empty = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+        self._empty = empty_row()
 
     @property
     def alarm(self) -> bool:

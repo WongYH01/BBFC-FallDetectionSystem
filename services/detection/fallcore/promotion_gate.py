@@ -29,10 +29,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import numpy as np
-
-from . import config as cfg
-from .extract import Sighting
+from .extract import Sighting, largest_row
 from .fall_decision import FallDecision
 from .keypoint_file import Frame
 
@@ -48,6 +45,15 @@ class Clip:
 
     frames: Sequence[Frame]
     fall: bool
+    #: A tracker id of the subject whose alarm raised the Alert. A Genuine
+    #: Outcome is about that subject alone (ADR 0002), so in a fall clip only
+    #: its windows are labelled a fall and everyone else's are unlabelled;
+    #: in a clip that is not a fall every subject's are ADLs. None: every
+    #: subject's windows carry the clip's label, for clips that do not say.
+    #: A Keypoint File records `raised_by` as a subject, so the caller passes
+    #: one of that subject's track ids. Window AUC only: the room's alarm
+    #: going up for anyone in a fall clip still counts it caught.
+    raised_by: int | None = None
 
 
 @dataclass(frozen=True)
@@ -58,9 +64,10 @@ class Score:
     falls: int
     #: Clips that are not falls the alarm went up in.
     false_alarms: int
-    #: ROC AUC of every window the head scored, on every subject, each
-    #: labelled as its clip is. Reported only: it ranks windows, and the
-    #: gate decides on alarms. None when the set does not hold both kinds.
+    #: ROC AUC of every labelled window the head scored, each labelled as
+    #: its clip is (see `Clip.raised_by`). Reported only: it ranks windows,
+    #: and the gate decides on alarms. None when the set does not hold both
+    #: kinds.
     auc: float | None
 
 
@@ -104,61 +111,71 @@ def _auc_text(auc: float | None) -> str:
     return "n/a" if auc is None else f"{auc:.3f}"
 
 
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
+
+
 def _line(name: str, s: SetReport) -> str:
-    d, c = s.deployed, s.candidate
-    return (f"{name}: falls {d.falls} -> {c.falls}, False Alarms "
-            f"{d.false_alarms} -> {c.false_alarms}, window AUC "
-            f"{_auc_text(d.auc)} -> {_auc_text(c.auc)}")
+    deployed, candidate = s.deployed, s.candidate
+    return (f"{name}: falls {deployed.falls} -> {candidate.falls}, False "
+            f"Alarms {deployed.false_alarms} -> {candidate.false_alarms}, "
+            f"window AUC {_auc_text(deployed.auc)} -> "
+            f"{_auc_text(candidate.auc)}")
 
 
-class _Recording:
-    """A classifier that keeps every window P(fall) it returns."""
-
-    def __init__(self, classifier):
-        self.classifier = classifier
-        self.names = getattr(classifier, "names", [])
-        self.probs: list[float] = []
-
-    def proba(self, window, aspect: float = 1.0):
-        p, per_model = self.classifier.proba(window, aspect)
-        self.probs.append(p)
-        return p, per_model
-
-
-def _replay(decision: FallDecision, classifier, clip: Clip,
-            seq_len: int) -> tuple[bool, list[float]]:
+def _replay(decision: FallDecision, classifier, clip: Clip, seq_len: int
+            ) -> tuple[bool, list[tuple[float, tuple[int, ...] | None]]]:
     """Whether the room's alarm goes up anywhere in `clip`, replayed from its
-    first frame to its last, and every window P(fall) scored on the way.
+    first frame to its last, and every window P(fall) scored on the way, each
+    with the track ids of the subject that scored it (None under
+    FALL_SUBJECTS=largest, where the camera has one subject).
 
-    Under FALL_SUBJECTS=largest the camera decides on the largest box alone,
-    and a frame with nobody in it is a zero row, as the detector feeds it.
+    The camera is fed what the live loop feeds it: every tracked person, or
+    under FALL_SUBJECTS=largest `subject_row`'s row, taken here from the
+    tracked people (`extract.largest_row`) since that is what the clip holds.
     """
-    recording = _Recording(classifier)
-    camera = decision.build_camera(classifier=recording, seq_len=seq_len)
+    camera = decision.build_camera(classifier=classifier, seq_len=seq_len)
     tracked = decision.subjects == "tracked"
-    empty = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
     raised = False
+    scored = []
     for frame in clip.frames:
+        seen = [Sighting(track_id=p.track_id, row=p.keypoints,
+                         centre=p.centre, area=p.area) for p in frame.people]
         camera.aspect = frame.aspect
         if tracked:
-            camera.observe([Sighting(track_id=p.track_id, row=p.keypoints,
-                                     centre=p.centre, area=p.area)
-                            for p in frame.people])
+            before = {s: s.stream.decision.n_windows for s in camera.subjects}
+            camera.observe(seen)
+            # Before and after: a subject dropped on this frame scored first.
+            for s in dict.fromkeys([*before, *camera.subjects]):
+                if s.stream.decision.n_windows > before.get(s, 0):
+                    scored.append((s.stream.decision.window_p, s))
             raised |= camera.alarm
-        else:
-            largest = max(frame.people, key=lambda p: p.area, default=None)
-            camera.observe(empty if largest is None else largest.keypoints)
+        elif camera.observe(largest_row(seen)):
+            scored.append((camera.decision.window_p, None))
             raised |= camera.decision.alarm
-    return raised, recording.probs
+    # Track ids as of the clip's end, so a window scored before a Reconnect
+    # joined the raising id to its subject is still that subject's.
+    return raised, [(p, None if s is None else tuple(s.track_ids))
+                    for p, s in scored]
 
 
-def _auc(clips: Sequence[Clip], probs: Sequence[list[float]]) -> float | None:
+def _labelled(clip: Clip, windows) -> list[float]:
+    """The window P(fall)s in `clip` that carry its label: all of them, but
+    in a fall clip that names `raised_by`, that subject's alone."""
+    if not clip.fall or clip.raised_by is None:
+        return [p for p, _ in windows]
+    return [p for p, ids in windows if ids is None or clip.raised_by in ids]
+
+
+def _auc(clips: Sequence[Clip], windows) -> float | None:
     from sklearn.metrics import roc_auc_score
 
-    labels = [c.fall for c, ps in zip(clips, probs) for _ in ps]
+    labelled = [(c.fall, p) for c, ws in zip(clips, windows)
+                for p in _labelled(c, ws)]
+    labels = [fall for fall, _ in labelled]
     if len(set(labels)) < 2:
         return None
-    return float(roc_auc_score(labels, [p for ps in probs for p in ps]))
+    return float(roc_auc_score(labels, [p for _, p in labelled]))
 
 
 def _score(clips: Sequence[Clip], replays) -> Score:
@@ -166,10 +183,10 @@ def _score(clips: Sequence[Clip], replays) -> Score:
     return Score(falls=sum(r and c.fall for r, c in zip(raised, clips)),
                  false_alarms=sum(r and not c.fall
                                   for r, c in zip(raised, clips)),
-                 auc=_auc(clips, [ps for _, ps in replays]))
+                 auc=_auc(clips, [ws for _, ws in replays]))
 
 
-def _set(decision, deployed, candidate, clips, seq_len) -> SetReport:
+def _judge_set(decision, deployed, candidate, clips, seq_len) -> SetReport:
     before = [_replay(decision, deployed, c, seq_len) for c in clips]
     after = [_replay(decision, candidate, c, seq_len) for c in clips]
     return SetReport(clips=len(clips), fall_clips=sum(c.fall for c in clips),
@@ -188,24 +205,23 @@ def judge(decision: FallDecision, deployed, candidate,
     or anything with its `proba`), each run under `decision`'s rule;
     `seq_len` is the window their checkpoint was trained on.
     """
-    sets = [_set(decision, deployed, candidate, clips, seq_len)
+    sets = [_judge_set(decision, deployed, candidate, clips, seq_len)
             for clips in (heldout, evals)]
     heldout, evals = sets
     lost = heldout.lost + evals.lost
     fewer = sum(s.deployed.false_alarms - s.candidate.false_alarms
                 for s in sets)
-    alarms = (f"{fewer} fewer False Alarm{'' if abs(fewer) == 1 else 's'}"
-              if fewer >= 0 else
-              f"{-fewer} more False Alarm{'' if fewer == -1 else 's'}")
-    if lost:
-        reason = (f"{lost} fall{'' if lost == 1 else 's'} lost ({heldout.lost} "
-                  f"on the held-out session, {evals.lost} on the Eval "
-                  f"Alerts), {alarms}")
-    elif fewer < MIN_FEWER_FALSE_ALARMS:
+    alarms = (_count(fewer, "fewer False Alarm") if fewer >= 0 else
+              _count(-fewer, "more False Alarm"))
+    passed = not lost and fewer >= MIN_FEWER_FALSE_ALARMS
+    if passed:
+        reason = f"no fall lost, {alarms}"
+    elif lost:
+        reason = (f"{_count(lost, 'fall')} lost ({heldout.lost} on the "
+                  f"held-out session, {evals.lost} on the Eval Alerts), "
+                  f"{alarms}")
+    else:
         reason = (f"no fall lost, but {alarms}, fewer than "
                   f"{MIN_FEWER_FALSE_ALARMS}")
-    else:
-        reason = f"no fall lost, {alarms}"
-    return GateReport(heldout=heldout, evals=evals,
-                      passed=not lost and fewer >= MIN_FEWER_FALSE_ALARMS,
+    return GateReport(heldout=heldout, evals=evals, passed=passed,
                       reason=reason)

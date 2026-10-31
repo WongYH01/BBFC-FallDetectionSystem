@@ -37,16 +37,25 @@ function Get-ContainerId {
     $id
 }
 
-function Get-ContainerImage {
+# One field of the running container, or $null when none is running: ps
+# lists nothing, or the container stopped before inspect reached it.
+function Get-ContainerField([string]$Format) {
     $id = Get-ContainerId
-    if ($id) { (& docker inspect --format "{{.Image}}" $id).Trim() }
+    if (-not $id) { return $null }
+    $value = & docker inspect --format $Format $id
+    if ($LASTEXITCODE -ne 0 -or $null -eq $value) { return $null }
+    "$value".Trim()
 }
 
+function Get-ContainerImage { Get-ContainerField "{{.Image}}" }
+
+$notRunning = "$service container is not running: docker compose logs $service"
+
 function Wait-Healthy {
-    $id = Get-ContainerId
     $deadline = (Get-Date).AddSeconds($HealthTimeoutSec)
     do {
-        $health = (& docker inspect --format "{{.State.Health.Status}}" $id).Trim()
+        $health = Get-ContainerField "{{.State.Health.Status}}"
+        if (-not $health) { throw $notRunning }
         if ($health -eq "healthy") { return }
         if ($health -eq "unhealthy") { throw "$service is unhealthy: docker compose logs $service" }
         Start-Sleep -Seconds 10
@@ -70,6 +79,7 @@ try {
         Invoke-Compose up -d --no-deps --pull never $service
 
         $new = Get-ContainerImage
+        if (-not $new) { throw $notRunning }
         Write-Output $(if ($new -eq $old) { "already on the newest image" } else { "swapped to image: $new" })
         Wait-Healthy
         Write-Output "$service is healthy"
