@@ -190,7 +190,11 @@ class KeypointFile:
     raised_by: int
     #: Empty for a version-1 file, which did not record its pose backbone.
     pose: str
-    version: int
+
+    @property
+    def raised_at(self) -> float:
+        """When the alarm latched: the trigger frame's capture time."""
+        return self.frames[self.trigger].t
 
 
 def load(path: str | Path) -> KeypointFile:
@@ -198,27 +202,29 @@ def load(path: str | Path) -> KeypointFile:
 
     Version 1 is version 2 without `pose`, so its `pose` reads as "": no pose
     backbone's, and training on any one backbone leaves it out. A newer
-    version is refused rather than half-read.
+    version is refused rather than half-read. The refusal does not name the
+    file: its name is an Event ID, which no log may carry (ADR 0002).
     """
-    with np.load(path, allow_pickle=False) as f:
-        version = int(f["version"])
+    with np.load(path, allow_pickle=False) as npz:
+        version = int(npz["version"])
         if not 1 <= version <= FORMAT_VERSION:
-            raise ValueError(f"{Path(path).name} is keypoint file version "
-                             f"{version}; this reader knows 1 to {FORMAT_VERSION}")
-        a = {name: f[name] for name in f.files}
-    by_frame: list[list[Person]] = [[] for _ in a["t"]]
-    for i, frame in enumerate(a["frame"]):
+            raise ValueError(f"keypoint file version {version}; this reader "
+                             f"knows 1 to {FORMAT_VERSION}")
+        arrays = {name: npz[name] for name in npz.files}
+    by_frame: list[list[Person]] = [[] for _ in arrays["t"]]
+    for i, frame in enumerate(arrays["frame"]):
         by_frame[frame].append(Person(
-            track_id=int(a["track_id"][i]), keypoints=a["keypoints"][i],
-            centre=(float(a["centre"][i, 0]), float(a["centre"][i, 1])),
-            area=float(a["area"][i]), fallen=bool(a["fallen"][i]),
-            subject=int(a["subject"][i])))
+            track_id=int(arrays["track_id"][i]),
+            keypoints=arrays["keypoints"][i],
+            centre=(float(arrays["centre"][i, 0]),
+                    float(arrays["centre"][i, 1])),
+            area=float(arrays["area"][i]), fallen=bool(arrays["fallen"][i]),
+            subject=int(arrays["subject"][i])))
     frames = tuple(
-        Frame(t=float(a["t"][i]), aspect=float(a["aspect"][i]),
-              alarm=bool(a["alarm"][i]), score=float(a["score"][i]),
-              people=tuple(by_frame[i]), lead=int(a["lead"][i]))
-        for i in range(len(a["t"])))
-    return KeypointFile(frames=frames, trigger=int(a["trigger"]),
-                        raised_by=int(a["raised_by"]),
-                        pose=str(a["pose"]) if "pose" in a else "",
-                        version=version)
+        Frame(t=float(arrays["t"][i]), aspect=float(arrays["aspect"][i]),
+              alarm=bool(arrays["alarm"][i]), score=float(arrays["score"][i]),
+              people=tuple(by_frame[i]), lead=int(arrays["lead"][i]))
+        for i in range(len(arrays["t"])))
+    return KeypointFile(frames=frames, trigger=int(arrays["trigger"]),
+                        raised_by=int(arrays["raised_by"]),
+                        pose=str(arrays["pose"]) if "pose" in arrays else "")

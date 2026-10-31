@@ -32,7 +32,7 @@ FITTED = datetime(2026, 10, 20, tzinfo=timezone.utc)
 BEFORE = FITTED.timestamp() - 86400.0      # an Alert raised the day before
 AFTER = FITTED.timestamp() + 86400.0       # and one the day after
 
-GENUINE, FALSE_ALARM = "genuine", "false_alarm"
+GENUINE, FALSE_ALARM = refit.Outcome.GENUINE, refit.Outcome.FALSE_ALARM
 
 
 def body(fill: float) -> Person:
@@ -46,8 +46,8 @@ class RefitTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.decision = FallDecision()
-        self.pin("keypoints/commissioning/picam2_fall_01.npy", b"commissioning")
-        self.pin("keypoints/heldout/p3_fall_01.npy", b"held-out session")
+        self.pin(f"{refit.COMMISSIONING}/picam2_fall_01.npy", b"commissioning")
+        self.pin(f"{refit.HELDOUT}/p3_fall_01.npy", b"held-out session")
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -63,20 +63,28 @@ class RefitTest(unittest.TestCase):
             fh.write(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
         return path
 
-    def alert(self, event_id: str, outcome: str | None, t: float = AFTER,
-              pose: str | None = None, room: str = "room-1") -> None:
-        """A Keypoint File for one Alert, filed as the notification service
-        files it: under its Outcome once triaged, under `incoming/` before."""
-        folder = (f"keypoints/labelled/{outcome}/{room}" if outcome
-                  else f"keypoints/incoming/{room}")
-        path = self.root / folder / f"{event_id}.npz"
+    def filed(self, name: str, outcome: refit.Outcome | None,
+              room: str = "room-1") -> Path:
+        """Where the notification service files an Alert's upload: under its
+        Outcome once triaged, under `incoming/` before."""
+        folder = (self.root / refit.LABELLED / outcome.value if outcome
+                  else self.root / refit.INCOMING)
+        path = folder / room / name
         path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def alert(self, event_id: str, outcome: refit.Outcome | None,
+              t: float = AFTER, pose: str | None = None) -> Path:
+        """A Keypoint File for one Alert, filed as the notification service
+        files it."""
+        path = self.filed(f"{event_id}.npz", outcome)
         frames = [Frame(t=t - 1.0, aspect=16 / 9, alarm=False, score=0.1,
                         people=(body(0.2),), lead=1),
                   Frame(t=t, aspect=16 / 9, alarm=True, score=0.9,
                         people=(body(0.8),), lead=1)]
         keypoint_file.save(path, frames, trigger=1,
                            pose=pose or self.decision.pose)
+        return path
 
     def run_refit(self, fitted_at=FITTED):
         return refit.run(self.root, self.decision, fitted_at)
@@ -84,17 +92,17 @@ class RefitTest(unittest.TestCase):
     # -- the pinned base data -----------------------------------------------
 
     def test_a_pinned_object_that_changed_is_an_error_not_a_verdict(self):
-        (self.root / "keypoints/heldout/p3_fall_01.npy").write_bytes(b"edited")
+        (self.root / refit.HELDOUT / "p3_fall_01.npy").write_bytes(b"edited")
         with self.assertRaises(refit.PinnedDataError):
             self.run_refit()
 
     def test_an_object_the_manifest_does_not_pin_is_an_error(self):
-        (self.root / "keypoints/heldout/p3_extra.npy").write_bytes(b"new clip")
+        (self.root / refit.HELDOUT / "p3_extra.npy").write_bytes(b"new clip")
         with self.assertRaises(refit.PinnedDataError):
             self.run_refit()
 
     def test_a_pinned_object_that_is_missing_is_an_error(self):
-        (self.root / "keypoints/commissioning/picam2_fall_01.npy").unlink()
+        (self.root / refit.COMMISSIONING / "picam2_fall_01.npy").unlink()
         with self.assertRaises(refit.PinnedDataError):
             self.run_refit()
 
@@ -131,7 +139,7 @@ class RefitTest(unittest.TestCase):
         # Fitting and the Promotion Gate are later tickets.
         self.assertEqual(verdict.kind, refit.NOT_YET_IMPLEMENTED)
 
-    def test_alerts_from_before_the_deployed_head_was_fitted_are_not_new(self):
+    def test_alerts_raised_before_the_deployed_camera_head_was_fitted_are_not_new(self):
         for event_id in TRAINING_IDS[:5]:
             self.alert(event_id, GENUINE, t=BEFORE)
         for event_id in TRAINING_IDS[5:9]:
@@ -141,12 +149,12 @@ class RefitTest(unittest.TestCase):
 
         self.assertEqual(verdict.kind, refit.SKIPPED)
         self.assertIn("4 new training alerts", verdict.reason.lower())
-        # Not new, but still training data the candidate is fitted on.
+        # Not new, but still training data the Candidate Head is fitted on.
         self.assertEqual(verdict.report.training, 9)
         self.assertEqual(verdict.report.new_training, 4)
 
-    def test_a_head_with_no_fit_date_has_seen_no_alert(self):
-        # The shipped head predates the fit date: it was fitted on the
+    def test_a_deployed_camera_head_with_no_fit_date_has_seen_no_alert(self):
+        # The shipped Camera Head predates the fit date: it was fitted on the
         # Commissioning Recording alone, so every triaged Alert is new to it.
         self.alert(TRAINING_IDS[0], GENUINE, t=BEFORE)
         for event_id in TRAINING_IDS[1:5]:
@@ -230,6 +238,30 @@ class RefitTest(unittest.TestCase):
             self.assertNotIn(str(int(AFTER))[:6], text)
         self.assertEqual((skipped.kind, carried_on.kind),
                          (refit.SKIPPED, refit.NOT_YET_IMPLEMENTED))
+
+    def test_keypoint_files_it_cannot_read_are_left_out_and_counted(self):
+        for event_id in TRAINING_IDS[:4]:
+            self.alert(event_id, GENUINE)
+        # A format version from a newer detector...
+        newer = self.alert(TRAINING_IDS[4], GENUINE)
+        with np.load(newer) as f:
+            arrays = dict(f)
+        arrays["version"] = np.int32(keypoint_file.FORMAT_VERSION + 1)
+        with open(newer, "wb") as fh:
+            np.savez_compressed(fh, **arrays)
+        # ...and an upload the notification service filed under another
+        # extension, triaged and not.
+        self.filed(f"{TRAINING_IDS[5]}.parquet", FALSE_ALARM).write_bytes(b"PAR1")
+        self.filed(f"{TRAINING_IDS[6]}.parquet", None).write_bytes(b"PAR1")
+
+        verdict = self.run_refit()
+
+        self.assertEqual(verdict.kind, refit.SKIPPED)
+        self.assertIn("4 new training alerts", verdict.reason.lower())
+        self.assertEqual(verdict.report.unreadable, 2)
+        self.assertEqual(verdict.report.untriaged, 1)
+        self.assertEqual(verdict.report.training, 4)
+        self.assertNotIn("event-", str(verdict))
 
     def test_the_fit_date_must_say_its_time_zone(self):
         with self.assertRaises(ValueError):

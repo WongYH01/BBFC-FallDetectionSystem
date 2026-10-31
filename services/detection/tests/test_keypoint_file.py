@@ -150,6 +150,7 @@ class KeypointFileTest(unittest.TestCase):
         read = keypoint_file.load(self.path)
 
         self.assertEqual(read.trigger, 2)
+        self.assertAlmostEqual(read.raised_at, 100.2)
         self.assertEqual(read.raised_by, 1)
         self.assertEqual(read.pose, "yolo26n_test")
         self.assertEqual(len(read.frames), len(written))
@@ -183,8 +184,10 @@ class KeypointFileTest(unittest.TestCase):
         arrays["version"] = np.int32(keypoint_file.FORMAT_VERSION + 1)
         with open(self.path, "wb") as fh:
             np.savez_compressed(fh, **arrays)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as refused:
             keypoint_file.load(self.path)
+        # The file is named for its Event ID, which no log may carry (ADR 0002).
+        self.assertNotIn("fall_1", str(refused.exception))
 
     def test_people_from_sightings(self):
         seen = [Sighting(track_id=4, row=row(0.5), centre=(0.1, 0.2), area=0.3),
