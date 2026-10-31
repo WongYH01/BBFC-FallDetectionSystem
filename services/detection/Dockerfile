@@ -1,6 +1,7 @@
 # Detection service: v2 + the notification outbox.
 #
-# Build from services/detection (the root docker-compose.yml does this for you):
+# CI builds this and pushes it to Artifact Registry (.github/workflows/image.yml);
+# compose and GKE run that image. To build it yourself, from services/detection:
 #   docker build --secret id=detection_env,src=.env -t bbfc/detection .
 #
 # The weights are baked in: the build fetches them itself, so nothing has to be
