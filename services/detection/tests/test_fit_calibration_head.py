@@ -29,7 +29,7 @@ def subject_of(video_id: str) -> int:
     return int(video_id.split("_")[0][1:])
 
 
-def load(scale, video_id):
+def load(pose, video_id):
     """Keypoint cache stub: 200 rows of every joint at (subject, subject)."""
     kp = np.full((200, cfg.N_KEYPOINTS, 3), float(subject_of(video_id)),
                  dtype=np.float32)

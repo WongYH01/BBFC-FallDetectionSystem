@@ -360,7 +360,7 @@ def _commissioning(folder: Path, checkpoint, pose: str
     clips = _pinned_clips(folder, COMMISSIONING, ".npy")
     keypoints = {path.stem: np.load(path) for path, _ in clips}
 
-    def load(_scale, video_id):
+    def load(_pose, video_id):
         return keypoints[video_id]
 
     fs, seq_len = cfg.PREPROCESS.frame_stride, checkpoint.seq_len
@@ -373,7 +373,7 @@ def _commissioning(folder: Path, checkpoint, pose: str
     table = pd.DataFrame(rows, columns=["video_id", "start", "label"])
     keep, labels = head_fitting.segment_labels(table, pose, seq_len, load=load)
     negatives = head_fitting.NobodyNegatives(
-        seq_len, checkpoint.embed, copies=EMPTY_NEGATIVES, scale=pose,
+        seq_len, checkpoint.embed, copies=EMPTY_NEGATIVES, pose=pose,
         load=load)
     embeddings, labels, _ = head_fitting.fold_fitting_set(
         np.ones(len(table), dtype=bool), table,
