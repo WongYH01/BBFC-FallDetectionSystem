@@ -114,25 +114,72 @@ def judge(deployed, candidate, heldout, evals):
                                 seq_len=WINDOW)
 
 
+#: Where each clip's subject lies down. The held-out session: two falls and
+#: three Controlled Descents...
+HELDOUT_FALLS, HELDOUT_DESCENTS = (0.30, 0.35), (0.40, 0.45, 0.48)
+#: ...and the Eval Alerts: two Genuine, two False Alarms.
+EVAL_GENUINE, EVAL_FALSE_ALARMS = (0.50, 0.55), (0.60, 0.65)
+#: The deployed head fires on every clip, as it fired on every Eval Alert.
+DEPLOYED = Calls.at(*HELDOUT_FALLS, *HELDOUT_DESCENTS, *EVAL_GENUINE,
+                    *EVAL_FALSE_ALARMS)
+
+
+def sets():
+    heldout = ([fall(x) for x in HELDOUT_FALLS]
+               + [descent(x) for x in HELDOUT_DESCENTS])
+    evals = ([fall(x) for x in EVAL_GENUINE]
+             + [descent(x) for x in EVAL_FALSE_ALARMS])
+    return heldout, evals
+
+
 class PromotionGateTest(unittest.TestCase):
-    #: The held-out session: one fall, two Controlled Descents...
-    HELDOUT = (0.30, 0.40, 0.45)
-    #: ...and the Eval Alerts: one Genuine, one False Alarm.
-    EVALS = (0.50, 0.55)
-
-    def sets(self):
-        heldout = [fall(0.30), descent(0.40), descent(0.45)]
-        evals = [fall(0.50), descent(0.55)]
-        return heldout, evals
-
     def test_no_fall_lost_and_two_fewer_false_alarms_passes(self):
-        deployed = Calls.at(0.30, 0.40, 0.45, 0.50, 0.55)
-        # Quiet on one held-out descent and on the False Alarm Eval Alert.
-        candidate = Calls.at(0.30, 0.40, 0.50)
+        # Quiet on one held-out descent and one False Alarm Eval Alert.
+        candidate = Calls.at(*HELDOUT_FALLS, 0.40, 0.45, *EVAL_GENUINE, 0.60)
 
-        report = judge(deployed, candidate, *self.sets())
+        report = judge(DEPLOYED, candidate, *sets())
 
         self.assertTrue(report.passed)
+
+    def test_one_held_out_fall_lost_fails(self):
+        # However many False Alarms it removes.
+        candidate = Calls.at(0.30, *EVAL_GENUINE)
+
+        report = judge(DEPLOYED, candidate, *sets())
+
+        self.assertFalse(report.passed)
+        self.assertEqual(report.heldout.lost, 1)
+
+    def test_one_genuine_eval_alert_lost_fails(self):
+        candidate = Calls.at(*HELDOUT_FALLS, 0.50)
+
+        report = judge(DEPLOYED, candidate, *sets())
+
+        self.assertFalse(report.passed)
+        self.assertEqual((report.heldout.lost, report.evals.lost), (0, 1))
+
+    def test_only_one_fewer_false_alarm_fails(self):
+        # Inside the Seed Floor, so not measured.
+        candidate = Calls.at(*HELDOUT_FALLS, 0.40, 0.45, *EVAL_GENUINE,
+                             *EVAL_FALSE_ALARMS)
+
+        report = judge(DEPLOYED, candidate, *sets())
+
+        self.assertFalse(report.passed)
+        self.assertEqual(report.heldout.lost + report.evals.lost, 0)
+
+    def test_a_fall_caught_elsewhere_does_not_pay_for_one_lost(self):
+        # The deployed head misses one held-out fall; the candidate catches
+        # it and loses the other. Falls caught are level, but one was lost.
+        deployed = Calls.at(0.30, *HELDOUT_DESCENTS, *EVAL_GENUINE,
+                            *EVAL_FALSE_ALARMS)
+        candidate = Calls.at(0.35, *EVAL_GENUINE)
+
+        report = judge(deployed, candidate, *sets())
+
+        self.assertEqual(report.heldout.deployed.falls,
+                         report.heldout.candidate.falls)
+        self.assertFalse(report.passed)
 
 
 if __name__ == "__main__":

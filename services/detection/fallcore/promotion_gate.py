@@ -65,6 +65,10 @@ class SetReport:
     fall_clips: int
     deployed: Score
     candidate: Score
+    #: Fall clips the deployed head caught and the candidate does not. Clip
+    #: by clip, so a fall the candidate newly catches cannot pay for one it
+    #: loses.
+    lost: int
 
 
 @dataclass(frozen=True)
@@ -89,17 +93,20 @@ def _raised(decision: FallDecision, classifier, clip: Clip,
     return False
 
 
-def _score(decision, classifier, clips: Sequence[Clip], seq_len: int) -> Score:
-    raised = [_raised(decision, classifier, c, seq_len) for c in clips]
+def _score(clips: Sequence[Clip], raised: Sequence[bool]) -> Score:
     return Score(falls=sum(r and c.fall for r, c in zip(raised, clips)),
                  false_alarms=sum(r and not c.fall
                                   for r, c in zip(raised, clips)))
 
 
 def _set(decision, deployed, candidate, clips, seq_len) -> SetReport:
+    before = [_raised(decision, deployed, c, seq_len) for c in clips]
+    after = [_raised(decision, candidate, c, seq_len) for c in clips]
     return SetReport(clips=len(clips), fall_clips=sum(c.fall for c in clips),
-                     deployed=_score(decision, deployed, clips, seq_len),
-                     candidate=_score(decision, candidate, clips, seq_len))
+                     deployed=_score(clips, before),
+                     candidate=_score(clips, after),
+                     lost=sum(c.fall and b and not a
+                              for c, b, a in zip(clips, before, after)))
 
 
 def judge(decision: FallDecision, deployed, candidate,
@@ -113,7 +120,8 @@ def judge(decision: FallDecision, deployed, candidate,
     """
     sets = [_set(decision, deployed, candidate, clips, seq_len)
             for clips in (heldout, evals)]
+    lost = sum(s.lost for s in sets)
     fewer = sum(s.deployed.false_alarms - s.candidate.false_alarms
                 for s in sets)
     return GateReport(heldout=sets[0], evals=sets[1],
-                      passed=fewer >= MIN_FEWER_FALSE_ALARMS)
+                      passed=not lost and fewer >= MIN_FEWER_FALSE_ALARMS)
