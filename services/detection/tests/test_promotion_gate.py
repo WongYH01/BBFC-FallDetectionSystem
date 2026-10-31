@@ -195,6 +195,36 @@ class PromotionGateTest(unittest.TestCase):
         self.assertEqual(report.heldout.lost, 1)
         self.assertFalse(report.passed)
 
+    def test_the_report_gives_falls_and_false_alarms_before_and_after_per_set(self):
+        candidate = Calls.at(*HELDOUT_FALLS, 0.40, 0.45, *EVAL_GENUINE, 0.60)
+
+        report = judge(DEPLOYED, candidate, *sets())
+        text = str(report)
+
+        self.assertIn("Promotion Gate passed", text)
+        self.assertIn("held-out session (5 clips, 2 falls): falls 2 -> 2, "
+                      "False Alarms 3 -> 2", text)
+        self.assertIn("Eval Alerts (4, 2 Genuine): falls 2 -> 2, "
+                      "False Alarms 2 -> 1", text)
+        self.assertIn(f"window AUC {report.heldout.deployed.auc:.3f} -> "
+                      f"{report.heldout.candidate.auc:.3f}", text)
+        self.assertEqual(text.count("window AUC"), 2)
+        # Published in the run summary and the pull request: counts only,
+        # no capture time.
+        self.assertNotIn(str(int(T0))[:6], text)
+
+    def test_a_failed_report_says_why(self):
+        lost = str(judge(DEPLOYED, Calls.at(0.30, *EVAL_GENUINE), *sets()))
+        one = str(judge(DEPLOYED,
+                        Calls.at(*HELDOUT_FALLS, 0.40, 0.45, *EVAL_GENUINE,
+                                 *EVAL_FALSE_ALARMS), *sets()))
+
+        self.assertIn("Promotion Gate failed", lost)
+        self.assertIn("1 fall lost (1 on the held-out session, 0 on the Eval "
+                      "Alerts)", lost)
+        self.assertIn("Promotion Gate failed", one)
+        self.assertIn("1 fewer False Alarm, fewer than 2", one)
+
     def test_window_auc_on_a_set_with_one_kind_of_clip_is_not_a_number(self):
         report = judge(DEPLOYED, DEPLOYED, [fall(0.30)], [])
 

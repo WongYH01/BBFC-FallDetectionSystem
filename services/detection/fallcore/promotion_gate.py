@@ -80,9 +80,35 @@ class SetReport:
 
 @dataclass(frozen=True)
 class GateReport:
+    """The Promotion Gate's judgement, as counts only. `str()` is what the run
+    summary and a promotion's pull request carry, so it names no Alert and
+    no time."""
+
     heldout: SetReport
     evals: SetReport
     passed: bool
+    reason: str
+
+    def __str__(self) -> str:
+        return "\n".join([
+            f"Promotion Gate {'passed' if self.passed else 'failed'}: "
+            f"{self.reason}",
+            _line(f"held-out session ({self.heldout.clips} clips, "
+                  f"{self.heldout.fall_clips} falls)", self.heldout),
+            _line(f"Eval Alerts ({self.evals.clips}, {self.evals.fall_clips} "
+                  f"Genuine)", self.evals),
+        ])
+
+
+def _auc_text(auc: float | None) -> str:
+    return "n/a" if auc is None else f"{auc:.3f}"
+
+
+def _line(name: str, s: SetReport) -> str:
+    d, c = s.deployed, s.candidate
+    return (f"{name}: falls {d.falls} -> {c.falls}, False Alarms "
+            f"{d.false_alarms} -> {c.false_alarms}, window AUC "
+            f"{_auc_text(d.auc)} -> {_auc_text(c.auc)}")
 
 
 class _Recording:
@@ -164,8 +190,22 @@ def judge(decision: FallDecision, deployed, candidate,
     """
     sets = [_set(decision, deployed, candidate, clips, seq_len)
             for clips in (heldout, evals)]
-    lost = sum(s.lost for s in sets)
+    heldout, evals = sets
+    lost = heldout.lost + evals.lost
     fewer = sum(s.deployed.false_alarms - s.candidate.false_alarms
                 for s in sets)
-    return GateReport(heldout=sets[0], evals=sets[1],
-                      passed=not lost and fewer >= MIN_FEWER_FALSE_ALARMS)
+    alarms = (f"{fewer} fewer False Alarm{'' if abs(fewer) == 1 else 's'}"
+              if fewer >= 0 else
+              f"{-fewer} more False Alarm{'' if fewer == -1 else 's'}")
+    if lost:
+        reason = (f"{lost} fall{'' if lost == 1 else 's'} lost ({heldout.lost} "
+                  f"on the held-out session, {evals.lost} on the Eval "
+                  f"Alerts), {alarms}")
+    elif fewer < MIN_FEWER_FALSE_ALARMS:
+        reason = (f"no fall lost, but {alarms}, fewer than "
+                  f"{MIN_FEWER_FALSE_ALARMS}")
+    else:
+        reason = f"no fall lost, {alarms}"
+    return GateReport(heldout=heldout, evals=evals,
+                      passed=not lost and fewer >= MIN_FEWER_FALSE_ALARMS,
+                      reason=reason)
