@@ -178,7 +178,9 @@ def _pinned_clips(folder: Path, prefix: str, suffix: str
                   ) -> list[tuple[Path, bool]]:
     """Every pinned clip under `prefix`, in a fixed order, with whether it is
     a fall. Anything not filed as `{fall,adl}/<clip><suffix>` is an error:
-    the base set is not what this Refit knows how to read."""
+    the base set is not what this Refit knows how to read. Unlike an Alert's
+    file it is not left out and counted, which would quietly fit or judge on
+    less than the manifest pins."""
     clips = []
     for path in sorted((folder / prefix).rglob("*")):
         if not path.is_file():
@@ -474,6 +476,9 @@ def _eval_clip(alert: Alert) -> Clip:
 
 
 def _heldout(folder: Path, pose: str) -> list[Clip]:
+    """The held-out session as the Promotion Gate replays it. A clip from
+    another pose backbone is an error, as a misfiled one is (`_pinned_clips`):
+    every clip the manifest pins is judged on, or the Refit stops."""
     clips = []
     for path, fall in _pinned_clips(folder, HELDOUT, ".npz"):
         kf = keypoint_file.load(path)
