@@ -92,7 +92,7 @@ def segment_labels(clips, scale: str, seq_len: int):
 
 
 def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
-                   scale: str = "yolo26n"):
+                   scale: str = "yolo26n", load=None):
     """Synthetic "nobody visible" windows, to be fitted as No-Fall.
 
     The head otherwise inherits -- and amplifies -- the room's dropout artifact:
@@ -111,13 +111,16 @@ def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
       leaving frame or walking behind furniture actually produces. Built from
       `clips`, so they carry this room's own pose statistics.
 
-    Fitted into the training folds only; the held-out subject never sees them.
-    Measured effect on the LOSO score of the multi-scale backbone: AUC
+    `load(scale, video_id)` reads a clip's keypoints (default: the cache on
+    disk). Fitted into the training folds only; the held-out subject never sees
+    them. Measured effect on the LOSO score of the multi-scale backbone: AUC
     0.9923 -> 0.9909, rolling b4/b8 F1 unchanged at 0.967 (1 FP, 1 FN), while
     P(fall | all-zero window) falls 0.9999 -> 0.0077.
     """
-    from fallcore.data import build_features, prepare_sequence, take_window
-    from fallcore.extract import load_keypoints
+    from fallcore.data import prepare_sequence, take_window
+
+    if load is None:
+        from fallcore.extract import load_keypoints as load
 
     T_, K = tcfg.seq_len, cfg.N_KEYPOINTS
     rng = np.random.default_rng(0)
@@ -132,7 +135,7 @@ def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
 
     adl = clips[clips.label == 0].video_id.drop_duplicates().head(6).tolist()
     for vid in adl:
-        seq = prepare_sequence(load_keypoints(scale, vid), None,
+        seq = prepare_sequence(load(scale, vid), None,
                                cfg.PREPROCESS.frame_stride)
         ref = take_window(seq, T_, start=0)
         for frac in (0.25, 0.50, 0.75):
@@ -158,6 +161,60 @@ def embed_windows(model, mcfg, tcfg, windows, device: str = "cpu"):
     with torch.no_grad():
         h = model.encoder(model.embed(torch.from_numpy(x).float().to(device)))
         return model._pool(h).cpu().numpy()
+
+
+class NobodyNegatives:
+    """A fold's nobody-visible windows, embedded, from that fold's own clips.
+
+    Calling it with the clips a fold trains on returns `(embeddings,
+    kinematics)` for the windows `nobody_windows` cuts from them (`kinematics`
+    is None unless asked for). `embed(windows)` is the frozen backbone's pooled
+    embedding. The windows depend only on which ADL clips they are cut from, so
+    folds that share those clips share one build.
+    """
+
+    def __init__(self, tcfg, embed, copies: int = 10, scale: str = "yolo26n",
+                 kinematics: bool = False, load=None):
+        self.tcfg, self.embed, self.copies = tcfg, embed, copies
+        self.scale, self.kinematics, self.load = scale, kinematics, load
+        self._built = {}
+
+    def __call__(self, clips):
+        key = tuple(clips[clips.label == 0].video_id.drop_duplicates().head(6))
+        if key not in self._built:
+            windows = nobody_windows(None, None, self.tcfg, clips, None,
+                                     copies=self.copies, scale=self.scale,
+                                     load=self.load)
+            # A window nobody is visible in has no measurable descent; zeros
+            # are the honest value and are what `window_kinematics` returns.
+            kin = (np.stack([calibrate.window_kinematics(w) for w in windows])
+                   if self.kinematics else None)
+            self._built[key] = (self.embed(windows), kin)
+            print(f"nobody-visible windows: {len(windows)} labelled No-Fall "
+                  f"({len(windows) // self.copies} flavours x {self.copies} "
+                  f"copies, from {len(key)} ADL clips)", flush=True)
+        return self._built[key]
+
+
+def fold_fitting_set(train, clips, emb, y, keep, ext=None, negatives=None):
+    """`(embeddings, labels, extras)` a head fitted on the `train` rows sees.
+
+    `train` masks the rows of `clips` (one per window) the fold may learn from;
+    `keep` drops the windows the label scheme leaves out. `negatives`, a
+    `NobodyNegatives`, adds the synthetic No-Fall windows, cut from the
+    training rows' clips only: a left-out subject's own ADL clips never reach
+    the head that scores it.
+    """
+    real = train & keep
+    e, lab = emb[real], y[real]
+    x = ext[real] if ext is not None else None
+    if negatives is not None:
+        syn_emb, syn_ext = negatives(clips[train])
+        e = np.concatenate([e, syn_emb])
+        lab = np.concatenate([lab, np.zeros(len(syn_emb), dtype=lab.dtype)])
+        if x is not None:
+            x = np.concatenate([x, syn_ext])
+    return e, lab, x
 
 
 def report(name, prob, clips, clip_labels) -> list[dict]:
@@ -235,30 +292,17 @@ def main() -> int:
           f"({keep.sum()} fitted, {args.labels} labels), "
           f"{clips.video_id.nunique()} clips, embedding {emb.shape[1]}", flush=True)
 
-    syn_emb = syn_y = None
+    negatives = None
     if args.empty_negatives > 0:
-        windows = nobody_windows(model, mcfg, tcfg, clips, meta,
-                                 copies=args.empty_negatives, scale=args.scale)
-        syn_emb = embed_windows(model, mcfg, tcfg, windows, device="cpu")
-        syn_y = np.zeros(len(syn_emb), dtype=int)
-        # A window nobody is visible in has no measurable descent; zeros are
-        # the honest value and are what `window_kinematics` returns for it.
-        syn_ext = (np.stack([calibrate.window_kinematics(w) for w in windows])
-                   if args.extra_kinematics else None)
-        print(f"nobody-visible windows: {len(syn_emb)} labelled No-Fall "
-              f"({len(syn_emb) // args.empty_negatives} flavours x "
-              f"{args.empty_negatives} copies)", flush=True)
+        negatives = NobodyNegatives(
+            tcfg, lambda w: embed_windows(model, mcfg, tcfg, w, device="cpu"),
+            copies=args.empty_negatives, scale=args.scale,
+            kinematics=args.extra_kinematics)
 
     def fit_fold(train_mask):
         """Fit a head on the masked real windows plus the synthetic negatives."""
-        train_mask = train_mask & keep
-        e, lab = emb[train_mask], y[train_mask]
-        x = ext[train_mask] if ext is not None else None
-        if syn_emb is not None:
-            e = np.concatenate([e, syn_emb])
-            lab = np.concatenate([lab, syn_y])
-            if x is not None:
-                x = np.concatenate([x, syn_ext])
+        e, lab, x = fold_fitting_set(train_mask, clips, emb, y, keep, ext,
+                                     negatives)
         return calibrate.fit(e, lab, backbone=args.ckpt, features=mcfg.features,
                              seq_len=tcfg.seq_len, extras=x,
                              extra_names=extra_names, pose=args.scale)
