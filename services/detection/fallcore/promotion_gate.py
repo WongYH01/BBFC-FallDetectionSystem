@@ -3,8 +3,8 @@
 `judge(decision, deployed, candidate, heldout, evals, seq_len)` scores both
 heads the way the room runs them: every clip is replayed from its first frame
 through `decision`'s own camera (`FallDecision.build_camera`: rolling buffer,
-threshold, latch, descent gate, one stream per tracked subject), once on each
-head's classifier. A clip counts as raised when the room's alarm goes up
+threshold, latch, descent gate, one stream per tracked subject or the largest
+box, as `decision.subjects` says), once on each head's classifier. A clip counts as raised when the room's alarm goes up
 anywhere in it. The two eval sets:
 
 * the held-out picam session, staged falls and everyday activities, which no
@@ -29,6 +29,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+
+from . import config as cfg
 from .extract import Sighting
 from .fall_decision import FallDecision
 from .keypoint_file import Frame
@@ -81,14 +84,26 @@ class GateReport:
 def _raised(decision: FallDecision, classifier, clip: Clip,
             seq_len: int) -> bool:
     """Whether the room's alarm goes up anywhere in `clip`, replayed from its
-    first frame."""
+    first frame.
+
+    Under FALL_SUBJECTS=largest the camera decides on the largest box alone,
+    and a frame with nobody in it is a zero row, as the detector feeds it.
+    """
     camera = decision.build_camera(classifier=classifier, seq_len=seq_len)
+    tracked = decision.subjects == "tracked"
+    empty = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
     for frame in clip.frames:
         camera.aspect = frame.aspect
-        camera.observe([Sighting(track_id=p.track_id, row=p.keypoints,
-                                 centre=p.centre, area=p.area)
-                        for p in frame.people])
-        if camera.alarm:
+        if tracked:
+            camera.observe([Sighting(track_id=p.track_id, row=p.keypoints,
+                                     centre=p.centre, area=p.area)
+                            for p in frame.people])
+            alarm = camera.alarm
+        else:
+            largest = max(frame.people, key=lambda p: p.area, default=None)
+            camera.observe(empty if largest is None else largest.keypoints)
+            alarm = camera.decision.alarm
+        if alarm:
             return True
     return False
 

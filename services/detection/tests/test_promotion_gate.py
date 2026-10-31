@@ -182,5 +182,49 @@ class PromotionGateTest(unittest.TestCase):
         self.assertFalse(report.passed)
 
 
+class TheFallDecisionRunsUnderneathTest(unittest.TestCase):
+    """The gate scores each head under the deployed rule, not per window."""
+
+    def raised(self, clip: Clip, decision: FallDecision = DECISION,
+               head=None) -> bool:
+        report = promotion_gate.judge(decision, Calls.at(), head or Calls.at(0.70),
+                                      [clip], [], seq_len=WINDOW)
+        s = report.heldout.candidate
+        return bool(s.falls + s.false_alarms)
+
+    def test_one_window_called_a_fall_is_averaged_away_by_the_rolling_buffer(self):
+        # Down for exactly one window's step, then up again: one window ends
+        # on a lying body, once the buffer is full of upright ones.
+        rows = [body(0.5, 0.70)] * (3 * HZ)
+        rows += descending(0.70)[:WINDOW + HZ // 2]
+        rows += [body(0.85, 0.70, lying=1.0)] * HZ
+        rows += [body(0.5, 0.70)] * (2 * WINDOW)
+        stumble = Clip(frames(rows), fall=False)
+
+        self.assertFalse(self.raised(stumble))
+        self.assertTrue(self.raised(stumble, DECISION.replace(buffer=1)))
+
+    def test_someone_lying_throughout_is_held_back_by_the_descent_gate(self):
+        # Shuffling across the floor, so not a still subject, but never
+        # going down.
+        rows = [body(0.85, 0.60 + 0.1 * f / WINDOW, lying=1.0)
+                for f in range(WINDOW)]
+        rows += [body(0.85, 0.70, lying=1.0)] * (2 * WINDOW)
+        lying = Clip(frames(rows), fall=False)
+
+        self.assertFalse(self.raised(lying))
+        self.assertTrue(self.raised(lying, DECISION.replace(min_descent=0.0)))
+
+    def test_each_subject_is_decided_on_their_own(self):
+        # A fall behind a bystander whose box is larger: the largest-box rule
+        # decides on the bystander.
+        behind = Clip(frames([body(0.5, 0.20)] * (4 * WINDOW),
+                             descending(0.70)), fall=True)
+
+        self.assertTrue(self.raised(behind))
+        self.assertFalse(self.raised(behind,
+                                     DECISION.replace(subjects="largest")))
+
+
 if __name__ == "__main__":
     unittest.main()
