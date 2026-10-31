@@ -1,6 +1,6 @@
 """The weekly Refit: one entry point from a mirrored bucket to a verdict.
 
-`run(folder, decision, fitted_at)` is the whole Refit. The workflow around it
+`run(folder, decision)` is the whole Refit. The workflow around it
 mirrors the bucket into `folder`, calls it, and acts on what comes back; this
 module does no network I/O, so everything it decides is tested on a temporary
 folder.
@@ -27,8 +27,8 @@ not a Keypoint File this reader knows (another extension, a newer format
 version) are left out and counted.
 
 "New" means raised after the deployed Camera Head's fit date, by the trigger
-frame's capture time: the file carries it, so the loop keeps no state of its
-own. An Alert raised before the fit date but triaged after it is trained on,
+frame's capture time. The head records its fit date and the file its trigger
+time, so the loop keeps no state of its own. An Alert raised before the fit date but triaged after it is trained on,
 but does not count towards this week's new data.
 
 Everything published -- the verdict's `str()`, which the workflow writes to
@@ -40,11 +40,12 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
 from . import keypoint_file
+from .calibrate import ProbeHead
 from .fall_decision import FallDecision
 
 #: The objects every Refit fits and judges on, uploaded once.
@@ -207,18 +208,39 @@ def _alerts(folder: Path, pose: str) -> tuple[list[Alert], int, int]:
     return alerts, other_pose, unreadable
 
 
+def _aware(when: datetime, what: str) -> datetime:
+    if when.tzinfo is None:
+        raise ValueError(f"{what} must carry its time zone; a naive time "
+                         f"would be read as the runner's local time")
+    return when
+
+
+def _fitted_at(head: ProbeHead) -> datetime | None:
+    """When `head` was fitted, the last Promotion; None for a head that
+    records no fit date."""
+    if not head.fitted_at:
+        return None
+    return _aware(datetime.fromisoformat(head.fitted_at),
+                  "the deployed Camera Head's fit date")
+
+
 def run(folder: str | Path, decision: FallDecision,
-        fitted_at: datetime | None) -> Verdict:
+        now: datetime | None = None) -> Verdict:
     """This week's Refit of `decision`'s Camera Head, as a verdict.
 
-    `fitted_at` is when the deployed Camera Head was fitted, the last
-    Promotion: the Alerts raised after it are this week's new data. None for
-    a Camera Head that records no fit date, which was fitted on the
-    Commissioning Recording alone, so every triaged Alert is new to it.
+    The Alerts raised after the deployed Camera Head's recorded fit date, the
+    last Promotion, are this week's new data. A head that records no fit
+    date was fitted by hand on the Commissioning Recording alone, so every
+    triaged Alert is new to it.
+
+    `now` is when this Refit runs, the time zone included (default: the
+    clock).
     """
-    if fitted_at is not None and fitted_at.tzinfo is None:
-        raise ValueError("fitted_at must carry its time zone; a naive time "
-                         "would be read as the runner's local time")
+    now = _aware(now or datetime.now(timezone.utc), "now")
+    if len(decision.heads) != 1 or decision.heads[0] is None:
+        raise ValueError("a Refit refits one Camera Head on one Checkpoint, "
+                         f"not {decision}")
+    fitted_at = _fitted_at(ProbeHead.load(decision.heads[0]))
     since = float("-inf") if fitted_at is None else fitted_at.timestamp()
     folder = Path(folder)
     _check_pinned(folder)

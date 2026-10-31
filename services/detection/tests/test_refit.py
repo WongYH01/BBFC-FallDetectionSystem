@@ -1,10 +1,11 @@
 """fallcore.refit: the weekly Refit, through its one entry point.
 
-The seam is `refit.run(folder, decision, fitted_at)`. Every test lays out a
-temporary folder the way the bucket is laid out -- Keypoint Files by Outcome
-and room, the pinned Commissioning Recording and held-out session, and their
-manifest -- and asserts only on the verdict and its report. No network, no
-weights: nothing here builds the Fall Decision's models.
+The seam is `refit.run(folder, decision, checkpoint, now)`. Every test lays
+out a temporary folder the way the bucket is laid out -- Keypoint Files by
+Outcome and room, the pinned Commissioning Recording and held-out session, and
+their manifest -- deploys a Camera Head, and asserts only on the verdict and
+its report. No network, no weights: nothing here builds the Fall Decision's
+models.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import numpy as np
 
 from fallcore import config as cfg
 from fallcore import keypoint_file, refit
+from fallcore.calibrate import ProbeHead
 from fallcore.fall_decision import FallDecision
 from fallcore.keypoint_file import Frame, Person
 
@@ -29,6 +31,7 @@ TRAINING_IDS = ("event-01", "event-03", "event-06", "event-07", "event-08",
                 "event-09", "event-11", "event-13", "event-14", "event-15")
 
 FITTED = datetime(2026, 10, 20, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 27, tzinfo=timezone.utc)
 BEFORE = FITTED.timestamp() - 86400.0      # an Alert raised the day before
 AFTER = FITTED.timestamp() + 86400.0       # and one the day after
 
@@ -45,12 +48,33 @@ class RefitTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
-        self.decision = FallDecision()
+        # The weights fetcher's tree, outside the mirrored bucket.
+        self._weights = tempfile.TemporaryDirectory()
+        self.weights = Path(self._weights.name)
+        self.deploy(FITTED)
         self.pin(f"{refit.COMMISSIONING}/picam2_fall_01.npy", b"commissioning")
         self.pin(f"{refit.HELDOUT}/p3_fall_01.npy", b"held-out session")
 
     def tearDown(self):
         self._tmp.cleanup()
+        self._weights.cleanup()
+
+    # -- the deployed Camera Head ---------------------------------------------
+
+    def deploy(self, fitted_at: datetime | None, raw: str | None = None):
+        """Deploy a Camera Head fitted at `fitted_at` (None: one that predates
+        recording its fit date, as the shipped head does)."""
+        head = self.weights / "head.npz"
+        dim = 4
+        ProbeHead(mean=np.zeros(dim), scale=np.ones(dim),
+                  coef=np.full(dim, 10.0), intercept=np.array([-5.0]),
+                  backbone="stub.pt", features="coords", seq_len=60,
+                  pose=FallDecision.pose,
+                  fitted_at=(raw if raw is not None else
+                             "" if fitted_at is None else
+                             fitted_at.isoformat())).save(head)
+        self.decision = FallDecision(checkpoints=(self.weights / "stub.pt",),
+                                     heads=(head,))
 
     # -- the bucket ---------------------------------------------------------
 
@@ -86,8 +110,8 @@ class RefitTest(unittest.TestCase):
                            pose=pose or self.decision.pose)
         return path
 
-    def run_refit(self, fitted_at=FITTED):
-        return refit.run(self.root, self.decision, fitted_at)
+    def run_refit(self, now=NOW):
+        return refit.run(self.root, self.decision, now=now)
 
     # -- the pinned base data -----------------------------------------------
 
@@ -160,7 +184,9 @@ class RefitTest(unittest.TestCase):
         for event_id in TRAINING_IDS[1:5]:
             self.alert(event_id, FALSE_ALARM, t=BEFORE)
 
-        verdict = self.run_refit(fitted_at=None)
+        self.deploy(fitted_at=None)
+
+        verdict = self.run_refit()
 
         self.assertEqual(verdict.kind, refit.NOT_YET_IMPLEMENTED)
         self.assertEqual(verdict.report.new_training, 5)
@@ -264,8 +290,12 @@ class RefitTest(unittest.TestCase):
         self.assertNotIn("event-", str(verdict))
 
     def test_the_fit_date_must_say_its_time_zone(self):
+        # A naive time would be read as the runner's local time.
         with self.assertRaises(ValueError):
-            self.run_refit(fitted_at=datetime(2026, 10, 20))
+            self.run_refit(now=datetime(2026, 10, 27))
+        self.deploy(None, raw="2026-10-20T00:00:00")
+        with self.assertRaises(ValueError):
+            self.run_refit()
 
 
 if __name__ == "__main__":
