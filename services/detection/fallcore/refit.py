@@ -117,9 +117,13 @@ FALL_FROM, FALL_TO, ADL_BEFORE = -2.0, 3.0, -6.0
 #: fitted (`fit_calibration_head.py --empty-negatives 10`).
 EMPTY_NEGATIVES = 10
 
-SKIPPED = "skipped"
-PROMOTED = "promoted"
-GATE_FAILED = "gate failed"
+
+class Kind(Enum):
+    """What a week's Refit came to, valued as the run summary names it."""
+
+    SKIPPED = "skipped"
+    PROMOTED = "promoted"
+    GATE_FAILED = "gate failed"
 
 
 class PinnedDataError(RuntimeError):
@@ -247,7 +251,7 @@ class Verdict:
     A week that is not skipped carries what was fitted and the gate's report
     on it; a promoted one carries the Candidate Head too."""
 
-    kind: str
+    kind: Kind
     reason: str
     report: Report
     fit: Fit | None = None
@@ -255,7 +259,7 @@ class Verdict:
     head: ProbeHead | None = None
 
     def __str__(self) -> str:
-        parts = [f"Refit {self.kind}: {self.reason}", str(self.report)]
+        parts = [f"Refit {self.kind.value}: {self.reason}", str(self.report)]
         if self.fit is not None:
             parts.append(str(self.fit))
         if self.gate is not None:
@@ -528,13 +532,15 @@ def run(folder: str | Path, decision: FallDecision, checkpoint=None,
         eval_genuine=sum(a.outcome is Outcome.GENUINE for a in evals),
         training_hash=training_hash(a.event_id for a in training))
     if report.new_training < MIN_NEW:
-        return Verdict(SKIPPED, f"{report.new_training} new training Alerts "
-                                f"since the deployed Camera Head was fitted, "
-                                f"fewer than {MIN_NEW}", report)
+        return Verdict(Kind.SKIPPED,
+                       f"{report.new_training} new training Alerts since the "
+                       f"deployed Camera Head was fitted, fewer than {MIN_NEW}",
+                       report)
     if not report.new_genuine:
-        return Verdict(SKIPPED, f"no new Genuine training Alert among the "
-                                f"{report.new_training} since the deployed "
-                                f"Camera Head was fitted", report)
+        return Verdict(Kind.SKIPPED,
+                       f"no new Genuine training Alert among the "
+                       f"{report.new_training} since the deployed Camera Head "
+                       f"was fitted", report)
 
     if checkpoint is None:
         checkpoint = _Checkpoint(decision.checkpoints[0])
@@ -550,6 +556,6 @@ def run(folder: str | Path, decision: FallDecision, checkpoint=None,
         checkpoint.classifier(candidate), _heldout(folder, decision.pose),
         [_eval_clip(a) for a in evals], seq_len=checkpoint.seq_len)
     if not gate.passed:
-        return Verdict(GATE_FAILED, gate.reason, report, fit, gate)
+        return Verdict(Kind.GATE_FAILED, gate.reason, report, fit, gate)
     candidate = dataclasses.replace(candidate, gate=str(gate))
-    return Verdict(PROMOTED, gate.reason, report, fit, gate, candidate)
+    return Verdict(Kind.PROMOTED, gate.reason, report, fit, gate, candidate)
