@@ -129,6 +129,16 @@ class ProbeHead:
     #: (`data/keypoints/<pose>/`). Empty for a head saved before 2026-10-30,
     #: which recorded only its checkpoint.
     pose: str = ""
+    #: What a Refit records on the Candidate Head it fits, so a deployed head
+    #: can be traced back to the Refit that produced it: when it was fitted
+    #: (ISO 8601 with its time zone), the SHA-256 of the sorted Event IDs it
+    #: was fitted on (`fallcore.refit.training_hash`), and the Promotion
+    #: Gate's report on it. Counts and a hash only, never an Event ID (ADR
+    #: 0002). Empty for a head fitted by hand, which every head before the
+    #: first Promotion is.
+    fitted_at: str = ""
+    training_hash: str = ""
+    gate: str = ""
 
     @property
     def dim(self) -> int:
@@ -172,7 +182,9 @@ class ProbeHead:
                  intercept=self.intercept, backbone=self.backbone,
                  features=self.features, seq_len=self.seq_len,
                  # A plain unicode array, so loading never needs allow_pickle.
-                 extra=np.array(self.extra, dtype="<U32"), pose=self.pose)
+                 extra=np.array(self.extra, dtype="<U32"), pose=self.pose,
+                 fitted_at=self.fitted_at, training_hash=self.training_hash,
+                 gate=self.gate)
         return path
 
     @classmethod
@@ -181,11 +193,17 @@ class ProbeHead:
         # `extra` is absent from every head saved before 2026-09-24; those are
         # embedding-only and must keep loading untouched.
         extra = tuple(str(s) for s in blob["extra"]) if "extra" in blob else ()
+
+        def text(name: str) -> str:
+            # Absent from heads saved before the field existed.
+            return str(blob[name]) if name in blob else ""
+
         return cls(mean=blob["mean"], scale=blob["scale"], coef=blob["coef"],
                    intercept=np.atleast_1d(blob["intercept"]),
                    backbone=str(blob["backbone"]), features=str(blob["features"]),
                    seq_len=int(blob["seq_len"]), extra=extra,
-                   pose=str(blob["pose"]) if "pose" in blob else "")
+                   pose=text("pose"), fitted_at=text("fitted_at"),
+                   training_hash=text("training_hash"), gate=text("gate"))
 
 
 def fit(embeddings: np.ndarray, labels, C: float = 1.0,
