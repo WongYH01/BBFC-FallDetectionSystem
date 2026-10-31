@@ -39,6 +39,7 @@ Results are appended to `runs/metrics/calibration_head.csv`.
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -103,6 +104,8 @@ def main() -> int:
                          "are No-Fall and ones that cut it are dropped (the "
                          "yolo26m head; see segment_labels)")
     args = ap.parse_args()
+    # fallcore.head_fitting reports what it adds through logging.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     man = picam.scan()
     clips = picam.build_clips(man, scale=args.scale, seq_len=cfg.FINAL_TRAIN.seq_len,

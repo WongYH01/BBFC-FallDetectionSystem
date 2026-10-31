@@ -13,11 +13,14 @@ Refit's mirrored bucket, a test's stubs) passes its own.
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from . import calibrate
 from . import config as cfg
 
+log = logging.getLogger(__name__)
 
 #: Rows in half a second, at the row rate every window is cut at.
 HALF_S = round(0.5 * calibrate.ROW_HZ)
@@ -164,9 +167,9 @@ class NobodyNegatives:
             kin = (np.stack([calibrate.window_kinematics(w) for w in windows])
                    if self.kinematics else None)
             self._built[key] = (self.embed(windows), kin)
-            print(f"nobody-visible windows: {len(windows)} labelled No-Fall "
-                  f"({len(windows) // self.copies} flavours x {self.copies} "
-                  f"copies, from {len(key)} ADL clips)", flush=True)
+            log.info("nobody-visible windows: %d labelled No-Fall (%d "
+                     "flavours x %d copies, from %d ADL clips)", len(windows),
+                     len(windows) // self.copies, self.copies, len(key))
         return self._built[key]
 
 
