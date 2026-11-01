@@ -118,7 +118,7 @@ jobs:
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             echo "::error::a Promotion runs only from main"; exit 1
           fi
-          python scripts/promote_head.py "$RUNNER_TEMP/promote/head.npz"
+          python scripts/promote_head.py "$RUNNER_TEMP/promote/head.npz" "refit-$GITHUB_RUN_ID"
 
       - name: Verify the new pin
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true

@@ -1,11 +1,12 @@
 """Promote a Candidate Head: the refit workflow's upload step (ADR 0003).
 
-    HF_WRITE_TOKEN=hf_... python scripts/promote_head.py <head.npz>
+    HF_WRITE_TOKEN=hf_... python scripts/promote_head.py <head.npz> <branch>
 
 Uploads the head to the weights repository under the deployed head's name,
-as a commit on top of the revision `fetch_weights.py` pins, so the new
-revision differs from the deployed one by the head alone, and the upload
-fails if the repository has moved on since. Then rewrites `fetch_weights.py`
+as a commit on a new `branch` made from the revision `fetch_weights.py`
+pins, so the new revision differs from the deployed one by the head alone.
+The repository's main never moves, so a Promotion whose PR is never opened
+or merged leaves nothing for the next one to trip on. Then rewrites `fetch_weights.py`
 to pin the new revision and the head's SHA-256, and nothing else: that file
 is the Promotion PR.
 
@@ -45,6 +46,7 @@ def repin(source: str, revision: str, sha256: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("head", help="the Candidate Head, as run_refit.py saved it")
+    ap.add_argument("branch", help="the weights repository branch to create")
     args = ap.parse_args(argv)
 
     from huggingface_hub import HfApi
@@ -53,11 +55,13 @@ def main(argv: list[str] | None = None) -> int:
     sha = fetch_weights.sha256(head)
     with np.load(head, allow_pickle=False) as blob:
         training_hash = str(blob["training_hash"])
-    info = HfApi().upload_file(
+    api, token = HfApi(), os.environ["HF_WRITE_TOKEN"]
+    api.create_branch(fetch_weights.DEFAULT_REPO, branch=args.branch,
+                      revision=fetch_weights.DEFAULT_REVISION, token=token)
+    info = api.upload_file(
         path_or_fileobj=str(head), path_in_repo=HEAD,
-        repo_id=fetch_weights.DEFAULT_REPO,
-        token=os.environ["HF_WRITE_TOKEN"],
-        parent_commit=fetch_weights.DEFAULT_REVISION,
+        repo_id=fetch_weights.DEFAULT_REPO, token=token,
+        revision=args.branch, parent_commit=fetch_weights.DEFAULT_REVISION,
         commit_message=f"Promote a Refit head, training set SHA-256 "
                        f"{training_hash}")
     # Bytes in, bytes out, so the line endings are the checkout's.
