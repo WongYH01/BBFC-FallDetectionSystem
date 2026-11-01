@@ -18,4 +18,4 @@ images:
   newTag: main-5a051de3-1793377943 # {"$imagepolicy": "flux-system:notification:tag"}
 - name: detection
   newName: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection
-  newTag: main-eaf63e00-1793368908 # {"$imagepolicy": "flux-system:detection:tag"}
+  newTag: main-13fc5d4d-1793524042 # {"$imagepolicy": "flux-system:detection:tag"}
