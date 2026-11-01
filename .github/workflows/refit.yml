@@ -6,8 +6,8 @@ name: refit
 #
 # On a Promotion the Candidate Head is uploaded to the weights repository and
 # the GitHub App opens a PR repinning it in fetch_weights.py, set to merge
-# itself once `gate` is green. Secrets: FALL_WEIGHTS_TOKEN (HF read),
-# HF_WRITE_TOKEN (HF write), REFIT_APP_ID and REFIT_APP_PRIVATE_KEY.
+# itself once `gate` is green. Secrets: FALL_WEIGHTS_TOKEN (HF read and
+# write), REFIT_APP_ID and REFIT_APP_PRIVATE_KEY.
 
 on:
   schedule:
@@ -121,7 +121,8 @@ jobs:
       - name: Upload the Candidate Head
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
         env:
-          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          # The read token has write scope too, so one secret serves both.
+          HF_WRITE_TOKEN: ${{ secrets.FALL_WEIGHTS_TOKEN }}
           PYTHONPATH: .
         run: |
           # The PR goes to main, so it must branch from main to change one file.
