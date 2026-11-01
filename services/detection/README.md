@@ -124,7 +124,7 @@ Dockerfile             python:3.12-slim + ffmpeg; torch from the CPU wheel index
 pyproject.toml         the `fallcore` package (`pip install -e .` from here)
 fallcore/              the pose + fall-decision pipeline v2 imports
 v2/                    the Flask app, detector and fall_recorder the service runs
-scripts/               fetch_weights, bench_pose, fit_calibration_head
+scripts/               fetch_weights, bench_pose, fit_calibration_head, run_refit
 models/ runs/          weights and checkpoints (gitignored; fetch_weights.py)
 requirements.txt       runtime pins (opencv headless; torch installed separately)
 service/config.py      Settings.from_env() -- ROOM_ID/ROOM_NAME required
