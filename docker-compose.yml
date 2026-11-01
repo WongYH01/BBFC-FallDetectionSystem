@@ -1,9 +1,9 @@
 # Whole system: db + storage + notification + detection.
 #
-#   docker compose --env-file .env.cloud up -d  cloud: Cloud SQL + GCS, no db/storage; the
-#                                               local deployment runs this, so its Alerts
-#                                               land in the bucket the Refit reads
-#   docker compose up -d                        local profile (default via COMPOSE_PROFILES in .env)
+#   docker compose up -d                        local profile (default via COMPOSE_PROFILES in .env);
+#                                               the local deployment runs this, so its Alerts
+#                                               stay out of the bucket the Refit reads
+#   docker compose --env-file .env.cloud up -d  cloud: Cloud SQL + GCS, no db/storage
 #   docker compose up -d db storage             infra only, for running Spring from the IDE
 #
 # Needs .env.cloud (copy .env.example.cloud) or .env (copy .env.example.local),
