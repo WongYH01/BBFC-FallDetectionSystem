@@ -16,7 +16,8 @@ clips and reports it honestly:
 The frozen backbone is never modified. The artefact is a ~1 KB head
 (mean/scale/coef/intercept) plus the checkpoint it belongs to; scoring a window
 costs one extra dot product after the forward pass the demo already does. The
-head itself lives in `fallcore.calibrate`.
+head itself lives in `fallcore.calibrate`, and the windows it is fitted on are
+chosen by `fallcore.head_fitting`, which the weekly Refit shares.
 
 A head is also a function of the pose backbone whose keypoints it was fitted
 on: `--scale` names that keypoint cache (`data/keypoints/<scale>/`), the head
@@ -38,6 +39,7 @@ Results are appended to `runs/metrics/calibration_head.csv`.
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -46,118 +48,8 @@ from sklearn.metrics import roc_auc_score
 
 from fallcore import calibrate, config as cfg, decide, picam, train as T
 from fallcore.fall_decision import DEPLOYED_CHECKPOINT, DEPLOYED_POSE
-
-
-#: Rows in half a second, at the row rate every window is cut at.
-HALF_S = round(0.5 * calibrate.ROW_HZ)
-
-
-def fall_row(scale: str, video_id: str) -> int:
-    """Start row of the fastest half second of hip descent in a whole clip.
-
-    The fall itself, as opposed to the standing before it or the lying after
-    it. Undetected rows are bridged, as `calibrate.window_kinematics` does.
-    """
-    from fallcore.extract import load_keypoints
-
-    kp = load_keypoints(scale, video_id)[::cfg.PREPROCESS.frame_stride]
-    hips = kp[:, [cfg.LEFT_HIP, cfg.RIGHT_HIP], :]
-    ok = (hips[:, :, 2] > 0.3).all(axis=1)
-    idx = np.flatnonzero(ok)
-    y = np.interp(np.arange(len(kp)), idx, hips[idx, :, 0].mean(axis=1))
-    return int(np.argmax(y[HALF_S:] - y[:-HALF_S]))
-
-
-def segment_labels(clips, scale: str, seq_len: int):
-    """`(keep, label)` per window when a fall clip's label follows its fall.
-
-    A fall clip is a few seconds of standing, about one second of falling, then
-    lying still. Clip labels call every one of its windows Fall; here a window
-    that ends before the fall is No-Fall (the same picture as walking), one that
-    holds the whole fastest half second or starts after it is Fall, and one
-    that cuts the fall in part is dropped. ADL windows stay No-Fall. On the
-    picam sessions this is what lets a yolo26m head keep the falls a clip-label
-    head misses in an unseen room (research/scripts/picam3_segments.py).
-    """
-    fall = clips.label.values == 1
-    rows = {v: fall_row(scale, v) for v in clips.video_id[fall].unique()}
-    e = clips.video_id.map(rows)
-    end = clips.start + seq_len - 1
-    pre = (end < e).values
-    holds = ((clips.start <= e) & (e + HALF_S <= end)).values
-    post = (clips.start > e + HALF_S).values
-    label = np.where(fall & pre, 0, clips.label.values)
-    keep = ~fall | pre | holds | post
-    return keep, label
-
-
-def nobody_windows(model, mcfg, tcfg, clips, meta, copies: int = 10,
-                   scale: str = "yolo26n"):
-    """Synthetic "nobody visible" windows, to be fitted as No-Fall.
-
-    The head otherwise inherits -- and amplifies -- the room's dropout artifact:
-    in picam's own fall clips the pose model loses the subject for about half of
-    a `fall forward` window against ~1% of an ADL window, so "sixty frames of
-    zeros" is a *fall* cue in the fitting data. A live camera produces that input
-    every time the room empties, and the head scored it 0.9999, i.e. a
-    self-sustaining false alarm once the rolling mean latches.
-
-    Three flavours, all unambiguously not a fall:
-
-    * all-zero windows (nobody detected at all);
-    * sparse-detection windows (two joints found, near the origin -- what a
-      backlit or half-occluded frame leaves behind);
-    * real ADL windows with the tail 25/50/75% zeroed, which is what a person
-      leaving frame or walking behind furniture actually produces. Built from
-      `clips`, so they carry this room's own pose statistics.
-
-    Fitted into the training folds only; the held-out subject never sees them.
-    Measured effect on the LOSO score of the multi-scale backbone: AUC
-    0.9923 -> 0.9909, rolling b4/b8 F1 unchanged at 0.967 (1 FP, 1 FN), while
-    P(fall | all-zero window) falls 0.9999 -> 0.0077.
-    """
-    from fallcore.data import build_features, prepare_sequence, take_window
-    from fallcore.extract import load_keypoints
-
-    T_, K = tcfg.seq_len, cfg.N_KEYPOINTS
-    rng = np.random.default_rng(0)
-    out = [np.zeros((T_, K, 3), dtype=np.float32)]
-
-    sparse = np.zeros((T_, K, 3), dtype=np.float32)
-    lo = 1 + int(0.8 * T_)
-    sparse[lo:, [0, 5], 0] = rng.uniform(0.0, 0.08, (T_ - lo, 2))
-    sparse[lo:, [0, 5], 1] = rng.uniform(0.0, 0.08, (T_ - lo, 2))
-    sparse[lo:, [0, 5], 2] = 0.4
-    out.append(sparse)
-
-    adl = clips[clips.label == 0].video_id.drop_duplicates().head(6).tolist()
-    for vid in adl:
-        seq = prepare_sequence(load_keypoints(scale, vid), None,
-                               cfg.PREPROCESS.frame_stride)
-        ref = take_window(seq, T_, start=0)
-        for frac in (0.25, 0.50, 0.75):
-            cut = int(T_ * (1 - frac))
-            w = ref.copy()
-            w[cut:] = 0.0
-            out.append(w.astype(np.float32))
-
-    windows = []
-    for w in out:
-        windows.extend([w] * copies)
-    return np.stack(windows)
-
-
-def embed_windows(model, mcfg, tcfg, windows, device: str = "cpu"):
-    """Pooled embeddings for raw (n, T, 17, 3) windows, backbone frozen."""
-    import torch
-
-    from fallcore.data import build_features
-
-    x = np.stack([build_features(w, mcfg.features) for w in windows])
-    model.to(device).eval()
-    with torch.no_grad():
-        h = model.encoder(model.embed(torch.from_numpy(x).float().to(device)))
-        return model._pool(h).cpu().numpy()
+from fallcore.head_fitting import (NobodyNegatives, embed_windows,
+                                   fold_fitting_set, segment_labels)
 
 
 def report(name, prob, clips, clip_labels) -> list[dict]:
@@ -212,6 +104,8 @@ def main() -> int:
                          "are No-Fall and ones that cut it are dropped (the "
                          "yolo26m head; see segment_labels)")
     args = ap.parse_args()
+    # fallcore.head_fitting reports what it adds through logging.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     man = picam.scan()
     clips = picam.build_clips(man, scale=args.scale, seq_len=cfg.FINAL_TRAIN.seq_len,
@@ -235,30 +129,17 @@ def main() -> int:
           f"({keep.sum()} fitted, {args.labels} labels), "
           f"{clips.video_id.nunique()} clips, embedding {emb.shape[1]}", flush=True)
 
-    syn_emb = syn_y = None
+    negatives = None
     if args.empty_negatives > 0:
-        windows = nobody_windows(model, mcfg, tcfg, clips, meta,
-                                 copies=args.empty_negatives, scale=args.scale)
-        syn_emb = embed_windows(model, mcfg, tcfg, windows, device="cpu")
-        syn_y = np.zeros(len(syn_emb), dtype=int)
-        # A window nobody is visible in has no measurable descent; zeros are
-        # the honest value and are what `window_kinematics` returns for it.
-        syn_ext = (np.stack([calibrate.window_kinematics(w) for w in windows])
-                   if args.extra_kinematics else None)
-        print(f"nobody-visible windows: {len(syn_emb)} labelled No-Fall "
-              f"({len(syn_emb) // args.empty_negatives} flavours x "
-              f"{args.empty_negatives} copies)", flush=True)
+        negatives = NobodyNegatives(
+            tcfg.seq_len, lambda w: embed_windows(model, mcfg, w, device="cpu"),
+            copies=args.empty_negatives, pose=args.scale,
+            kinematics=args.extra_kinematics)
 
     def fit_fold(train_mask):
         """Fit a head on the masked real windows plus the synthetic negatives."""
-        train_mask = train_mask & keep
-        e, lab = emb[train_mask], y[train_mask]
-        x = ext[train_mask] if ext is not None else None
-        if syn_emb is not None:
-            e = np.concatenate([e, syn_emb])
-            lab = np.concatenate([lab, syn_y])
-            if x is not None:
-                x = np.concatenate([x, syn_ext])
+        e, lab, x = fold_fitting_set(train_mask, clips, emb, y, keep, ext,
+                                     negatives)
         return calibrate.fit(e, lab, backbone=args.ckpt, features=mcfg.features,
                              seq_len=tcfg.seq_len, extras=x,
                              extra_names=extra_names, pose=args.scale)

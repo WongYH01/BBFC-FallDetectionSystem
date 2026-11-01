@@ -1,4 +1,4 @@
-"""fallcore.extract.subject_row / sightings: one pose result -> cache rows.
+"""fallcore.extract.subject_row / sightings / largest_row: pose -> cache rows.
 
 The functions are the seam. These tests hand it fake pose results shaped like
 an Ultralytics `Results` (boxes, keypoints, orig_shape), so no pose model runs.
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from fallcore.extract import sightings, subject_row
+from fallcore.extract import largest_row, sightings, subject_row
 
 
 class FakeBoxes:
@@ -103,6 +103,25 @@ class SightingsTest(unittest.TestCase):
         found, _ = sightings(fake_result([], ids=[]))
 
         self.assertEqual(found, [])
+
+
+class LargestRowTest(unittest.TestCase):
+    """A frame's sightings -> the row `subject_row` gives for the same frame,
+    for a replay that holds sightings rather than a pose result."""
+
+    def test_the_subject_is_the_one_subject_row_picks(self):
+        small = ((0, 0, 40, 20), (40.0, 20.0, 0.3))
+        large = ((100, 0, 400, 200), (300.0, 50.0, 0.9))
+        result = fake_result([small, large], ids=[4, 9])
+
+        np.testing.assert_array_equal(largest_row(sightings(result)[0]),
+                                      subject_row(result)[0])
+
+    def test_nobody_in_view_is_a_row_of_zeros(self):
+        row = largest_row([])
+
+        np.testing.assert_array_equal(row, np.zeros((17, 3), dtype=np.float32))
+        self.assertEqual(row.dtype, np.float32)
 
 
 if __name__ == "__main__":

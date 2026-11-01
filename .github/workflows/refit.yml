@@ -1,0 +1,97 @@
+name: refit
+
+# The weekly Refit (ADR 0003). Keypoint Files are downloaded into the runner's
+# temp folder, used and discarded: never uploaded as an artifact or cached,
+# and no step logs an Alert's object name (ADR 0002).
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Stop before uploading anything (every run does for now)
+        type: boolean
+        default: true
+
+concurrency:
+  group: refit
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  refit:
+    name: Refit the Camera Head
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: services/detection
+
+    env:
+      BUCKET: gs://fyp-elderly-detection-clips
+      # The live rule, as services/detection/.env.example runs it
+      BUFFER_LEN: '2'
+      FALL_CLEAR_WINDOWS: '1'
+      STREAM_FRAME_STRIDE: '1'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/detection/requirements.txt
+
+      - name: Install torch CPU
+        run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 torchvision==0.28.0
+
+      - name: Install requirements
+        run: pip install -r requirements.txt scikit-learn==1.9.1
+
+      - name: Authenticate to GCP
+        uses: 'google-github-actions/auth@v3'
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Mirror the bucket
+        run: |
+          mirror="$RUNNER_TEMP/refit/keypoints"
+          mkdir -p "$mirror"
+          # keypoints/incoming is never used, so not mirrored: its count reads 0.
+          # Pinned clips are named in the manifest in git, so their errors may show.
+          for prefix in commissioning heldout; do
+            gcloud storage rsync -r "$BUCKET/keypoints/$prefix" "$mirror/$prefix" > /dev/null
+          done
+          # An Alert's object name is its Event ID: withhold rsync's output.
+          if gcloud storage ls "$BUCKET/keypoints/labelled/" > /dev/null 2> "$RUNNER_TEMP/ls.err"; then
+            gcloud storage rsync -r "$BUCKET/keypoints/labelled" "$mirror/labelled" > /dev/null 2>&1 \
+              || { echo "::error::could not mirror keypoints/labelled"; exit 1; }
+          elif ! grep -q 'matched no objects' "$RUNNER_TEMP/ls.err"; then
+            cat "$RUNNER_TEMP/ls.err" >&2
+            exit 1
+          fi
+          cp refit/pinned.sha256 "$RUNNER_TEMP/refit/pinned.sha256"
+
+      - name: Fetch the deployed weights
+        env:
+          FALL_WEIGHTS_TOKEN: ${{ secrets.FALL_WEIGHTS_TOKEN }}
+        run: |
+          printf 'FALL_WEIGHTS_TOKEN=%s\n' "$FALL_WEIGHTS_TOKEN" > "$RUNNER_TEMP/detection.env"
+          python scripts/fetch_weights.py --env-file "$RUNNER_TEMP/detection.env"
+
+      - name: Run the Refit
+        env:
+          PYTHONPATH: .
+        run: |
+          echo "Dry run: nothing is uploaded." >> "$GITHUB_STEP_SUMMARY"
+          python scripts/run_refit.py "$RUNNER_TEMP/refit"

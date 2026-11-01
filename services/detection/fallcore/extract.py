@@ -74,8 +74,19 @@ def _largest_person(result) -> int | None:
     if boxes is None or len(boxes) == 0:
         return None
     xyxy = boxes.xyxy.cpu().numpy()
-    areas = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
-    return int(np.argmax(areas))
+    return _largest((xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1]))
+
+
+def _largest(areas) -> int | None:
+    """Index of the biggest of `areas` (the first, on a tie), or None if
+    there are none: `_largest_person`'s rule, on boxes in any units."""
+    return int(np.argmax(areas)) if len(areas) else None
+
+
+def empty_row() -> np.ndarray:
+    """The row of a frame the subject is not in: zeros, which is how the
+    caches store absence and what the classifier was trained on."""
+    return np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
 
 
 def _cache_row(k: np.ndarray, h: int, w: int) -> np.ndarray:
@@ -103,7 +114,7 @@ def subject_row(result) -> tuple[np.ndarray, float]:
     that feeds a stream rows without it scores a squashed body.
     """
     h, w = result.orig_shape
-    kp = np.zeros((cfg.N_KEYPOINTS, 3), dtype=np.float32)
+    kp = empty_row()
     idx = _largest_person(result)
     keypoints = getattr(result, "keypoints", None)
     if idx is not None and keypoints is not None and keypoints.data is not None \
@@ -151,6 +162,17 @@ def sightings(result) -> tuple[list[Sighting], float]:
             centre=((x1 + x2) / 2 / max(w, 1), (y1 + y2) / 2 / max(h, 1)),
             area=(x2 - x1) * (y2 - y1) / max(w * h, 1)))
     return out, w / max(h, 1)
+
+
+def largest_row(seen: Sequence[Sighting]) -> np.ndarray:
+    """`subject_row`'s row for a frame already turned into sightings: the
+    largest box's, or `empty_row` when nobody is in view.
+
+    For a replay of a Keypoint File, which records every tracked person
+    rather than the pose result the live loop gives `subject_row`.
+    """
+    idx = _largest([s.area for s in seen])
+    return empty_row() if idx is None else seen[idx].row
 
 
 def pose_device(model, device: str = "cuda") -> str:

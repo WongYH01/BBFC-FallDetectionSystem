@@ -39,20 +39,22 @@ camera -> MediaMTX (Pi) --RTSP--> detection service --POST /events-----------> n
 
 ## Run
 
+Compose runs the image CI pushed to Artifact Registry on the last merge to
+main (`bbfc-registry/detection:latest`) and pulls it on every start; the root
+README's "Run locally" has the registry login, the `cloud` profile and the
+weekly pull-and-restart task.
+
+```
+copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*
+docker compose --env-file .env.cloud up -d            # from the repo root
+```
+
 The image fetches its own weights during the build (`scripts/fetch_weights.py`
 in a build stage), so nothing has to be on the host. The build reads
-`FALL_WEIGHTS_TOKEN` from `.env`, which compose passes in as a build secret: the
-token is not in any layer of the image, and the running container gets it
-blanked.
-
-```
-copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*, FALL_WEIGHTS_TOKEN
-copy ..\..\.env.example.local ..\..\.env              # notification settings
-docker compose up -d --build                          # repo root docker-compose.yml
-```
-
-The weights stage is cached, so rebuilding for a code change does not download
-again; `docker compose build --no-cache detection` fetches them afresh.
+`FALL_WEIGHTS_TOKEN` from `.env` as a build secret: the token is not in any
+layer of the image, and the running container gets it blanked. Only a local
+build needs the token (the Dockerfile header has the command); the weights
+stage is cached, so rebuilding for a code change does not download again.
 
 The image holds one pose backbone, yolo26m (INT8, 384x640), and the camera
 head fitted on its keypoints. They are one choice, not settings: the detector
@@ -122,7 +124,7 @@ Dockerfile             python:3.12-slim + ffmpeg; torch from the CPU wheel index
 pyproject.toml         the `fallcore` package (`pip install -e .` from here)
 fallcore/              the pose + fall-decision pipeline v2 imports
 v2/                    the Flask app, detector and fall_recorder the service runs
-scripts/               fetch_weights, bench_pose, fit_calibration_head
+scripts/               fetch_weights, bench_pose, fit_calibration_head, run_refit
 models/ runs/          weights and checkpoints (gitignored; fetch_weights.py)
 requirements.txt       runtime pins (opencv headless; torch installed separately)
 service/config.py      Settings.from_env() -- ROOM_ID/ROOM_NAME required
