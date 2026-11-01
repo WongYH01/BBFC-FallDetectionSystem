@@ -109,21 +109,7 @@ jobs:
           python scripts/run_refit.py "$RUNNER_TEMP/refit" --promote-dir "$RUNNER_TEMP/promote"
 
       # Schedule runs have no inputs: a null dry_run is a real run.
-      - name: Upload the Candidate Head
-        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
-        env:
-          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
-        run: |
-          # The PR goes to main, so it must branch from main to change one file.
-          if [ "$GITHUB_REF" != refs/heads/main ]; then
-            echo "::error::a Promotion runs only from main"; exit 1
-          fi
-          python scripts/promote_head.py "$RUNNER_TEMP/promote/head.npz" "refit-$GITHUB_RUN_ID"
-
-      - name: Verify the new pin
-        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
-        run: python scripts/fetch_weights.py --force --root "$RUNNER_TEMP/verify" --env-file "$RUNNER_TEMP/detection.env"
-
+      # Minted first, so a broken App fails the run before anything is uploaded.
       - name: Mint the App token
         id: app
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
@@ -131,6 +117,23 @@ jobs:
         with:
           app-id: ${{ secrets.REFIT_APP_ID }}
           private-key: ${{ secrets.REFIT_APP_PRIVATE_KEY }}
+
+      - name: Upload the Candidate Head
+        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
+        env:
+          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          PYTHONPATH: .
+        run: |
+          # The PR goes to main, so it must branch from main to change one file.
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::a Promotion runs only from main"; exit 1
+          fi
+          # The attempt too, so re-running a red run does not hit its branch.
+          python scripts/promote_head.py "$RUNNER_TEMP/promote/head.npz" "refit-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+      - name: Verify the new pin
+        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
+        run: python scripts/fetch_weights.py --force --root "$RUNNER_TEMP/verify" --env-file "$RUNNER_TEMP/detection.env"
 
       - name: Open the Promotion PR
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
@@ -140,12 +143,12 @@ jobs:
         run: |
           set -euo pipefail
           file=services/detection/scripts/fetch_weights.py
-          branch="refit/promote-$GITHUB_RUN_ID"
+          branch="refit/promote-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           id=$(gh api "/users/$SLUG[bot]" --jq .id)
           git config user.name "$SLUG[bot]"
           git config user.email "$id+$SLUG[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git add scripts/fetch_weights.py
+          git -C "$GITHUB_WORKSPACE" add "$file"
           git commit -m "Promote the Refit's Candidate Head"
           # The PR may change the pinned revision and the head's hash, nothing else.
           numstat=$(git diff --numstat HEAD~1 HEAD)

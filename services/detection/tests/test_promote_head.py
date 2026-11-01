@@ -15,7 +15,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import fetch_weights
-from promote_head import HEAD, repin
+from promote_head import REMOTE_HEAD, repin
 
 SOURCE = (SCRIPTS / "fetch_weights.py").read_bytes().decode("utf-8")
 REVISION = "0123456789abcdef0123456789abcdef01234567"
@@ -29,7 +29,7 @@ class RepinTest(unittest.TestCase):
         self.assertIn(SHA, out)
         # Put the old values back: every other byte must be the original's.
         back = (out.replace(REVISION, fetch_weights.DEFAULT_REVISION)
-                .replace(SHA, fetch_weights.FILES[HEAD][1]))
+                .replace(SHA, fetch_weights.FILES[REMOTE_HEAD][1]))
         self.assertEqual(back, SOURCE)
 
     def test_the_rewritten_fetcher_pins_the_new_head(self):
@@ -37,14 +37,14 @@ class RepinTest(unittest.TestCase):
         exec(compile(repin(SOURCE, REVISION, SHA), "fetch_weights.py",
                      "exec"), pins)
         self.assertEqual(pins["DEFAULT_REVISION"], REVISION)
-        self.assertEqual(pins["FILES"][HEAD][1], SHA)
-        others = {k: v for k, v in pins["FILES"].items() if k != HEAD}
+        self.assertEqual(pins["FILES"][REMOTE_HEAD][1], SHA)
+        others = {k: v for k, v in pins["FILES"].items() if k != REMOTE_HEAD}
         self.assertEqual(others, {k: v for k, v in fetch_weights.FILES.items()
-                                  if k != HEAD})
+                                  if k != REMOTE_HEAD})
 
     def test_a_fetcher_it_does_not_recognise_is_refused(self):
         with self.assertRaises(ValueError):
-            repin(SOURCE.replace(HEAD, "checkpoints/renamed.npz"),
+            repin(SOURCE.replace(REMOTE_HEAD, "checkpoints/renamed.npz"),
                   REVISION, SHA)
 
 

@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None,
         verdict = refit.run(args.folder, decision)
         text, code = str(verdict), 0
         if verdict.kind is refit.Kind.PROMOTED and args.promote_dir:
-            _hand_off(verdict, Path(args.promote_dir), text, env)
+            _hand_off(verdict, Path(args.promote_dir), env)
     except refit.PinnedDataError as exc:
         text, code = f"Refit error: {exc}", 1
     except Exception as exc:
@@ -57,14 +57,14 @@ def main(argv: list[str] | None = None,
     return code
 
 
-def _hand_off(verdict: refit.Verdict, folder: Path, text: str,
+def _hand_off(verdict: refit.Verdict, folder: Path,
               env: Mapping[str, str]) -> None:
     """Save what the workflow promotes, then tell it to."""
     verdict.head.save(folder / "head.npz")
     # The report is the run summary's: published, so it names no Alert.
     (folder / "report.md").write_text(
         "The weekly Refit's Promotion (ADR 0003). It merges itself once "
-        f"`gate` is green.\n\n```text\n{text}\n```\n", encoding="utf-8")
+        f"`gate` is green.\n\n```text\n{verdict}\n```\n", encoding="utf-8")
     if env.get("GITHUB_OUTPUT"):
         with open(env["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
             fh.write("promoted=true\n")
