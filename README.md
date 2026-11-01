@@ -89,29 +89,26 @@ with read scope, no other auth path. `--check` verifies local files without one.
 The local Docker deployment runs the same images as GKE: the ones CI pushes
 to Artifact Registry on every merge to main, with the weights and the promoted
 camera head baked in. Compose pulls them on every start and builds nothing. It
-runs the `cloud` profile (Cloud SQL and the GCS bucket), so an Alert raised
-locally is filed in the same bucket as GKE's, under its Outcome once triaged,
-where the weekly Refit reads it. Only one of the two deployments runs at a time.
+runs the `local` profile (local Postgres and Supabase storage), so an Alert
+raised locally never reaches the GCS bucket: the local deployment is not
+training data, and the weekly Refit learns from GKE's Alerts alone. Only one of
+the two deployments runs at a time.
 
 Once, with the [gcloud CLI](https://cloud.google.com/sdk/docs/install) and an
-account that can read the registry (`roles/artifactregistry.reader`) and use
-Cloud SQL and the bucket:
+account that can read the registry (`roles/artifactregistry.reader`):
 
 ```
 gcloud auth login
 gcloud auth configure-docker asia-southeast1-docker.pkg.dev    # Docker pulls through gcloud
-gcloud auth application-default login                          # the notification service's GCP credentials
-copy .env.example.cloud .env.cloud                             # Cloud SQL URL, bucket, Telegram, GCLOUD_ADC_PATH
+copy .env.example.local .env                                   # Postgres, Supabase, Telegram
 copy services\detection\.env.example services\detection\.env   # ROOM_*, MEDIAMTX_*, stream login
 ```
 
-`CLIPS_GCS_BUCKET` is `tofu -chdir=infra/tofu/base output clip_bucket_name`;
-`GCLOUD_ADC_PATH` is the file the third command wrote,
-`%APPDATA%\gcloud\application_default_credentials.json`. Then:
+Then:
 
 ```
-docker compose --env-file .env.cloud up -d        # pulls notification and detection :latest
-docker compose --env-file .env.cloud logs -f detection
+docker compose up -d                  # pulls notification and detection :latest
+docker compose logs -f detection
 ```
 
 A running container never updates itself (Docker restarting it does not pull),
@@ -138,7 +135,7 @@ without pulling; the next pull puts main's image back:
 
 ```
 docker build --secret id=detection_env,src=services/detection/.env -t asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection:latest services/detection
-docker compose --env-file .env.cloud up -d --pull never detection
+docker compose up -d --pull never detection
 ```
 
 ## Three things worth knowing

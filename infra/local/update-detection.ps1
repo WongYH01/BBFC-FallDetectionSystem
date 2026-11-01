@@ -7,12 +7,12 @@
 # shows as the last run result, if the pull, the swap or the health check fails.
 # A failed pull leaves the running container as it was.
 #
-#   powershell -NoProfile -File infra\local\update-detection.ps1           # .env.cloud
+#   powershell -NoProfile -File infra\local\update-detection.ps1           # .env, the local profile
 #   powershell -NoProfile -File infra\local\update-detection.ps1 -WhatIf   # say what it would do
 [CmdletBinding(SupportsShouldProcess)]
 param(
     # Compose env file, relative to the repo root.
-    [string]$EnvFile = ".env.cloud",
+    [string]$EnvFile = ".env",
     # How long the new container may take to report healthy. The image's
     # HEALTHCHECK has a 60 s start period and a 30 s interval.
     [int]$HealthTimeoutSec = 300,

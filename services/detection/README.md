@@ -41,12 +41,13 @@ camera -> MediaMTX (Pi) --RTSP--> detection service --POST /events-----------> n
 
 Compose runs the image CI pushed to Artifact Registry on the last merge to
 main (`bbfc-registry/detection:latest`) and pulls it on every start; the root
-README's "Run locally" has the registry login, the `cloud` profile and the
+README's "Run locally" has the registry login, the `local` profile and the
 weekly pull-and-restart task.
 
 ```
 copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*
-docker compose --env-file .env.cloud up -d            # from the repo root
+copy ..\..\.env.example.local ..\..\.env              # notification settings
+docker compose up -d                                  # from the repo root
 ```
 
 The image fetches its own weights during the build (`scripts/fetch_weights.py`
