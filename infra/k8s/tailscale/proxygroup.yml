@@ -1,0 +1,8 @@
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyGroup
+metadata:
+  name: egress-pg
+spec:
+  type: egress
+  replicas: 1
+  proxyClass: static-ep

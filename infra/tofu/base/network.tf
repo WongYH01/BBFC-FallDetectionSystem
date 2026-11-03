@@ -33,3 +33,15 @@ resource "google_service_networking_connection" "sql_psa" {
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.sql_psa.name]
 }
+
+resource "google_compute_firewall" "tailscale_static_ep" {
+  name          = "bbfc-allow-tailscale-udp"
+  network       = google_compute_network.vpc.id
+  direction     = "INGRESS"
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "udp"
+    ports    = ["31641"]
+  }
+}
