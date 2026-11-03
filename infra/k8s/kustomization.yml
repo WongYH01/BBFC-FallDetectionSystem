@@ -10,6 +10,8 @@ resources:
 - detection/serviceaccount.yml
 - detection/secrets.yml
 - detection/statefulset.yml
+- tailscale/proxyclass.yml
+- tailscale/proxygroup.yml
 - tailscale/egress-service.yml
 # newTag gets updated by flux automatically
 images:
