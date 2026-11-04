@@ -11,7 +11,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 
-import com.bbfc.notification.config.DispatchConfig;
 import com.bbfc.notification.core.domain.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +36,7 @@ class DedupAlertServiceTest {
     @BeforeEach
     void setUp() {
         dedupAlertService = new DedupAlertService(
-                alertRepository, new DispatchConfig(java.time.Duration.ofSeconds(20)), clock);
+                alertRepository, new DispatchPolicy(java.time.Duration.ofSeconds(20)), clock);
         eventId = new EventId("FE-1");
         room = new RoomRef("room-12", "Block A - Room 12");
         confidence = new Confidence(0.67);

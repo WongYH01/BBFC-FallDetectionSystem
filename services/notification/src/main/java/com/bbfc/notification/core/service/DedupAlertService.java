@@ -1,6 +1,5 @@
 package com.bbfc.notification.core.service;
 
-import com.bbfc.notification.config.DispatchConfig;
 import com.bbfc.notification.core.domain.*;
 import org.springframework.stereotype.Service;
 
@@ -12,13 +11,13 @@ import java.time.Instant;
 @Service
 public class DedupAlertService {
     private final AlertRepository alertRepository;
-    private final DispatchConfig dispatchConfig;
+    private final DispatchPolicy dispatchPolicy;
     private final Clock clock;
 
 
-    public DedupAlertService(AlertRepository alertRepository, DispatchConfig dispatchConfig, Clock clock){
+    public DedupAlertService(AlertRepository alertRepository, DispatchPolicy dispatchPolicy, Clock clock){
         this.alertRepository = alertRepository;
-        this.dispatchConfig = dispatchConfig;
+        this.dispatchPolicy = dispatchPolicy;
         this.clock = clock;
     }
 
@@ -31,7 +30,7 @@ public class DedupAlertService {
                 .map(existing -> new Result(existing, false))
                 .orElseGet(() -> {
                     Instant now = clock.instant();
-                    Alert alert = Alert.receive(eventId, roomRef, confidence, now, now.plus(dispatchConfig.clipWait()));
+                    Alert alert = Alert.receive(eventId, roomRef, confidence, now, now.plus(dispatchPolicy.clipWait()));
                     return new Result(alertRepository.save(alert), true);
                 });
     }

@@ -1,6 +1,6 @@
 package com.bbfc.notification.core.service;
 
-import com.bbfc.notification.config.ClipConfig;
+import com.bbfc.notification.core.domain.UploadLimit;
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.AlertState;
 import com.bbfc.notification.core.domain.ClipAlreadyAttachedException;
@@ -33,19 +33,19 @@ public class AttachClipService {
     private final ClipRecorder clipRecorder;
     private final AlertDispatcher alertDispatcher;
     private final NotificationChannel notificationChannel;
-    private final ClipConfig clipConfig;
+    private final UploadLimit uploadLimit;
     private final Clock clock;
 
     public AttachClipService(
             AlertRepository alertRepository, ClipStore clipStore, ClipRecorder clipRecorder,
             AlertDispatcher alertDispatcher, NotificationChannel notificationChannel,
-            ClipConfig clipConfig, Clock clock) {
+            UploadLimit uploadLimit, Clock clock) {
         this.alertRepository = alertRepository;
         this.clipStore = clipStore;
         this.clipRecorder = clipRecorder;
         this.alertDispatcher = alertDispatcher;
         this.notificationChannel = notificationChannel;
-        this.clipConfig = clipConfig;
+        this.uploadLimit = uploadLimit;
         this.clock = clock;
     }
 
@@ -57,8 +57,8 @@ public class AttachClipService {
         if (alert.clip().isPresent()) {
             throw new ClipAlreadyAttachedException(eventId);
         }
-        if (content.sizeBytes() > clipConfig.maxBytes()) {
-            throw new ClipTooLargeException(content.sizeBytes(), clipConfig.maxBytes());
+        if (content.sizeBytes() > uploadLimit.maxBytes()) {
+            throw new ClipTooLargeException(content.sizeBytes(), uploadLimit.maxBytes());
         }
 
         String storageKey = clipStore.store(alert.room().roomId(), eventId, content);

@@ -1,6 +1,6 @@
 package com.bbfc.notification.core.service;
 
-import com.bbfc.notification.config.ClipConfig;
+import com.bbfc.notification.core.domain.UploadLimit;
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.ClipAlreadyAttachedException;
 import com.bbfc.notification.core.domain.Confidence;
@@ -59,7 +59,7 @@ class AttachClipServiceTest {
     void setUp() {
         service = new AttachClipService(
                 alertRepository, clipStore, clipRecorder, alertDispatcher, notificationChannel,
-                new ClipConfig(8_388_608L), Clock.fixed(NOW, ZoneOffset.UTC));
+                new UploadLimit(8_388_608L), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static ClipContent content(long sizeBytes) {
