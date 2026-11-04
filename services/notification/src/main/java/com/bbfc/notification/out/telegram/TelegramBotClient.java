@@ -15,6 +15,8 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.util.Optional;
 
+import tools.jackson.databind.json.JsonMapper;
+
 import com.bbfc.notification.config.TelegramConfig;
 import com.bbfc.notification.core.domain.CallbackCommand;
 import com.bbfc.notification.core.domain.EventId;
@@ -25,6 +27,7 @@ import com.bbfc.notification.core.port.NotificationChannel;
 import com.bbfc.notification.out.telegram.dto.SendAnimationResponse;
 import com.bbfc.notification.out.telegram.dto.SendMessageResponse;
 import com.bbfc.notification.out.telegram.dto.TelegramRequests.AnswerCallbackQuery;
+import com.bbfc.notification.out.telegram.dto.TelegramRequests.EditMessageCaption;
 import com.bbfc.notification.out.telegram.dto.TelegramRequests.EditMessageText;
 import com.bbfc.notification.out.telegram.dto.TelegramRequests.InlineKeyboardButton;
 import com.bbfc.notification.out.telegram.dto.TelegramRequests.ReplyMarkup;
@@ -48,26 +51,49 @@ public class TelegramBotClient implements NotificationChannel {
 
     @Override
     public long sendAlert(EventId eventId, String message) {
-        return send(message, ReplyMarkup.singleRow(new InlineKeyboardButton(
-                "✅ Acknowledge",
-                new CallbackCommand.Acknowledge(eventId).encode())));
+        return send(message, acknowledgeKeyboard(eventId), null);
     }
 
     @Override
-    public long sendTriageQuestion(EventId eventId, String message) {
+    public Optional<ClipDelivery> sendAlertWithClip(EventId eventId, String caption, ClipContent content) {
+        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+        parts.add("chat_id", chatGroupId);
+        parts.add("caption", caption);
+        parts.add("parse_mode", PARSE_MODE);
+        parts.add("reply_markup", JsonMapper.shared().writeValueAsString(acknowledgeKeyboard(eventId)));
+        return sendAnimation(parts, content, "Could not send the alert clip for " + eventId.eventId());
+    }
+
+    private static ReplyMarkup acknowledgeKeyboard(EventId eventId) {
+        return ReplyMarkup.singleRow(new InlineKeyboardButton(
+                "✅ Acknowledge",
+                new CallbackCommand.Acknowledge(eventId).encode()));
+    }
+
+    @Override
+    public long sendTriageQuestion(EventId eventId, String message, Long replyToMessageId) {
         return send(message, ReplyMarkup.singleRow(
                 new InlineKeyboardButton("👍 Genuine",
                         new CallbackCommand.Triage(eventId, Outcome.GENUINE).encode()),
                 new InlineKeyboardButton("🚫 False alarm",
-                        new CallbackCommand.Triage(eventId, Outcome.FALSE_ALARM).encode())));
+                        new CallbackCommand.Triage(eventId, Outcome.FALSE_ALARM).encode())), replyToMessageId);
     }
 
     @Override
-    public void closeMessage(long messageId, String text) {
+    public long sendEscalation(String message, Long replyToMessageId) {
+        return send(message, null, replyToMessageId);
+    }
+
+    @Override
+    public void closeMessage(long messageId, String text, boolean carriesClip) {
+        // Telegram rejects a text edit on a media message, so a clip's message is closed via its caption.
+        Object edit = carriesClip
+                ? new EditMessageCaption(chatGroupId, messageId, text, PARSE_MODE, ReplyMarkup.none())
+                : new EditMessageText(chatGroupId, messageId, text, PARSE_MODE, ReplyMarkup.none());
         try {
             restClient.post()
-                    .uri("/editMessageText")
-                    .body(new EditMessageText(chatGroupId, messageId, text, PARSE_MODE, ReplyMarkup.none()))
+                    .uri(carriesClip ? "/editMessageCaption" : "/editMessageText")
+                    .body(edit)
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientResponseException e) {
@@ -97,14 +123,9 @@ public class TelegramBotClient implements NotificationChannel {
         }
     }
 
-    @Override
-    public Optional<ClipDelivery> sendClipReply(long replyToMessageId, ClipContent content) {
+    private Optional<ClipDelivery> sendAnimation(
+            MultiValueMap<String, Object> parts, ClipContent content, String failureMessage) {
         try {
-            MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
-            parts.add("chat_id", chatGroupId);
-            parts.add("reply_to_message_id", String.valueOf(replyToMessageId));
-            // The alert message may have been deleted; the clip is still worth sending.
-            parts.add("allow_sending_without_reply", "true");
             parts.add("animation", new HttpEntity<>(asResource(content), mp4PartHeaders()));
 
             SendAnimationResponse response = restClient.post()
@@ -120,7 +141,7 @@ public class TelegramBotClient implements NotificationChannel {
             }
             return Optional.of(new ClipDelivery(response.result().fileId(), response.result().messageId()));
         } catch (RuntimeException e) {
-            log.warn("Could not send clip as a reply to message {}", replyToMessageId, e);
+            log.warn(failureMessage, e);
             return Optional.empty();
         }
     }
@@ -150,10 +171,12 @@ public class TelegramBotClient implements NotificationChannel {
         };
     }
 
-    private long send(String message, ReplyMarkup replyMarkup) {
+    // The alert message may have been deleted; a reply to it is still worth sending.
+    private long send(String message, ReplyMarkup replyMarkup, Long replyToMessageId) {
         SendMessageResponse response = restClient.post()
                 .uri("/sendMessage")
-                .body(new SendMessage(chatGroupId, message, PARSE_MODE, replyMarkup))
+                .body(new SendMessage(chatGroupId, message, PARSE_MODE, replyMarkup,
+                        replyToMessageId, replyToMessageId == null ? null : true))
                 .retrieve()
                 .body(SendMessageResponse.class);
 

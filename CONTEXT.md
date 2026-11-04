@@ -99,7 +99,7 @@ _Avoid_: noise (unqualified), variance
 ## Alerting
 
 **Alert**:
-The notification service's record of one fall incident, from the moment it is dispatched until a human has triaged it.
+The notification service's record of one fall incident, from the moment it is received until a human has triaged it.
 _Avoid_: event, notification, incident, alarm (on the notification side)
 
 **Event ID**:
@@ -110,13 +110,17 @@ _Avoid_: alert ID, incident ID
 The P(fall) attached to an Alert, read by humans as low, medium or high. Not the same thing as a keypoint confidence.
 _Avoid_: score, probability (in alerting)
 
+**Pending**:
+An Alert that has been received but not yet dispatched, waiting a short while for its Skeleton Clip. Responders cannot see or acknowledge it.
+_Avoid_: queued, held, waiting
+
 **Dispatch**:
-Sending an Alert's first message to the responders' Telegram chat.
+Sending an Alert's first message to the responders' Telegram chat, carrying its Skeleton Clip if the clip arrived in time.
 _Avoid_: send, notify
 
 **Escalation**:
-Re-sending an unacknowledged Alert on a fixed interval, up to a set number of repeats.
-_Avoid_: reminder, retry, nag
+A reply to the dispatch message about an unacknowledged Alert, sent on a fixed interval, up to a set number of repeats.
+_Avoid_: reminder, retry, nag, re-send
 
 **Exhausted**:
 An Alert that ran out of escalation repeats without being acknowledged. It can still be acknowledged late.

@@ -42,11 +42,11 @@ class AlertRepositoryAdapterTest {
 
     @Test 
     void saveThenFindByEventIdSucceeds() {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260910-0001"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
 
         alertRepositoryAdapter.save(alert);
@@ -63,13 +63,13 @@ class AlertRepositoryAdapterTest {
 
     @Test
     void messageIdsSurviveARoundTrip() {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260910-0002"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
-        alert.recordDispatchMessage(501L);
+        alert.dispatch(501L, true, Instant.parse("2026-09-16T10:01:20Z"));
         alert.recordEscalationMessage(502L);
         alert.recordEscalationMessage(503L);
         alert.recordFollowUpMessage(504L);
@@ -78,17 +78,19 @@ class AlertRepositoryAdapterTest {
         Alert reloaded = alertRepositoryAdapter.findByEventId(new EventId("FE-20260910-0002")).orElseThrow();
 
         assertThat(reloaded.dispatchMessageId()).contains(501L);
+        assertThat(reloaded.dispatchCarriesClip()).isTrue();
+        assertThat(reloaded.dispatchDeadline()).contains(Instant.parse("2026-09-16T10:00:00Z"));
         assertThat(reloaded.escalationMessageIds()).containsExactly(502L, 503L);
         assertThat(reloaded.followUpMessageId()).contains(504L);
     }
 
     @Test
     void findByEventIdForUpdateReturnsTheAlert() {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260910-0004"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
         alertRepositoryAdapter.save(alert);
 
@@ -105,11 +107,11 @@ class AlertRepositoryAdapterTest {
 
     @Test
     void clipSurvivesARoundTrip() {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260910-0005"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
         alert.attachClip(SkeletonClip.stored("room-12/FE-20260910-0005.mp4", Instant.parse("2026-09-16T10:05:00Z")));
         alert.recordClipDelivery("file-abc", 601L);
@@ -126,11 +128,11 @@ class AlertRepositoryAdapterTest {
 
     @Test
     void clipStoredButNotDeliveredSurvivesARoundTrip() {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260910-0006"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
         alert.attachClip(SkeletonClip.stored("room-12/FE-20260910-0006.mp4", Instant.parse("2026-09-16T10:05:00Z")));
 
@@ -142,11 +144,11 @@ class AlertRepositoryAdapterTest {
 
     @Test
     void emptyMessageIdArraySurvivesARoundTrip() {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260910-0003"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
 
         alertRepositoryAdapter.save(alert);

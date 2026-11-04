@@ -1,6 +1,6 @@
 package com.bbfc.notification.core.service;
 
-import com.bbfc.notification.config.ClipConfig;
+import com.bbfc.notification.core.domain.UploadLimit;
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.ClipAlreadyAttachedException;
 import com.bbfc.notification.core.domain.EventId;
@@ -8,16 +8,15 @@ import com.bbfc.notification.core.domain.SkeletonClip;
 import com.bbfc.notification.core.port.AlertRepository;
 import com.bbfc.notification.core.port.ClipContent;
 import com.bbfc.notification.core.port.ClipStore;
-import com.bbfc.notification.core.port.NotificationChannel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
-import java.util.Optional;
 
 /**
- * Stores the clip, then sends it to Telegram.
+ * Stores the clip, then dispatches a Pending alert with it. A clip arriving after a text Dispatch
+ * is stored but not posted.
  *
  * <p>Deliberately not transactional: the two uploads are independent, and a Telegram failure must
  * not undo the stored copy. Storage goes first because a delivery can later be retried from the
@@ -31,22 +30,22 @@ public class AttachClipService {
     private final AlertRepository alertRepository;
     private final ClipStore clipStore;
     private final ClipRecorder clipRecorder;
-    private final NotificationChannel notificationChannel;
-    private final ClipConfig clipConfig;
+    private final AlertDispatcher alertDispatcher;
+    private final UploadLimit uploadLimit;
     private final Clock clock;
 
     public AttachClipService(
             AlertRepository alertRepository, ClipStore clipStore, ClipRecorder clipRecorder,
-            NotificationChannel notificationChannel, ClipConfig clipConfig, Clock clock) {
+            AlertDispatcher alertDispatcher, UploadLimit uploadLimit, Clock clock) {
         this.alertRepository = alertRepository;
         this.clipStore = clipStore;
         this.clipRecorder = clipRecorder;
-        this.notificationChannel = notificationChannel;
-        this.clipConfig = clipConfig;
+        this.alertDispatcher = alertDispatcher;
+        this.uploadLimit = uploadLimit;
         this.clock = clock;
     }
 
-    /** @return true if the clip also reached Telegram. */
+    /** @return true if the clip went out as the dispatch animation. */
     public boolean attach(EventId eventId, ClipContent content) {
         Alert alert = alertRepository.findByEventId(eventId)
                 .orElseThrow(() -> new AlertNotFoundException(eventId));
@@ -54,27 +53,17 @@ public class AttachClipService {
         if (alert.clip().isPresent()) {
             throw new ClipAlreadyAttachedException(eventId);
         }
-        if (content.sizeBytes() > clipConfig.maxBytes()) {
-            throw new ClipTooLargeException(content.sizeBytes(), clipConfig.maxBytes());
+        if (content.sizeBytes() > uploadLimit.maxBytes()) {
+            throw new ClipTooLargeException(content.sizeBytes(), uploadLimit.maxBytes());
         }
 
         String storageKey = clipStore.store(alert.room().roomId(), eventId, content);
         clipRecorder.markStored(eventId, SkeletonClip.stored(storageKey, clock.instant()));
 
-        Optional<Long> replyTo = alert.dispatchMessageId();
-        if (replyTo.isEmpty()) {
-            log.warn("Clip stored for {} but there is no alert message to reply to", eventId.eventId());
-            return false;
+        if (alertDispatcher.dispatchWithClip(eventId, content).dispatchCarriesClip()) {
+            return true;
         }
-
-        return notificationChannel.sendClipReply(replyTo.get(), content)
-                .map(delivery -> {
-                    clipRecorder.markDelivered(eventId, delivery);
-                    return true;
-                })
-                .orElseGet(() -> {
-                    log.warn("Clip stored for {} but Telegram did not accept it", eventId.eventId());
-                    return false;
-                });
+        log.warn("Clip stored for {} but not posted: Telegram refused it or the alert went out as text", eventId.eventId());
+        return false;
     }
 }

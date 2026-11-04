@@ -7,6 +7,8 @@ import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.Outcome;
 import com.bbfc.notification.core.domain.RoomRef;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -18,7 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TemplateMessageRendererTest {
     private static TelegramConfig properties(String template) {
         return new TelegramConfig("token", "chat-id", "http://localhost", template,
-                "<b>Ref {eventId}</b> · {roomName}\n{handledLine}\n<b>Was this a genuine fall?</b>");
+                "<b>{roomName}</b>\n{handledLine}\n<b>Was this a genuine fall?</b>",
+                "⚠️ <b>{ordinal} escalation</b> · {roomName} · not yet acknowledged");
     }
 
     @Test
@@ -26,9 +29,9 @@ class TemplateMessageRendererTest {
         TemplateMessageRenderer templateMessageRenderer = new TemplateMessageRenderer(
                 properties("Fall in {roomName} at {time}, confidence {confidence}")
         );
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-1"), new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.9),
-                Instant.parse("2026-09-16T10:00:00Z"));
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z"));
 
         String rendered = templateMessageRenderer.render(alert, Instant.parse("2026-09-16T10:00:00Z"));
 
@@ -38,9 +41,9 @@ class TemplateMessageRendererTest {
     @Test
     void checkXSSDefense(){
         TemplateMessageRenderer renderer = new TemplateMessageRenderer(properties("{roomName}"));
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-1"), new RoomRef("room-12", "<script>alert(1)</script>"), new Confidence(0.67),
-                Instant.now());
+                Instant.now(), Instant.now());
 
         String rendered = renderer.render(alert, Instant.now());
 
@@ -55,11 +58,12 @@ class TemplateMessageRendererTest {
     private static final Instant HANDLED = Instant.parse("2026-09-16T10:03:00Z");
 
     private static Alert acknowledgedAlert(String responder) {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260916-0003"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.92),
-                DETECTED);
+                DETECTED, DETECTED);
+        alert.dispatch(501L, false, null);
         alert.acknowledge(responder, HANDLED);
         return alert;
     }
@@ -73,7 +77,6 @@ class TemplateMessageRendererTest {
         assertThat(rendered)
                 .contains("HANDLED")
                 .contains("Block A - Room 12")
-                .contains("FE-20260916-0003")
                 .contains("@nurse_lim")
                 .contains(CLOCK_TIME.format(DETECTED))
                 .contains(CLOCK_TIME.format(HANDLED));
@@ -87,7 +90,6 @@ class TemplateMessageRendererTest {
 
         assertThat(rendered)
                 .contains("Was this a genuine fall?")
-                .contains("FE-20260916-0003")
                 .contains("@nurse_lim");
     }
 
@@ -109,6 +111,42 @@ class TemplateMessageRendererTest {
 
         assertThat(renderer.renderAcknowledged(alert)).doesNotContain("<script>").contains("&lt;script&gt;");
         assertThat(renderer.renderTriageQuestion(alert)).doesNotContain("<script>").contains("&lt;script&gt;");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"1,1st", "2,2nd", "3,3rd", "4,4th", "11,11th", "12,12th", "13,13th", "21,21st", "22,22nd", "111,111th"})
+    void renderEscalationNumbersTheEscalationInEnglish(int escalations, String ordinal) {
+        TemplateMessageRenderer renderer = new TemplateMessageRenderer(properties("{roomName}"));
+        Alert alert = Alert.receive(
+                new EventId("FE-1"), new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.9), DETECTED, DETECTED);
+        alert.dispatch(501L, false, null);
+        for (int i = 0; i < escalations; i++) {
+            alert.escalate(DETECTED);
+        }
+
+        assertThat(renderer.renderEscalation(alert))
+                .isEqualTo("⚠️ <b>" + ordinal + " escalation</b> · Block A - Room 12 · not yet acknowledged");
+    }
+
+    @Test
+    void eventIdIsNoLongerAPlaceholder() {
+        assertThatThrownBy(() -> new TemplateMessageRenderer(properties("{roomName} Ref {eventId}")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("message-template")
+                .hasMessageContaining("eventId");
+        assertThatThrownBy(() -> new TemplateMessageRenderer(new TelegramConfig(
+                "token", "chat-id", "http://localhost", "{roomName}", "Ref {eventId}", "{ordinal}")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("triage-question-template");
+    }
+
+    @Test
+    void rejectsAnUnknownPlaceholderInTheEscalationTemplate() {
+        assertThatThrownBy(() -> new TemplateMessageRenderer(new TelegramConfig(
+                "token", "chat-id", "http://localhost", "{roomName}", "{roomName}", "{ordinal} {time}")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("escalation-template")
+                .hasMessageContaining("time");
     }
 
     @Test

@@ -15,4 +15,7 @@ public interface AlertRepository {
     Optional<Alert> findByEventIdForUpdate(EventId eventId);
 
     List<Alert> findDueForEscalation(Instant now, int limit);
+
+    /** Pending alerts past their dispatch deadline, locked; rows another transaction holds are skipped. */
+    List<Alert> findDueForDispatch(Instant now, int limit);
 }

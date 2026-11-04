@@ -1,6 +1,6 @@
 package com.bbfc.notification.core.service;
 
-import com.bbfc.notification.config.ClipConfig;
+import com.bbfc.notification.core.domain.UploadLimit;
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.ClipAlreadyAttachedException;
 import com.bbfc.notification.core.domain.Confidence;
@@ -9,10 +9,8 @@ import com.bbfc.notification.core.domain.RoomRef;
 import com.bbfc.notification.core.domain.SkeletonClip;
 import com.bbfc.notification.core.port.AlertRepository;
 import com.bbfc.notification.core.port.ClipContent;
-import com.bbfc.notification.core.port.ClipDelivery;
 import com.bbfc.notification.core.port.ClipStorageException;
 import com.bbfc.notification.core.port.ClipStore;
-import com.bbfc.notification.core.port.NotificationChannel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -49,56 +47,61 @@ class AttachClipServiceTest {
     @Mock
     private ClipRecorder clipRecorder;
     @Mock
-    private NotificationChannel notificationChannel;
+    private AlertDispatcher alertDispatcher;
 
     private AttachClipService service;
 
     @BeforeEach
     void setUp() {
         service = new AttachClipService(
-                alertRepository, clipStore, clipRecorder, notificationChannel,
-                new ClipConfig(8_388_608L), Clock.fixed(NOW, ZoneOffset.UTC));
+                alertRepository, clipStore, clipRecorder, alertDispatcher,
+                new UploadLimit(8_388_608L), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     private static ClipContent content(long sizeBytes) {
         return new ClipContent("FE-1.mp4", "video/mp4", sizeBytes, () -> new ByteArrayInputStream(BYTES));
     }
 
-    private static Alert dispatchedAlert() {
-        Alert alert = Alert.dispatch(
+    private static Alert pendingAlert() {
+        return Alert.receive(
                 EVENT_ID,
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.92),
-                Instant.parse("2026-09-16T10:00:00Z"));
-        alert.recordDispatchMessage(501L);
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:20Z"));
+    }
+
+    private static Alert dispatchedAlert(boolean carriesClip) {
+        Alert alert = pendingAlert();
+        alert.dispatch(501L, carriesClip, null);
         return alert;
     }
 
+    private static Alert dispatchedAlert() {
+        return dispatchedAlert(false);
+    }
+
     @Test
-    void storesTheClipThenSendsItAsAReply() {
-        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(dispatchedAlert()));
+    void aClipForAPendingAlertIsStoredThenDispatchedWithIt() {
+        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(pendingAlert()));
         given(clipStore.store(eq("room-12"), eq(EVENT_ID), any())).willReturn("room-12/FE-1.mp4");
-        given(notificationChannel.sendClipReply(eq(501L), any()))
-                .willReturn(Optional.of(new ClipDelivery("file-abc", 601L)));
+        given(alertDispatcher.dispatchWithClip(eq(EVENT_ID), any())).willReturn(dispatchedAlert(true));
 
         boolean sent = service.attach(EVENT_ID, content(1024));
 
         assertThat(sent).isTrue();
         verify(clipRecorder).markStored(EVENT_ID, SkeletonClip.stored("room-12/FE-1.mp4", NOW));
-        verify(clipRecorder).markDelivered(EVENT_ID, new ClipDelivery("file-abc", 601L));
     }
 
     @Test
-    void aRejectedTelegramSendStillLeavesTheClipStored() {
-        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(dispatchedAlert()));
+    void aClipThatDidNotGoOutAsTheDispatchAnimationIsOnlyStored() {
+        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(pendingAlert()));
         given(clipStore.store(any(), any(), any())).willReturn("room-12/FE-1.mp4");
-        given(notificationChannel.sendClipReply(any(Long.class), any())).willReturn(Optional.empty());
+        given(alertDispatcher.dispatchWithClip(eq(EVENT_ID), any())).willReturn(dispatchedAlert(false));
 
         boolean sent = service.attach(EVENT_ID, content(1024));
 
         assertThat(sent).isFalse();
-        verify(clipRecorder).markStored(any(), any());
-        verify(clipRecorder, never()).markDelivered(any(), any());
+        verify(clipRecorder).markStored(EVENT_ID, SkeletonClip.stored("room-12/FE-1.mp4", NOW));
     }
 
     @Test
@@ -108,7 +111,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
                 .isInstanceOf(AlertNotFoundException.class);
 
-        verifyNoInteractions(clipStore, notificationChannel, clipRecorder);
+        verifyNoInteractions(clipStore, clipRecorder, alertDispatcher);
     }
 
     @Test
@@ -120,7 +123,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
                 .isInstanceOf(ClipAlreadyAttachedException.class);
 
-        verifyNoInteractions(clipStore, notificationChannel, clipRecorder);
+        verifyNoInteractions(clipStore, clipRecorder, alertDispatcher);
     }
 
     @Test
@@ -130,7 +133,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(8_388_609L)))
                 .isInstanceOf(ClipTooLargeException.class);
 
-        verifyNoInteractions(clipStore, notificationChannel, clipRecorder);
+        verifyNoInteractions(clipStore, clipRecorder, alertDispatcher);
     }
 
     @Test
@@ -141,24 +144,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
                 .isInstanceOf(ClipStorageException.class);
 
-        verifyNoInteractions(notificationChannel);
+        verifyNoInteractions(alertDispatcher);
         verify(clipRecorder, never()).markStored(any(), any());
-    }
-
-    @Test
-    void withoutAnAlertMessageTheClipIsStoredButNotSent() {
-        Alert alert = Alert.dispatch(
-                EVENT_ID,
-                new RoomRef("room-12", "Block A - Room 12"),
-                new Confidence(0.92),
-                Instant.parse("2026-09-16T10:00:00Z"));
-        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(alert));
-        given(clipStore.store(any(), any(), any())).willReturn("room-12/FE-1.mp4");
-
-        boolean sent = service.attach(EVENT_ID, content(1024));
-
-        assertThat(sent).isFalse();
-        verify(clipRecorder).markStored(any(), any());
-        verifyNoInteractions(notificationChannel);
     }
 }

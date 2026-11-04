@@ -16,7 +16,9 @@ public final class TelegramRequests {
             @JsonProperty("chat_id") String chatId,
             String text,
             @JsonProperty("parse_mode") String parseMode,
-            @JsonProperty("reply_markup") ReplyMarkup replyMarkup
+            @JsonProperty("reply_markup") ReplyMarkup replyMarkup,
+            @JsonProperty("reply_to_message_id") Long replyToMessageId,
+            @JsonProperty("allow_sending_without_reply") Boolean allowSendingWithoutReply
     ) {
     }
 
@@ -25,6 +27,16 @@ public final class TelegramRequests {
             @JsonProperty("chat_id") String chatId,
             @JsonProperty("message_id") long messageId,
             String text,
+            @JsonProperty("parse_mode") String parseMode,
+            @JsonProperty("reply_markup") ReplyMarkup replyMarkup
+    ) {
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record EditMessageCaption(
+            @JsonProperty("chat_id") String chatId,
+            @JsonProperty("message_id") long messageId,
+            String caption,
             @JsonProperty("parse_mode") String parseMode,
             @JsonProperty("reply_markup") ReplyMarkup replyMarkup
     ) {

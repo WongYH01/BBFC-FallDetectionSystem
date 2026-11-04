@@ -46,5 +46,12 @@ public class AlertRepositoryAdapter implements AlertRepository {
                 .toList();
     }
 
+    @Override
+    public List<Alert> findDueForDispatch(Instant now, int limit) {
+        return alertJpaRepository.findDueForDispatch(now, limit).stream()
+                .map(alertMapper::toDomain)
+                .toList();
+    }
+
 
 }

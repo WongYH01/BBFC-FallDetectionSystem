@@ -1,6 +1,7 @@
 package com.bbfc.notification.core.domain;
 
 public enum AlertState {
+    PENDING,
     DISPATCHED,
     ESCALATING,
     ACKNOWLEDGED,
@@ -9,6 +10,7 @@ public enum AlertState {
 
     public boolean canTransitionTo(AlertState alertState){
         return switch (this){
+            case PENDING -> alertState == DISPATCHED;
             case DISPATCHED -> alertState == ESCALATING || alertState == ACKNOWLEDGED;
             case ESCALATING -> alertState == ESCALATING || alertState == ACKNOWLEDGED || alertState == EXHAUSTED;
             case ACKNOWLEDGED -> alertState == TRIAGED;

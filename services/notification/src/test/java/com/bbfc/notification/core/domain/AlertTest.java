@@ -15,14 +15,64 @@ class AlertTest {
 
     private Alert alert;
 
-    @BeforeEach 
-    void setUp(){
-        alert = Alert.dispatch(
+    private static final Instant RECEIVED = Instant.parse("2026-09-16T10:00:00Z");
+    private static final Instant DEADLINE = Instant.parse("2026-09-16T10:00:20Z");
+
+    private static Alert received() {
+        return Alert.receive(
             new EventId("EE-01"),
             new RoomRef("room-1", "Block A, Room 1"),
             new Confidence(0.9),
-            Instant.parse("2026-09-16T10:00:00Z")
+            RECEIVED, DEADLINE
         );
+    }
+
+    @BeforeEach 
+    void setUp(){
+        alert = received();
+        alert.dispatch(501L, false, null);
+    }
+
+    @Nested
+    @DisplayName("dispatch")
+    class Dispatch {
+        @Test
+        void aReceivedAlertIsPendingUntilItsDeadline() {
+            Alert pending = received();
+            assertThat(pending.state()).isEqualTo(AlertState.PENDING);
+            assertThat(pending.dispatchDeadline()).contains(DEADLINE);
+        }
+
+        @Test
+        void dispatchRecordsTheMessageWhetherItCarriesTheClipAndTheFirstEscalation() {
+            Alert pending = received();
+            Instant firstEscalation = Instant.parse("2026-09-16T10:01:25Z");
+
+            pending.dispatch(601L, true, firstEscalation);
+
+            assertThat(pending.state()).isEqualTo(AlertState.DISPATCHED);
+            assertThat(pending.dispatchMessageId()).contains(601L);
+            assertThat(pending.dispatchCarriesClip()).isTrue();
+            assertThat(pending.nextEscalationAt()).contains(firstEscalation);
+        }
+
+        @Test
+        void anAlertIsDispatchedOnlyOnce() {
+            assertThatThrownBy(() -> alert.dispatch(502L, false, null))
+                    .isInstanceOf(IllegalAlertTransitionException.class);
+        }
+
+        @Test
+        void aPendingAlertCannotBeAcknowledged() {
+            assertThatThrownBy(() -> received().acknowledge("nurse-1", Instant.now()))
+                    .isInstanceOf(IllegalAlertTransitionException.class);
+        }
+
+        @ParameterizedTest
+        @EnumSource(value = AlertState.class, names = "DISPATCHED", mode = EnumSource.Mode.EXCLUDE)
+        void pendingCanOnlyMoveToDispatched(AlertState target) {
+            assertThat(AlertState.PENDING.canTransitionTo(target)).isFalse();
+        }
     }
 
     @Nested
@@ -115,6 +165,7 @@ class AlertTest {
 
         @Test
         void newAlertHasNoEscalationScheduledByDefault() {
+            Alert alert = received();
             assertThat(alert.nextEscalationAt()).isEmpty();
             assertThat(alert.repeatCount()).isZero();
         }
@@ -155,33 +206,10 @@ class AlertTest {
 
         @Test
         void newAlertHasNoMessagesRecorded() {
+            Alert alert = received();
             assertThat(alert.dispatchMessageId()).isEmpty();
             assertThat(alert.escalationMessageIds()).isEmpty();
             assertThat(alert.followUpMessageId()).isEmpty();
-            assertThat(alert.messageIds()).isEmpty();
-        }
-
-        @Test
-        void messageIdsReturnsDispatchThenEscalationsInSendOrder() {
-            alert.recordDispatchMessage(501L);
-            alert.recordEscalationMessage(502L);
-            alert.recordEscalationMessage(503L);
-            assertThat(alert.messageIds()).containsExactly(501L, 502L, 503L);
-        }
-
-        @Test
-        void followUpIsNotPartOfTheEditTargetSet() {
-            alert.recordDispatchMessage(501L);
-            alert.recordFollowUpMessage(504L);
-            assertThat(alert.followUpMessageId()).contains(504L);
-            assertThat(alert.messageIds()).containsExactly(501L);
-        }
-
-        @Test
-        void dispatchMessageCanOnlyBeRecordedOnce() {
-            alert.recordDispatchMessage(501L);
-            assertThatThrownBy(() -> alert.recordDispatchMessage(502L))
-                    .isInstanceOf(IllegalStateException.class);
         }
 
         @Test
@@ -245,15 +273,6 @@ class AlertTest {
         void deliveryCannotBeRecordedWithoutAClip() {
             assertThatThrownBy(() -> alert.recordClipDelivery("file-abc", 601L))
                     .isInstanceOf(IllegalStateException.class);
-        }
-
-        @Test
-        void clipMessageIsNotPartOfTheEditTargetSet() {
-            alert.recordDispatchMessage(501L);
-            alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", STORED_AT));
-            alert.recordClipDelivery("file-abc", 601L);
-
-            assertThat(alert.messageIds()).containsExactly(501L);
         }
     }
 
