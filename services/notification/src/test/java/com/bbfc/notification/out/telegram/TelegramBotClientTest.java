@@ -31,6 +31,7 @@ class TelegramBotClientTest {
 
     private static final String SEND = "/bottest-token/sendMessage";
     private static final String EDIT = "/bottest-token/editMessageText";
+    private static final String EDIT_CAPTION = "/bottest-token/editMessageCaption";
     private static final String ANSWER = "/bottest-token/answerCallbackQuery";
 
     private TelegramBotClient client;
@@ -158,7 +159,7 @@ class TelegramBotClientTest {
     void closeMessageSendsAnEmptyKeyboardToClearTheButtons() {
         wireMock.stubFor(post(urlEqualTo(EDIT)).willReturn(aResponse().withStatus(200)));
 
-        client.closeMessage(42L, "✅ HANDLED");
+        client.closeMessage(42L, "✅ HANDLED", false);
 
         wireMock.verify(postRequestedFor(urlEqualTo(EDIT))
                 .withRequestBody(equalToJson("""
@@ -172,6 +173,52 @@ class TelegramBotClientTest {
     }
 
     @Test
+    void closeMessageEditsTheCaptionWhenTheMessageCarriesTheClip() {
+        wireMock.stubFor(post(urlEqualTo(EDIT_CAPTION)).willReturn(aResponse().withStatus(200)));
+
+        client.closeMessage(42L, "✅ HANDLED", true);
+
+        wireMock.verify(postRequestedFor(urlEqualTo(EDIT_CAPTION))
+                .withRequestBody(equalToJson("""
+                        {
+                          "chat_id": "12345",
+                          "message_id": 42,
+                          "caption": "✅ HANDLED",
+                          "parse_mode": "HTML",
+                          "reply_markup": {"inline_keyboard": []}
+                        }""")));
+        wireMock.verify(0, postRequestedFor(urlEqualTo(EDIT)));
+    }
+
+    @Test
+    void sendsTheAlertAsACaptionedAnimationWithTheAcknowledgeButton() {
+        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"ok\":true,\"result\":{\"message_id\":601,"
+                        + "\"animation\":{\"file_id\":\"file-abc\"}}}")));
+
+        Optional<ClipDelivery> delivery = client.sendAlertWithClip(new EventId("FE-1"), "<b>Fall</b>", clip());
+
+        assertThat(delivery).contains(new ClipDelivery("file-abc", 601L));
+        wireMock.verify(postRequestedFor(urlEqualTo(ANIMATION))
+                .withRequestBodyPart(aMultipart().withName("chat_id").withBody(equalTo("12345")).build())
+                .withRequestBodyPart(aMultipart().withName("caption").withBody(equalTo("<b>Fall</b>")).build())
+                .withRequestBodyPart(aMultipart().withName("parse_mode").withBody(equalTo("HTML")).build())
+                .withRequestBodyPart(aMultipart().withName("reply_markup").withBody(equalToJson(
+                        "{\"inline_keyboard\":[[{\"text\":\"✅ Acknowledge\",\"callback_data\":\"ack:FE-1\"}]]}"))
+                        .build())
+                .withRequestBodyPart(aMultipart().withName("animation").withBody(binaryEqualTo(CLIP_BYTES)).build()));
+    }
+
+    @Test
+    void aRefusedAlertAnimationReturnsEmpty() {
+        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse().withStatus(400)));
+
+        assertThat(client.sendAlertWithClip(new EventId("FE-1"), "Fall", clip())).isEmpty();
+    }
+
+    @Test
     void closeMessageToleratesTelegramRejectingAnUnchangedEdit() {
         wireMock.stubFor(post(urlEqualTo(EDIT)).willReturn(aResponse()
                 .withStatus(400)
@@ -179,14 +226,14 @@ class TelegramBotClientTest {
                 .withBody("{\"ok\":false,\"error_code\":400,"
                         + "\"description\":\"Bad Request: message is not modified\"}")));
 
-        assertThatCode(() -> client.closeMessage(42L, "✅ HANDLED")).doesNotThrowAnyException();
+        assertThatCode(() -> client.closeMessage(42L, "✅ HANDLED", false)).doesNotThrowAnyException();
     }
 
     @Test
     void closeMessageIsBestEffortAndSwallowsTransportFailures() {
         wireMock.stubFor(post(urlEqualTo(EDIT)).willReturn(aResponse().withStatus(500)));
 
-        assertThatCode(() -> client.closeMessage(42L, "✅ HANDLED")).doesNotThrowAnyException();
+        assertThatCode(() -> client.closeMessage(42L, "✅ HANDLED", false)).doesNotThrowAnyException();
     }
 
     @Test

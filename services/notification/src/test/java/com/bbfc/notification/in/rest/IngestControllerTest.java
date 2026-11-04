@@ -31,11 +31,11 @@ class IngestControllerTest {
 
     @Test 
     void newEventReturns202Accepted() throws Exception {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-1"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
         given(dedupAlertService.handleAlert(any(), any(), any()))
                 .willReturn(new DedupAlertService.Result(alert, true));
@@ -57,11 +57,11 @@ class IngestControllerTest {
 
     @Test
     void duplicateEventReturns200Ok() throws Exception {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-1"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.67),
-                Instant.parse("2026-09-16T10:00:00Z")
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z")
         );
         given(dedupAlertService.handleAlert(any(), any(), any()))
                 .willReturn(new DedupAlertService.Result(alert, false));

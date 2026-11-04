@@ -10,6 +10,12 @@ public interface NotificationChannel {
     long sendAlert(EventId eventId, String message);
 
     /**
+     * Best effort: sends the alert as the clip, captioned and carrying an acknowledge button.
+     * Never throws. Empty means Telegram refused it.
+     */
+    Optional<ClipDelivery> sendAlertWithClip(EventId eventId, String caption, ClipContent content);
+
+    /**
      * Sends the triage question carrying genuine / false-alarm buttons, as a reply to the alert
      * message when there is one. Returns the message id.
      */
@@ -18,8 +24,11 @@ public interface NotificationChannel {
     /** Sends a keyboardless escalation reply to the alert message when there is one. Returns the message id. */
     long sendEscalation(String message, Long replyToMessageId);
 
-    /** Best effort: replaces a message's text and clears its keyboard. Never throws. */
-    void closeMessage(long messageId, String text);
+    /**
+     * Best effort: replaces a message's text, or its caption when it carries a clip, and clears
+     * its keyboard. Never throws.
+     */
+    void closeMessage(long messageId, String text, boolean carriesClip);
 
     /**
      * Best effort: clears the spinner on a tapped button, ideally within ~15s of the tap.

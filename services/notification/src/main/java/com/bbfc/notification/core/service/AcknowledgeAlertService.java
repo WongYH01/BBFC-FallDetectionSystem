@@ -58,7 +58,8 @@ public class AcknowledgeAlertService {
         notificationChannel.answerCallback(callbackQueryId, "Acknowledged");
 
         alert.dispatchMessageId().ifPresent(
-                messageId -> notificationChannel.closeMessage(messageId, messageRenderer.renderAcknowledged(alert)));
+                messageId -> notificationChannel.closeMessage(
+                        messageId, messageRenderer.renderAcknowledged(alert), alert.dispatchCarriesClip()));
 
         eventPublisher.publishEvent(new AlertAcknowledgedEvent(eventId, acknowledgedBy, at));
     }

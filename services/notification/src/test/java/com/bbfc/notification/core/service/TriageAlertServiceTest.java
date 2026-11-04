@@ -2,6 +2,7 @@ package com.bbfc.notification.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
@@ -56,8 +57,9 @@ class TriageAlertServiceTest {
     }
 
     private Alert acknowledgedAlert() {
-        Alert alert = Alert.dispatch(
-                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED);
+        Alert alert = Alert.receive(
+                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED, DETECTED);
+        alert.dispatch(501L, false, null);
         alert.acknowledge("@nurse_lim", DETECTED);
         alert.recordFollowUpMessage(504L);
         return alert;
@@ -76,7 +78,7 @@ class TriageAlertServiceTest {
         assertThat(alert.outcomeAt()).contains(TAPPED);
         verify(alertRepository).save(alert);
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Recorded");
-        verify(notificationChannel).closeMessage(504L, "🚫 Recorded: False alarm");
+        verify(notificationChannel).closeMessage(504L, "🚫 Recorded: False alarm", false);
         verify(eventPublisher).publishEvent(new AlertTriagedEvent(eventId));
     }
 
@@ -102,14 +104,15 @@ class TriageAlertServiceTest {
         assertThat(alert.outcome()).contains(Outcome.GENUINE);
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Already recorded as a genuine fall");
         verify(alertRepository, never()).save(any());
-        verify(notificationChannel, never()).closeMessage(anyLong(), any());
+        verify(notificationChannel, never()).closeMessage(anyLong(), any(), anyBoolean());
         verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
     void triageBeforeAcknowledgementIsRejected() {
-        Alert alert = Alert.dispatch(
-                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED);
+        Alert alert = Alert.receive(
+                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED, DETECTED);
+        alert.dispatch(501L, false, null);
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
 
         service.triage(CALLBACK_ID, eventId, Outcome.GENUINE, TAPPED);

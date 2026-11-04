@@ -33,6 +33,16 @@ public final class TelegramRequests {
     }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record EditMessageCaption(
+            @JsonProperty("chat_id") String chatId,
+            @JsonProperty("message_id") long messageId,
+            String caption,
+            @JsonProperty("parse_mode") String parseMode,
+            @JsonProperty("reply_markup") ReplyMarkup replyMarkup
+    ) {
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record AnswerCallbackQuery(
             @JsonProperty("callback_query_id") String callbackQueryId,
             String text

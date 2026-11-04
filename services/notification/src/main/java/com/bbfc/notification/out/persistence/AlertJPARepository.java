@@ -22,6 +22,16 @@ public interface AlertJPARepository extends JpaRepository<AlertEntity,String> {
         """, nativeQuery = true)
     List<AlertEntity> findDueForEscalation(@Param("now") Instant now, @Param("limit") int limit);
 
+    @Query(value = """
+        SELECT * FROM alerts.alerts
+         WHERE state = 'PENDING'
+           AND dispatch_deadline <= :now
+         ORDER BY dispatch_deadline
+           FOR UPDATE SKIP LOCKED
+         LIMIT :limit
+        """, nativeQuery = true)
+    List<AlertEntity> findDueForDispatch(@Param("now") Instant now, @Param("limit") int limit);
+
     // Derived query, not native: @Lock is ignored on native queries, so the lock has to ride on
     // a query Hibernate generates. Words between "find" and "By" are ignored by Spring Data.
     @Lock(LockModeType.PESSIMISTIC_WRITE)

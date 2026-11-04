@@ -19,7 +19,9 @@ public final class Alert {
     private Instant outcomeAt;
     private int repeatCount;
     private Instant nextEscalationAt;
+    private Instant dispatchDeadline;
     private Long dispatchMessageId;
+    private boolean dispatchCarriesClip;
     private final List<Long> escalationMessageIds = new ArrayList<>();
     private Long followUpMessageId;
     private SkeletonClip clip;
@@ -30,11 +32,14 @@ public final class Alert {
         this.roomRef = roomRef;
         this.confidence = confidence;
         this.createdAt = createdAt;
-        this.alertState = AlertState.DISPATCHED;
+        this.alertState = AlertState.PENDING;
     }
 
-    public static Alert dispatch(EventId eventId, RoomRef room, Confidence confidence, Instant createdAt) {
-        return new Alert(eventId, room, confidence, createdAt);
+    public static Alert receive(
+            EventId eventId, RoomRef room, Confidence confidence, Instant receivedAt, Instant dispatchDeadline) {
+        Alert alert = new Alert(eventId, room, confidence, receivedAt);
+        alert.dispatchDeadline = dispatchDeadline;
+        return alert;
     }
 
     public static Alert load(
@@ -50,7 +55,9 @@ public final class Alert {
             Instant outcomeAt,
             int repeatCount,
             Instant nextEscalationAt,
+            Instant dispatchDeadline,
             Long dispatchMessageId,
+            boolean dispatchCarriesClip,
             List<Long> escalationMessageIds,
             Long followUpMessageId,
             SkeletonClip clip,
@@ -64,7 +71,9 @@ public final class Alert {
         alert.outcomeAt = outcomeAt;
         alert.repeatCount = repeatCount;
         alert.nextEscalationAt = nextEscalationAt;
+        alert.dispatchDeadline = dispatchDeadline;
         alert.dispatchMessageId = dispatchMessageId;
+        alert.dispatchCarriesClip = dispatchCarriesClip;
         alert.escalationMessageIds.addAll(escalationMessageIds);
         alert.followUpMessageId = followUpMessageId;
         alert.clip = clip;
@@ -107,11 +116,11 @@ public final class Alert {
         this.outcomeAt = at;
     }
 
-    public void recordDispatchMessage(long messageId) {
-        if (this.dispatchMessageId != null) {
-            throw new IllegalStateException("Dispatch message already recorded for " + eventId);
-        }
+    public void dispatch(long messageId, boolean carriesClip, Instant firstEscalationAt) {
+        transitionTo(AlertState.DISPATCHED);
         this.dispatchMessageId = messageId;
+        this.dispatchCarriesClip = carriesClip;
+        this.nextEscalationAt = firstEscalationAt;
     }
 
     public void recordEscalationMessage(long messageId) {
@@ -183,6 +192,14 @@ public final class Alert {
 
     public Optional<Instant> nextEscalationAt() {
         return Optional.ofNullable(nextEscalationAt);
+    }
+
+    public Optional<Instant> dispatchDeadline() {
+        return Optional.ofNullable(dispatchDeadline);
+    }
+
+    public boolean dispatchCarriesClip() {
+        return dispatchCarriesClip;
     }
 
     public Optional<Long> dispatchMessageId() {

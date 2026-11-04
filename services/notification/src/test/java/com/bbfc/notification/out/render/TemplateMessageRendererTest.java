@@ -29,9 +29,9 @@ class TemplateMessageRendererTest {
         TemplateMessageRenderer templateMessageRenderer = new TemplateMessageRenderer(
                 properties("Fall in {roomName} at {time}, confidence {confidence}")
         );
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-1"), new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.9),
-                Instant.parse("2026-09-16T10:00:00Z"));
+                Instant.parse("2026-09-16T10:00:00Z"), Instant.parse("2026-09-16T10:00:00Z"));
 
         String rendered = templateMessageRenderer.render(alert, Instant.parse("2026-09-16T10:00:00Z"));
 
@@ -41,9 +41,9 @@ class TemplateMessageRendererTest {
     @Test
     void checkXSSDefense(){
         TemplateMessageRenderer renderer = new TemplateMessageRenderer(properties("{roomName}"));
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-1"), new RoomRef("room-12", "<script>alert(1)</script>"), new Confidence(0.67),
-                Instant.now());
+                Instant.now(), Instant.now());
 
         String rendered = renderer.render(alert, Instant.now());
 
@@ -58,11 +58,12 @@ class TemplateMessageRendererTest {
     private static final Instant HANDLED = Instant.parse("2026-09-16T10:03:00Z");
 
     private static Alert acknowledgedAlert(String responder) {
-        Alert alert = Alert.dispatch(
+        Alert alert = Alert.receive(
                 new EventId("FE-20260916-0003"),
                 new RoomRef("room-12", "Block A - Room 12"),
                 new Confidence(0.92),
-                DETECTED);
+                DETECTED, DETECTED);
+        alert.dispatch(501L, false, null);
         alert.acknowledge(responder, HANDLED);
         return alert;
     }
@@ -116,8 +117,9 @@ class TemplateMessageRendererTest {
     @CsvSource({"1,1st", "2,2nd", "3,3rd", "4,4th", "11,11th", "12,12th", "13,13th", "21,21st", "22,22nd", "111,111th"})
     void renderEscalationNumbersTheEscalationInEnglish(int escalations, String ordinal) {
         TemplateMessageRenderer renderer = new TemplateMessageRenderer(properties("{roomName}"));
-        Alert alert = Alert.dispatch(
-                new EventId("FE-1"), new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.9), DETECTED);
+        Alert alert = Alert.receive(
+                new EventId("FE-1"), new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.9), DETECTED, DETECTED);
+        alert.dispatch(501L, false, null);
         for (int i = 0; i < escalations; i++) {
             alert.escalate(DETECTED);
         }

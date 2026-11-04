@@ -37,6 +37,7 @@ import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.Outcome;
 import com.bbfc.notification.config.TelegramConfig;
 import com.bbfc.notification.core.port.AlertRepository;
+import com.bbfc.notification.core.service.AlertDispatcher;
 import com.bbfc.notification.core.service.EscalationScheduler;
 import com.bbfc.notification.out.persistence.AlertJPARepository;
 import com.bbfc.notification.in.telegram.CallbackQueryHandler;
@@ -92,6 +93,9 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
     private EscalationScheduler escalationScheduler;
 
     @Autowired
+    private AlertDispatcher alertDispatcher;
+
+    @Autowired
     private CallbackQueryHandler callbackQueryHandler;
 
     @Autowired
@@ -137,6 +141,12 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
                 .andExpect(status().is(expectedStatus));
     }
 
+    private void postAndDispatch() throws Exception {
+        postEvent(202);
+        mutableClock().advance(Duration.ofSeconds(20));
+        alertDispatcher.dispatchDueAlerts();
+    }
+
     private void tap(String callbackData) {
         callbackQueryHandler.handle(new CallbackQuery(
                 "cbq-1",
@@ -151,8 +161,8 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
 
     @Test
     void acknowledgementCancelsEscalationAndCapturesTheTriageOutcome() throws Exception {
-        // 1. the alert goes out
-        postEvent(202);
+        // 1. the alert goes out once the clip wait passes
+        postAndDispatch();
         telegram.verify(1, postRequestedFor(urlEqualTo(SEND)));
 
         // 2. nobody responds, so it escalates once
@@ -222,7 +232,7 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
 
     @Test
     void escalationsAreShortKeyboardlessRepliesToTheDispatchMessageUntilExhausted() throws Exception {
-        postEvent(202);
+        postAndDispatch();
 
         stubSend(502L);
         tick();
@@ -244,7 +254,7 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
 
     @Test
     void aDoubleTapChangesNothingAndTellsTheSecondResponderWhoHandledIt() throws Exception {
-        postEvent(202);
+        postAndDispatch();
         stubSend(504L);
         tap("ack:" + EVENT_ID);
         int sendsAfterFirstTap = telegram.findAll(postRequestedFor(urlEqualTo(SEND))).size();
@@ -259,7 +269,7 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
 
     @Test
     void reIngestingTheSameEventIsADuplicateAndSendsNothing() throws Exception {
-        postEvent(202);
+        postAndDispatch();
 
         postEvent(200);
 

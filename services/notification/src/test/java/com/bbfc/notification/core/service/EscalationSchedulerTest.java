@@ -70,7 +70,8 @@ public class EscalationSchedulerTest {
     @Test
     void dueAlertBelowCapEscalatesAndReschedules() {
         given(alertRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
-        Alert alert = Alert.dispatch(eventId, room, confidence, clock.instant());
+        Alert alert = Alert.receive(eventId, room, confidence, clock.instant(), clock.instant());
+        alert.dispatch(501L, false, null);
         alert.scheduleNextEscalation(clock.instant());
         given(alertRepository.findDueForEscalation(any(), anyInt())).willReturn(List.of(alert));
         given(messageRenderer.renderEscalation(any())).willReturn("escalation message");
@@ -82,14 +83,15 @@ public class EscalationSchedulerTest {
         assertThat(alert.repeatCount()).isEqualTo(1);
         assertThat(alert.nextEscalationAt()).contains(clock.instant().plus(Duration.ofSeconds(60)));
         assertThat(alert.escalationMessageIds()).containsExactly(601L);
-        verify(notificationChannel).sendEscalation("escalation message", null);
+        verify(notificationChannel).sendEscalation("escalation message", 501L);
         verify(alertRepository).save(alert);
     }
 
     @Test
     void dueAlertAtCapExhaustsWithoutSending() {
         given(alertRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
-        Alert alert = Alert.dispatch(eventId, room, confidence, clock.instant());
+        Alert alert = Alert.receive(eventId, room, confidence, clock.instant(), clock.instant());
+        alert.dispatch(501L, false, null);
         alert.escalate(clock.instant());
         alert.escalate(clock.instant());
         alert.escalate(clock.instant());
@@ -106,7 +108,8 @@ public class EscalationSchedulerTest {
     @Test
     void repeatsEscalateToCapThenExhausts() {
         given(alertRepository.save(any())).willAnswer(invocation -> invocation.getArgument(0));
-        Alert alert = Alert.dispatch(eventId, room, confidence, clock.instant());
+        Alert alert = Alert.receive(eventId, room, confidence, clock.instant(), clock.instant());
+        alert.dispatch(501L, false, null);
         alert.scheduleNextEscalation(clock.instant().plus(Duration.ofSeconds(60)));
         given(alertRepository.findDueForEscalation(any(), anyInt())).willReturn(List.of(alert));
         given(messageRenderer.renderEscalation(any())).willReturn("escalation message");

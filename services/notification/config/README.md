@@ -5,7 +5,7 @@ Two places, split by whether something is a secret.
 | | File | Committed? | Holds |
 |---|---|---|---|
 | Secrets | `../.env.local`, `../.env.cloud` | no — copy from `.env.example.local` | Bot token, chat id, DB password, Supabase keys, host ports |
-| Tunables | `config/application.yml` | **yes** | Message wording, escalation timing, the polling and scheduler switches |
+| Tunables | `config/application.yml` | **yes** | Message wording, clip wait and escalation timing, the polling and scheduler switches |
 
 Defaults and the wiring between them live in `src/main/resources/application.properties`, which
 is packaged into the jar. It maps `${TELEGRAM_BOT_TOKEN}` and friends onto the `telegram.*`

@@ -56,7 +56,7 @@ public class TriageAlertService {
         notificationChannel.answerCallback(callbackQueryId, "Recorded");
 
         alert.followUpMessageId().ifPresent(
-                messageId -> notificationChannel.closeMessage(messageId, messageRenderer.renderTriaged(alert)));
+                messageId -> notificationChannel.closeMessage(messageId, messageRenderer.renderTriaged(alert), false));
     }
 
     private static String alreadyRecordedMessage(Alert alert) {
