@@ -12,6 +12,9 @@ public interface MessageRenderer {
     /** Replaces an alert message once it has been handled. */
     String renderAcknowledged(Alert alert);
 
+    /** A reply to the alert message for each escalation, numbered by repeat count. */
+    String renderEscalation(Alert alert);
+
     /** The follow-up question asked after acknowledgement. */
     String renderTriageQuestion(Alert alert);
 

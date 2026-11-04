@@ -63,7 +63,7 @@ public class EscalationSchedulerTest {
     void noDueAlertsDoesNothing() {
         given(alertRepository.findDueForEscalation(any(), anyInt())).willReturn(List.of());
         scheduler.escalateDueAlerts();
-        verify(notificationChannel, never()).sendAlert(any(), any());
+        verify(notificationChannel, never()).sendEscalation(any(), any());
         verify(alertRepository, never()).save(any());
     }
 
@@ -73,8 +73,8 @@ public class EscalationSchedulerTest {
         Alert alert = Alert.dispatch(eventId, room, confidence, clock.instant());
         alert.scheduleNextEscalation(clock.instant());
         given(alertRepository.findDueForEscalation(any(), anyInt())).willReturn(List.of(alert));
-        given(messageRenderer.render(any(), any())).willReturn("escalation message");
-        given(notificationChannel.sendAlert(any(), any())).willReturn(601L);
+        given(messageRenderer.renderEscalation(any())).willReturn("escalation message");
+        given(notificationChannel.sendEscalation(any(), any())).willReturn(601L);
 
         scheduler.escalateDueAlerts();
 
@@ -82,7 +82,7 @@ public class EscalationSchedulerTest {
         assertThat(alert.repeatCount()).isEqualTo(1);
         assertThat(alert.nextEscalationAt()).contains(clock.instant().plus(Duration.ofSeconds(60)));
         assertThat(alert.escalationMessageIds()).containsExactly(601L);
-        verify(notificationChannel).sendAlert(eventId, "escalation message");
+        verify(notificationChannel).sendEscalation("escalation message", null);
         verify(alertRepository).save(alert);
     }
 
@@ -99,7 +99,7 @@ public class EscalationSchedulerTest {
         scheduler.escalateDueAlerts();
 
         assertThat(alert.state()).isEqualTo(AlertState.EXHAUSTED);
-        verify(notificationChannel, never()).sendAlert(any(), any());
+        verify(notificationChannel, never()).sendEscalation(any(), any());
         verify(alertRepository).save(alert);
     }
 
@@ -109,8 +109,8 @@ public class EscalationSchedulerTest {
         Alert alert = Alert.dispatch(eventId, room, confidence, clock.instant());
         alert.scheduleNextEscalation(clock.instant().plus(Duration.ofSeconds(60)));
         given(alertRepository.findDueForEscalation(any(), anyInt())).willReturn(List.of(alert));
-        given(messageRenderer.render(any(), any())).willReturn("escalation message");
-        given(notificationChannel.sendAlert(any(), any())).willReturn(601L, 602L, 603L);
+        given(messageRenderer.renderEscalation(any())).willReturn("escalation message");
+        given(notificationChannel.sendEscalation(any(), any())).willReturn(601L, 602L, 603L);
 
         clock.advance(Duration.ofSeconds(60));
         scheduler.escalateDueAlerts();
@@ -125,13 +125,13 @@ public class EscalationSchedulerTest {
         scheduler.escalateDueAlerts();
         assertThat(alert.repeatCount()).isEqualTo(3);
 
-        verify(notificationChannel, times(3)).sendAlert(any(), any());
+        verify(notificationChannel, times(3)).sendEscalation(any(), any());
         assertThat(alert.escalationMessageIds()).containsExactly(601L, 602L, 603L);
 
         clock.advance(Duration.ofSeconds(60));
         scheduler.escalateDueAlerts();
 
         assertThat(alert.state()).isEqualTo(AlertState.EXHAUSTED);
-        verify(notificationChannel, times(3)).sendAlert(any(), any());
+        verify(notificationChannel, times(3)).sendEscalation(any(), any());
     }
 }

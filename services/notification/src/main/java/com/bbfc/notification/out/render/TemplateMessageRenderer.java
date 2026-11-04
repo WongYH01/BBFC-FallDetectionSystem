@@ -22,11 +22,13 @@ import java.util.regex.Pattern;
 public class TemplateMessageRenderer implements MessageRenderer {
 
     private static  final Pattern PLACEHOLDER = Pattern.compile("\\{(\\w+)}");
-    private static  final Set<String> KNOWN_VALUES = Set.of("roomName","time","confidence","eventId");
-    private static final Set<String> TRIAGE_QUESTION_KNOWN_VALUES = Set.of("roomName","eventId","handledLine");
+    private static  final Set<String> KNOWN_VALUES = Set.of("roomName","time","confidence");
+    private static final Set<String> TRIAGE_QUESTION_KNOWN_VALUES = Set.of("roomName","handledLine");
+    private static final Set<String> ESCALATION_KNOWN_VALUES = Set.of("ordinal","roomName");
 
     private final String messageTemplate;
     private final String triageQuestionTemplate;
+    private final String escalationTemplate;
 
     private static final DateTimeFormatter TIME_FORMAT = new DateTimeFormatterBuilder()
             .appendPattern("d MMMM yyyy h:mm")
@@ -54,6 +56,8 @@ public class TemplateMessageRenderer implements MessageRenderer {
         validateTemplate(messageTemplate, KNOWN_VALUES, "message-template");
         this.triageQuestionTemplate = telegramConfig.triageQuestionTemplate();
         validateTemplate(triageQuestionTemplate, TRIAGE_QUESTION_KNOWN_VALUES, "triage-question-template");
+        this.escalationTemplate = telegramConfig.escalationTemplate();
+        validateTemplate(escalationTemplate, ESCALATION_KNOWN_VALUES, "escalation-template");
     }
 
 
@@ -65,13 +69,11 @@ public class TemplateMessageRenderer implements MessageRenderer {
         String confidence = HtmlUtils.htmlEscape(
                 StringUtils.capitalize(alert.confidence().band().name().toLowerCase())
                         + " (" + alert.confidence().confidenceScore() + ")");
-        String eventId = HtmlUtils.htmlEscape(alert.eventId().eventId());
 
         return messageTemplate
                 .replace("{roomName}", roomName)
                 .replace("{time}", time)
-                .replace("{confidence}", confidence)
-                .replace("{eventId}", eventId);
+                .replace("{confidence}", confidence);
     }
 
     @Override
@@ -79,20 +81,36 @@ public class TemplateMessageRenderer implements MessageRenderer {
         return """
                 ✅ <b>FALL ALERT — HANDLED</b>
                 <b>Room</b> %s
-                <b>Detected</b> %s · <b>Handled</b> %s by %s
-                <i>Ref %s</i>"""
+                <b>Detected</b> %s · <b>Handled</b> %s by %s"""
                 .formatted(
                         HtmlUtils.htmlEscape(alert.room().displayName()),
                         CLOCK_TIME.format(alert.createdAt()),
                         alert.acknowledgedAt().map(CLOCK_TIME::format).orElse("—"),
-                        responder(alert),
-                        HtmlUtils.htmlEscape(alert.eventId().eventId()));
+                        responder(alert));
+    }
+
+    @Override
+    public String renderEscalation(Alert alert) {
+        return escalationTemplate
+                .replace("{ordinal}", ordinal(alert.repeatCount()))
+                .replace("{roomName}", HtmlUtils.htmlEscape(alert.room().displayName()));
+    }
+
+    private static String ordinal(int n) {
+        if (n % 100 >= 11 && n % 100 <= 13) {
+            return n + "th";
+        }
+        return n + switch (n % 10) {
+            case 1 -> "st";
+            case 2 -> "nd";
+            case 3 -> "rd";
+            default -> "th";
+        };
     }
 
     @Override
     public String renderTriageQuestion(Alert alert) {
         return triageQuestionTemplate
-                .replace("{eventId}", HtmlUtils.htmlEscape(alert.eventId().eventId()))
                 .replace("{roomName}", HtmlUtils.htmlEscape(alert.room().displayName()))
                 .replace("{handledLine}", handledLine(alert));
     }
@@ -103,11 +121,10 @@ public class TemplateMessageRenderer implements MessageRenderer {
                 .map(o -> o == Outcome.GENUINE ? "👍 Recorded: Genuine fall" : "🚫 Recorded: False alarm")
                 .orElse("Recorded");
         return """
-                <b>Ref %s</b> · %s
+                <b>%s</b>
                 %s
                 %s"""
                 .formatted(
-                        HtmlUtils.htmlEscape(alert.eventId().eventId()),
                         HtmlUtils.htmlEscape(alert.room().displayName()),
                         handledLine(alert),
                         outcome);

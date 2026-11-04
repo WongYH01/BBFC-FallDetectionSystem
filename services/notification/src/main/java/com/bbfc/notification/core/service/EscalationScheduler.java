@@ -44,7 +44,8 @@ public class EscalationScheduler {
             } else {
                 alert.escalate(now);
                 alert.scheduleNextEscalation(now.plus(escalationPolicy.window()));
-                long messageId = notificationChannel.sendAlert(alert.eventId(), messageRenderer.render(alert, now));
+                long messageId = notificationChannel.sendEscalation(
+                        messageRenderer.renderEscalation(alert), alert.dispatchMessageId().orElse(null));
                 alert.recordEscalationMessage(messageId);
             }
             alertRepository.save(alert);

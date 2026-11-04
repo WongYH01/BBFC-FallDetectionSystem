@@ -62,7 +62,7 @@ class AcknowledgeAlertServiceTest {
     }
 
     @Test
-    void acknowledgesClosesEveryMessageAndPublishes() {
+    void acknowledgesClosesOnlyTheDispatchMessageAndPublishes() {
         Alert alert = dispatchedAlert();
         alert.recordDispatchMessage(501L);
         alert.recordEscalationMessage(502L);
@@ -77,7 +77,7 @@ class AcknowledgeAlertServiceTest {
         verify(alertRepository).save(alert);
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Acknowledged");
         verify(notificationChannel).closeMessage(501L, "HANDLED");
-        verify(notificationChannel).closeMessage(502L, "HANDLED");
+        verify(notificationChannel, never()).closeMessage(eq(502L), any());
         verify(eventPublisher).publishEvent(new AlertAcknowledgedEvent(eventId, "@nurse_lim", TAPPED));
     }
 
@@ -87,7 +87,6 @@ class AcknowledgeAlertServiceTest {
         alert.escalate(DETECTED);
         alert.exhaust(DETECTED);
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
-        given(messageRenderer.renderAcknowledged(alert)).willReturn("HANDLED");
 
         service.acknowledge(CALLBACK_ID, eventId, "@nurse_lim", TAPPED);
 

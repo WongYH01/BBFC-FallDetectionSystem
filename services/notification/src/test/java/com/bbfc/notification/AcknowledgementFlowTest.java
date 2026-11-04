@@ -1,7 +1,11 @@
 package com.bbfc.notification;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
 import static com.github.tomakehurst.wiremock.client.WireMock.containing;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
+import static com.github.tomakehurst.wiremock.client.WireMock.matchingJsonPath;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -158,15 +162,21 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
         telegram.verify(2, postRequestedFor(urlEqualTo(SEND)));
         assertThat(reload().state()).isEqualTo(AlertState.ESCALATING);
 
-        // 3. a nurse taps Acknowledge: spinner cleared, both messages closed out, question asked
+        // 3. a nurse taps Acknowledge: spinner cleared, only the dispatch message closed out,
+        //    question asked as a reply to it
         stubSend(504L);
         tap("ack:" + EVENT_ID);
 
         telegram.verify(1, postRequestedFor(urlEqualTo(ANSWER)));
-        telegram.verify(2, postRequestedFor(urlEqualTo(EDIT)));
+        telegram.verify(1, postRequestedFor(urlEqualTo(EDIT)));
         telegram.verify(postRequestedFor(urlEqualTo(EDIT))
+                .withRequestBody(matchingJsonPath("$.message_id", equalTo("501")))
                 .withRequestBody(containing("\"inline_keyboard\":[]")));
         telegram.verify(3, postRequestedFor(urlEqualTo(SEND)));
+        telegram.verify(postRequestedFor(urlEqualTo(SEND))
+                .withRequestBody(containing("Was this a genuine fall?"))
+                .withRequestBody(matchingJsonPath("$.reply_to_message_id", equalTo("501")))
+                .withRequestBody(matchingJsonPath("$.allow_sending_without_reply", equalTo("true"))));
 
         Alert acknowledged = reload();
         assertThat(acknowledged.state()).isEqualTo(AlertState.ACKNOWLEDGED);
@@ -178,7 +188,7 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
         mutableClock().advance(Duration.ofSeconds(61));
         escalationScheduler.escalateDueAlerts();
         telegram.verify(3, postRequestedFor(urlEqualTo(SEND)));
-        telegram.verify(2, postRequestedFor(urlEqualTo(EDIT)));
+        telegram.verify(1, postRequestedFor(urlEqualTo(EDIT)));
 
         // 5. triage records the ground truth for the accuracy metric
         tap("triage:" + EVENT_ID + ":false_alarm");
@@ -187,6 +197,49 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
         assertThat(triaged.state()).isEqualTo(AlertState.TRIAGED);
         assertThat(triaged.outcome()).contains(Outcome.FALSE_ALARM);
         assertThat(triaged.outcomeAt()).isPresent();
+
+        // 6. responders never see the Event ID; it lives only in callback_data
+        telegram.verify(2, postRequestedFor(urlEqualTo(EDIT)));
+        telegram.verify(0, postRequestedFor(anyUrl())
+                .withRequestBody(matchingJsonPath("$.text", containing(EVENT_ID))));
+    }
+
+    private void tick() {
+        mutableClock().advance(Duration.ofSeconds(61));
+        escalationScheduler.escalateDueAlerts();
+    }
+
+    private static String escalationReply(String ordinal) {
+        return """
+                {
+                  "chat_id": "-1000000000000",
+                  "text": "⚠️ <b>%s escalation</b> · Block A - Room 12 · not yet acknowledged",
+                  "parse_mode": "HTML",
+                  "reply_to_message_id": 501,
+                  "allow_sending_without_reply": true
+                }""".formatted(ordinal);
+    }
+
+    @Test
+    void escalationsAreShortKeyboardlessRepliesToTheDispatchMessageUntilExhausted() throws Exception {
+        postEvent(202);
+
+        stubSend(502L);
+        tick();
+        stubSend(503L);
+        tick();
+        stubSend(504L);
+        tick();
+
+        telegram.verify(postRequestedFor(urlEqualTo(SEND)).withRequestBody(equalToJson(escalationReply("1st"))));
+        telegram.verify(postRequestedFor(urlEqualTo(SEND)).withRequestBody(equalToJson(escalationReply("2nd"))));
+        telegram.verify(postRequestedFor(urlEqualTo(SEND)).withRequestBody(equalToJson(escalationReply("3rd"))));
+        assertThat(reload().escalationMessageIds()).containsExactly(502L, 503L, 504L);
+
+        tick();
+
+        assertThat(reload().state()).isEqualTo(AlertState.EXHAUSTED);
+        telegram.verify(4, postRequestedFor(urlEqualTo(SEND)));
     }
 
     @Test

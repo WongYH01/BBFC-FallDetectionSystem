@@ -50,16 +50,21 @@ public class TelegramBotClient implements NotificationChannel {
     public long sendAlert(EventId eventId, String message) {
         return send(message, ReplyMarkup.singleRow(new InlineKeyboardButton(
                 "✅ Acknowledge",
-                new CallbackCommand.Acknowledge(eventId).encode())));
+                new CallbackCommand.Acknowledge(eventId).encode())), null);
     }
 
     @Override
-    public long sendTriageQuestion(EventId eventId, String message) {
+    public long sendTriageQuestion(EventId eventId, String message, Long replyToMessageId) {
         return send(message, ReplyMarkup.singleRow(
                 new InlineKeyboardButton("👍 Genuine",
                         new CallbackCommand.Triage(eventId, Outcome.GENUINE).encode()),
                 new InlineKeyboardButton("🚫 False alarm",
-                        new CallbackCommand.Triage(eventId, Outcome.FALSE_ALARM).encode())));
+                        new CallbackCommand.Triage(eventId, Outcome.FALSE_ALARM).encode())), replyToMessageId);
+    }
+
+    @Override
+    public long sendEscalation(String message, Long replyToMessageId) {
+        return send(message, null, replyToMessageId);
     }
 
     @Override
@@ -150,10 +155,12 @@ public class TelegramBotClient implements NotificationChannel {
         };
     }
 
-    private long send(String message, ReplyMarkup replyMarkup) {
+    // The alert message may have been deleted; a reply to it is still worth sending.
+    private long send(String message, ReplyMarkup replyMarkup, Long replyToMessageId) {
         SendMessageResponse response = restClient.post()
                 .uri("/sendMessage")
-                .body(new SendMessage(chatGroupId, message, PARSE_MODE, replyMarkup))
+                .body(new SendMessage(chatGroupId, message, PARSE_MODE, replyMarkup,
+                        replyToMessageId, replyToMessageId == null ? null : true))
                 .retrieve()
                 .body(SendMessageResponse.class);
 

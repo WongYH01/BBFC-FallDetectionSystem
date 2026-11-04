@@ -20,7 +20,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         "telegram.chat-group-id=-1000000000000",
         // Closed port: anything that tries to call out fails fast instead of hanging.
         "telegram.base-url=http://127.0.0.1:1",
-        "telegram.message-template=Fall in {roomName} at {time}, confidence {confidence} (Ref {eventId})",
+        "telegram.message-template=Fall in {roomName} at {time}, confidence {confidence}",
         "supabase.storage.url=http://127.0.0.1:1",
         "supabase.storage.service-key=test-key",
         // Both background triggers off — tests drive the scheduler and the handler directly.

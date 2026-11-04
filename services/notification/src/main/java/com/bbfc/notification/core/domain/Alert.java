@@ -153,21 +153,6 @@ public final class Alert {
         this.keypoints = this.keypoints.relocated(newKey);
     }
 
-    /**
-     * Every message this alert has produced, in send order — the set to close out on acknowledgement.
-     *
-     * <p>Deliberately excludes the clip message: closing edits message text, which Telegram
-     * rejects on a media message.
-     */
-    public List<Long> messageIds() {
-        List<Long> ids = new ArrayList<>();
-        if (dispatchMessageId != null) {
-            ids.add(dispatchMessageId);
-        }
-        ids.addAll(escalationMessageIds);
-        return List.copyOf(ids);
-    }
-
     public AlertState state() {
         return alertState;
     }

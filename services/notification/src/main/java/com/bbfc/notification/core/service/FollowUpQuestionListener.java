@@ -57,7 +57,9 @@ public class FollowUpQuestionListener {
             }
 
             long messageId = notificationChannel.sendTriageQuestion(
-                    alert.eventId(), messageRenderer.renderTriageQuestion(alert));
+                    alert.eventId(),
+                    messageRenderer.renderTriageQuestion(alert),
+                    alert.dispatchMessageId().orElse(null));
             alert.recordFollowUpMessage(messageId);
             alertRepository.save(alert);
         } catch (RuntimeException e) {

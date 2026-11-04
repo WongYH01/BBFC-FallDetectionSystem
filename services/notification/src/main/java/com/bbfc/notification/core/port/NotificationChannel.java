@@ -9,8 +9,14 @@ public interface NotificationChannel {
     /** Sends an alert carrying an acknowledge button. Returns the id of the message sent. */
     long sendAlert(EventId eventId, String message);
 
-    /** Sends the triage question carrying genuine / false-alarm buttons. Returns the message id. */
-    long sendTriageQuestion(EventId eventId, String message);
+    /**
+     * Sends the triage question carrying genuine / false-alarm buttons, as a reply to the alert
+     * message when there is one. Returns the message id.
+     */
+    long sendTriageQuestion(EventId eventId, String message, Long replyToMessageId);
+
+    /** Sends a keyboardless escalation reply to the alert message when there is one. Returns the message id. */
+    long sendEscalation(String message, Long replyToMessageId);
 
     /** Best effort: replaces a message's text and clears its keyboard. Never throws. */
     void closeMessage(long messageId, String text);

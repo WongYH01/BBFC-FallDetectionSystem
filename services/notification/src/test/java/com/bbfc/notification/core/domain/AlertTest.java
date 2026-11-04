@@ -158,23 +158,6 @@ class AlertTest {
             assertThat(alert.dispatchMessageId()).isEmpty();
             assertThat(alert.escalationMessageIds()).isEmpty();
             assertThat(alert.followUpMessageId()).isEmpty();
-            assertThat(alert.messageIds()).isEmpty();
-        }
-
-        @Test
-        void messageIdsReturnsDispatchThenEscalationsInSendOrder() {
-            alert.recordDispatchMessage(501L);
-            alert.recordEscalationMessage(502L);
-            alert.recordEscalationMessage(503L);
-            assertThat(alert.messageIds()).containsExactly(501L, 502L, 503L);
-        }
-
-        @Test
-        void followUpIsNotPartOfTheEditTargetSet() {
-            alert.recordDispatchMessage(501L);
-            alert.recordFollowUpMessage(504L);
-            assertThat(alert.followUpMessageId()).contains(504L);
-            assertThat(alert.messageIds()).containsExactly(501L);
         }
 
         @Test
@@ -245,15 +228,6 @@ class AlertTest {
         void deliveryCannotBeRecordedWithoutAClip() {
             assertThatThrownBy(() -> alert.recordClipDelivery("file-abc", 601L))
                     .isInstanceOf(IllegalStateException.class);
-        }
-
-        @Test
-        void clipMessageIsNotPartOfTheEditTargetSet() {
-            alert.recordDispatchMessage(501L);
-            alert.attachClip(SkeletonClip.stored("room-12/FE-1.mp4", STORED_AT));
-            alert.recordClipDelivery("file-abc", 601L);
-
-            assertThat(alert.messageIds()).containsExactly(501L);
         }
     }
 

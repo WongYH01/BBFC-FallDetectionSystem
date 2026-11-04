@@ -16,7 +16,9 @@ public final class TelegramRequests {
             @JsonProperty("chat_id") String chatId,
             String text,
             @JsonProperty("parse_mode") String parseMode,
-            @JsonProperty("reply_markup") ReplyMarkup replyMarkup
+            @JsonProperty("reply_markup") ReplyMarkup replyMarkup,
+            @JsonProperty("reply_to_message_id") Long replyToMessageId,
+            @JsonProperty("allow_sending_without_reply") Boolean allowSendingWithoutReply
     ) {
     }
 

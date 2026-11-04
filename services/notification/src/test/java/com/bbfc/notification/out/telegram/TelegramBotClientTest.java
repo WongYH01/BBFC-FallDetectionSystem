@@ -38,7 +38,7 @@ class TelegramBotClientTest {
     @BeforeEach
     void setUp() {
         TelegramConfig properties =
-                new TelegramConfig("test-token", "12345", wireMock.baseUrl(), "{roomName}", "{roomName}");
+                new TelegramConfig("test-token", "12345", wireMock.baseUrl(), "{roomName}", "{roomName}", "{roomName}");
         client = new TelegramBotClient(properties, RestClient.builder());
     }
 
@@ -136,7 +136,7 @@ class TelegramBotClientTest {
                 .withHeader("Content-Type", "application/json")
                 .withBody(okWithMessageId(43))));
 
-        long messageId = client.sendTriageQuestion(new EventId("FE-1"), "Was this a genuine fall?");
+        long messageId = client.sendTriageQuestion(new EventId("FE-1"), "Was this a genuine fall?", null);
 
         assertThat(messageId).isEqualTo(43L);
         wireMock.verify(postRequestedFor(urlEqualTo(SEND))

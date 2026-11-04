@@ -62,7 +62,7 @@ class FollowUpQuestionListenerTest {
         Alert alert = acknowledgedAlert();
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
         given(messageRenderer.renderTriageQuestion(alert)).willReturn("Was this a genuine fall?");
-        given(notificationChannel.sendTriageQuestion(eventId, "Was this a genuine fall?")).willReturn(504L);
+        given(notificationChannel.sendTriageQuestion(eventId, "Was this a genuine fall?", null)).willReturn(504L);
 
         listener.onAlertAcknowledged(event);
 
@@ -78,7 +78,7 @@ class FollowUpQuestionListenerTest {
 
         listener.onAlertAcknowledged(event);
 
-        verify(notificationChannel, never()).sendTriageQuestion(any(), any());
+        verify(notificationChannel, never()).sendTriageQuestion(any(), any(), any());
         verify(alertRepository, never()).save(any());
     }
 
@@ -88,7 +88,7 @@ class FollowUpQuestionListenerTest {
 
         listener.onAlertAcknowledged(event);
 
-        verify(notificationChannel, never()).sendTriageQuestion(any(), any());
+        verify(notificationChannel, never()).sendTriageQuestion(any(), any(), any());
     }
 
     // Under MANDATORY an escaping exception would roll back the acknowledgement that published
@@ -98,7 +98,7 @@ class FollowUpQuestionListenerTest {
         Alert alert = acknowledgedAlert();
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
         given(messageRenderer.renderTriageQuestion(alert)).willReturn("Was this a genuine fall?");
-        given(notificationChannel.sendTriageQuestion(any(), any()))
+        given(notificationChannel.sendTriageQuestion(any(), any(), any()))
                 .willThrow(new RuntimeException("telegram down"));
 
         assertThatCode(() -> listener.onAlertAcknowledged(event)).doesNotThrowAnyException();

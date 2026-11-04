@@ -7,22 +7,25 @@
 telegram:
   base-url: https://api.telegram.org
 
-  # Placeholders: {roomName} {time} {confidence} {eventId}. An unknown one fails at
+  # Placeholders: {roomName} {time} {confidence}. An unknown one fails at
   # startup — see TemplateMessageRenderer.validateTemplate.
   message-template: "
       🚨   <b>FALL DETECTED</b>\n\n
       <b>Room</b> {roomName}\n
-      <b>Time</b> {time}\n
-      <i>Ref {eventId}</i>
+      <b>Time</b> {time}
   "
 
-  # Placeholders: {eventId} {roomName} {handledLine}. Sent after acknowledgement, asking
+  # Placeholders: {roomName} {handledLine}. Sent after acknowledgement, asking
   # whether the fall was genuine. Same unknown-placeholder validation as message-template.
   triage-question-template: "
-      <b>Ref {eventId}</b> · {roomName}\n
+      <b>{roomName}</b>\n
       {handledLine}\n
       <b>Was this a genuine fall?</b>
   "
+
+  # Placeholders: {ordinal} {roomName}. Sent as a keyboardless reply to the alert message on
+  # each escalation; {ordinal} is the count (1st, 2nd, 3rd...). Same validation as above.
+  escalation-template: "⚠️ <b>{ordinal} escalation</b> · {roomName} · not yet acknowledged"
 
   # Receives button taps via getUpdates. Telegram allows one long-poller per bot token,
   # so a second running instance gets 409 Conflict.
