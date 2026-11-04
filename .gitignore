@@ -43,8 +43,88 @@ __pycache__/
 /.env*
 !/.env.example.*
 
+# JetBrains
+/.idea/shelf/
+/.idea/workspace.xml
+/.idea/httpRequests/
+/.idea/queries/
+/.idea/dataSources/
+/.idea/dataSources.local.xml
+/.idea/terraform.xml
 
-.idea/terraform.xml
+# demos/demo-cam
+demos/demo-cam/**/.env
+demos/demo-cam/**/*.log
+demos/demo-cam/**/models/
+demos/demo-cam/**/recordings/
+demos/demo-cam/v1/videos/
+demos/demo-cam/v1/metrics/
+demos/demo-cam/v1/fall_clips/
 
-infra/docs/infra-plan.md
-infra/docs/training-plan.md
+# demos/demo-tele
+demos/demo-tele/**/*env
+demos/demo-tele/**/*.log
+demos/demo-tele/**/alerts.yaml.tmp
+# Chat ids discovered at runtime — local to whoever ran the bot.
+demos/demo-tele/**/seen_chats.json
+
+# infra/k8s
+infra/k8s/**/*.env
+
+# infra/tofu
+infra/tofu/**/.terraform/
+infra/tofu/**/*.tfstate
+infra/tofu/**/*.tfstate.*
+infra/tofu/**/.terraform.tfstate.lock.info
+infra/tofu/**/crash.log
+infra/tofu/**/crash.*.log
+# tfvars likely hold sensitive, per-environment values.
+infra/tofu/**/*.tfvars
+infra/tofu/**/*.tfvars.json
+infra/tofu/**/override.tf
+infra/tofu/**/override.tf.json
+infra/tofu/**/*_override.tf
+infra/tofu/**/*_override.tf.json
+infra/tofu/**/.terraformrc
+infra/tofu/**/terraform.rc
+infra/tofu/**/*.env
+infra/tofu/**/cluster-runbook.md
+
+# services/detection
+services/detection/**/.env
+services/detection/**/spool/
+# Weights (scripts/fetch_weights.py) and v2's recordings
+services/detection/**/models/
+services/detection/v2/videos/
+services/detection/v2/fall_clips/
+
+# services/notification
+services/notification/**/target/
+!services/notification/**/src/main/**/target/
+!services/notification/**/src/test/**/target/
+services/notification/**/build/
+!services/notification/**/src/main/**/build/
+!services/notification/**/src/test/**/build/
+services/notification/.mvn/wrapper/maven-wrapper.jar
+services/notification/**/.apt_generated
+services/notification/**/.classpath
+services/notification/**/.factorypath
+services/notification/**/.project
+services/notification/**/.settings
+services/notification/**/.springBeans
+services/notification/**/.sts4-cache
+services/notification/**/.idea
+services/notification/**/*.iws
+services/notification/**/*.iml
+services/notification/**/*.ipr
+services/notification/nbproject/private/
+services/notification/nbbuild/
+services/notification/dist/
+services/notification/nbdist/
+services/notification/.nb-gradle/
+services/notification/**/.vscode/
+services/notification/**/.env*
+!services/notification/**/.env.example.*
+# Local launcher scripts tend to hardcode passwords. Keep them out.
+services/notification/**/*.bat
+services/notification/.claude/
