@@ -9,10 +9,8 @@ import com.bbfc.notification.core.domain.RoomRef;
 import com.bbfc.notification.core.domain.SkeletonClip;
 import com.bbfc.notification.core.port.AlertRepository;
 import com.bbfc.notification.core.port.ClipContent;
-import com.bbfc.notification.core.port.ClipDelivery;
 import com.bbfc.notification.core.port.ClipStorageException;
 import com.bbfc.notification.core.port.ClipStore;
-import com.bbfc.notification.core.port.NotificationChannel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,15 +48,13 @@ class AttachClipServiceTest {
     private ClipRecorder clipRecorder;
     @Mock
     private AlertDispatcher alertDispatcher;
-    @Mock
-    private NotificationChannel notificationChannel;
 
     private AttachClipService service;
 
     @BeforeEach
     void setUp() {
         service = new AttachClipService(
-                alertRepository, clipStore, clipRecorder, alertDispatcher, notificationChannel,
+                alertRepository, clipStore, clipRecorder, alertDispatcher,
                 new UploadLimit(8_388_608L), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
@@ -94,49 +90,18 @@ class AttachClipServiceTest {
 
         assertThat(sent).isTrue();
         verify(clipRecorder).markStored(EVENT_ID, SkeletonClip.stored("room-12/FE-1.mp4", NOW));
-        verifyNoInteractions(notificationChannel);
     }
 
     @Test
-    void aRefusedAnimationLeavesTheClipStoredAndTheAlertPending() {
+    void aClipThatDidNotGoOutAsTheDispatchAnimationIsOnlyStored() {
         given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(pendingAlert()));
         given(clipStore.store(any(), any(), any())).willReturn("room-12/FE-1.mp4");
-        given(alertDispatcher.dispatchWithClip(eq(EVENT_ID), any())).willReturn(pendingAlert());
+        given(alertDispatcher.dispatchWithClip(eq(EVENT_ID), any())).willReturn(dispatchedAlert(false));
 
         boolean sent = service.attach(EVENT_ID, content(1024));
 
         assertThat(sent).isFalse();
-        verify(clipRecorder).markStored(any(), any());
-        verifyNoInteractions(notificationChannel);
-    }
-
-    @Test
-    void aClipAfterATextDispatchIsStoredThenSentAsAReply() {
-        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(dispatchedAlert()));
-        given(alertDispatcher.dispatchWithClip(eq(EVENT_ID), any())).willReturn(dispatchedAlert());
-        given(clipStore.store(eq("room-12"), eq(EVENT_ID), any())).willReturn("room-12/FE-1.mp4");
-        given(notificationChannel.sendClipReply(eq(501L), any()))
-                .willReturn(Optional.of(new ClipDelivery("file-abc", 601L)));
-
-        boolean sent = service.attach(EVENT_ID, content(1024));
-
-        assertThat(sent).isTrue();
         verify(clipRecorder).markStored(EVENT_ID, SkeletonClip.stored("room-12/FE-1.mp4", NOW));
-        verify(clipRecorder).markDelivered(EVENT_ID, new ClipDelivery("file-abc", 601L));
-    }
-
-    @Test
-    void aRejectedTelegramSendStillLeavesTheClipStored() {
-        given(alertRepository.findByEventId(EVENT_ID)).willReturn(Optional.of(dispatchedAlert()));
-        given(alertDispatcher.dispatchWithClip(eq(EVENT_ID), any())).willReturn(dispatchedAlert());
-        given(clipStore.store(any(), any(), any())).willReturn("room-12/FE-1.mp4");
-        given(notificationChannel.sendClipReply(any(Long.class), any())).willReturn(Optional.empty());
-
-        boolean sent = service.attach(EVENT_ID, content(1024));
-
-        assertThat(sent).isFalse();
-        verify(clipRecorder).markStored(any(), any());
-        verify(clipRecorder, never()).markDelivered(any(), any());
     }
 
     @Test
@@ -146,7 +111,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
                 .isInstanceOf(AlertNotFoundException.class);
 
-        verifyNoInteractions(clipStore, notificationChannel, clipRecorder, alertDispatcher);
+        verifyNoInteractions(clipStore, clipRecorder, alertDispatcher);
     }
 
     @Test
@@ -158,7 +123,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
                 .isInstanceOf(ClipAlreadyAttachedException.class);
 
-        verifyNoInteractions(clipStore, notificationChannel, clipRecorder, alertDispatcher);
+        verifyNoInteractions(clipStore, clipRecorder, alertDispatcher);
     }
 
     @Test
@@ -168,7 +133,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(8_388_609L)))
                 .isInstanceOf(ClipTooLargeException.class);
 
-        verifyNoInteractions(clipStore, notificationChannel, clipRecorder, alertDispatcher);
+        verifyNoInteractions(clipStore, clipRecorder, alertDispatcher);
     }
 
     @Test
@@ -179,7 +144,7 @@ class AttachClipServiceTest {
         assertThatThrownBy(() -> service.attach(EVENT_ID, content(1024)))
                 .isInstanceOf(ClipStorageException.class);
 
-        verifyNoInteractions(notificationChannel, alertDispatcher);
+        verifyNoInteractions(alertDispatcher);
         verify(clipRecorder, never()).markStored(any(), any());
     }
 }

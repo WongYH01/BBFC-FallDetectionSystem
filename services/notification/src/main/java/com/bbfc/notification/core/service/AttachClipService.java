@@ -2,14 +2,12 @@ package com.bbfc.notification.core.service;
 
 import com.bbfc.notification.core.domain.UploadLimit;
 import com.bbfc.notification.core.domain.Alert;
-import com.bbfc.notification.core.domain.AlertState;
 import com.bbfc.notification.core.domain.ClipAlreadyAttachedException;
 import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.SkeletonClip;
 import com.bbfc.notification.core.port.AlertRepository;
 import com.bbfc.notification.core.port.ClipContent;
 import com.bbfc.notification.core.port.ClipStore;
-import com.bbfc.notification.core.port.NotificationChannel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -17,7 +15,8 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 
 /**
- * Stores the clip, then dispatches a Pending alert with it.
+ * Stores the clip, then dispatches a Pending alert with it. A clip arriving after a text Dispatch
+ * is stored but not posted.
  *
  * <p>Deliberately not transactional: the two uploads are independent, and a Telegram failure must
  * not undo the stored copy. Storage goes first because a delivery can later be retried from the
@@ -32,24 +31,21 @@ public class AttachClipService {
     private final ClipStore clipStore;
     private final ClipRecorder clipRecorder;
     private final AlertDispatcher alertDispatcher;
-    private final NotificationChannel notificationChannel;
     private final UploadLimit uploadLimit;
     private final Clock clock;
 
     public AttachClipService(
             AlertRepository alertRepository, ClipStore clipStore, ClipRecorder clipRecorder,
-            AlertDispatcher alertDispatcher, NotificationChannel notificationChannel,
-            UploadLimit uploadLimit, Clock clock) {
+            AlertDispatcher alertDispatcher, UploadLimit uploadLimit, Clock clock) {
         this.alertRepository = alertRepository;
         this.clipStore = clipStore;
         this.clipRecorder = clipRecorder;
         this.alertDispatcher = alertDispatcher;
-        this.notificationChannel = notificationChannel;
         this.uploadLimit = uploadLimit;
         this.clock = clock;
     }
 
-    /** @return true if the clip also reached Telegram. */
+    /** @return true if the clip went out as the dispatch animation. */
     public boolean attach(EventId eventId, ClipContent content) {
         Alert alert = alertRepository.findByEventId(eventId)
                 .orElseThrow(() -> new AlertNotFoundException(eventId));
@@ -64,24 +60,10 @@ public class AttachClipService {
         String storageKey = clipStore.store(alert.room().roomId(), eventId, content);
         clipRecorder.markStored(eventId, SkeletonClip.stored(storageKey, clock.instant()));
 
-        Alert current = alertDispatcher.dispatchWithClip(eventId, content);
-        if (current.dispatchCarriesClip()) {
+        if (alertDispatcher.dispatchWithClip(eventId, content).dispatchCarriesClip()) {
             return true;
         }
-        if (current.state() == AlertState.PENDING) {
-            log.warn("Clip stored for {} but Telegram did not accept the alert animation", eventId.eventId());
-            return false;
-        }
-
-        // shortcut: a clip after a text-only Dispatch is still posted as a reply, until #49 stops posting late clips.
-        return notificationChannel.sendClipReply(current.dispatchMessageId().orElseThrow(), content)
-                .map(delivery -> {
-                    clipRecorder.markDelivered(eventId, delivery);
-                    return true;
-                })
-                .orElseGet(() -> {
-                    log.warn("Clip stored for {} but Telegram did not accept it", eventId.eventId());
-                    return false;
-                });
+        log.warn("Clip stored for {} but not posted: Telegram refused it or the alert went out as text", eventId.eventId());
+        return false;
     }
 }

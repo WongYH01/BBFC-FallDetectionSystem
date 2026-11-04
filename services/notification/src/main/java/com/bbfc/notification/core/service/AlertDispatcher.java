@@ -53,16 +53,7 @@ public class AlertDispatcher {
     public void dispatchDueAlerts() {
         Instant now = clock.instant();
         for (Alert alert : alertRepository.findDueForDispatch(now, BATCH_LIMIT)) {
-            long messageId;
-            try {
-                messageId = notificationChannel.sendAlert(alert.eventId(), messageRenderer.render(alert, alert.createdAt()));
-            } catch (RuntimeException e) {
-                // Left Pending for the next tick; rolling back the batch would re-send the ones already out.
-                log.warn("Could not dispatch {}", alert.eventId().eventId(), e);
-                continue;
-            }
-            alert.dispatch(messageId, false, now.plus(escalationPolicy.window()));
-            alertRepository.save(alert);
+            dispatchAsText(alert);
         }
     }
 
@@ -70,7 +61,8 @@ public class AlertDispatcher {
      * Dispatches a Pending alert as its clip. The clip must already be attached.
      *
      * @return the alert as it now stands: dispatched with the clip, already dispatched by the
-     *     tick, or still Pending if Telegram refused the animation.
+     *     tick, dispatched as text because Telegram refused the animation, or still Pending if the
+     *     text was refused too.
      */
     @Transactional
     public Alert dispatchWithClip(EventId eventId, ClipContent content) {
@@ -83,13 +75,25 @@ public class AlertDispatcher {
         Optional<ClipDelivery> delivery = notificationChannel.sendAlertWithClip(
                 eventId, messageRenderer.render(alert, alert.createdAt()), content);
         if (delivery.isEmpty()) {
-            // shortcut: a refused animation waits for the tick's text dispatch at the deadline, until #49 dispatches text at once.
-            return alert;
+            return dispatchAsText(alert);
         }
 
         long messageId = delivery.get().messageId();
         alert.dispatch(messageId, true, clock.instant().plus(escalationPolicy.window()));
         alert.recordClipDelivery(delivery.get().fileId(), messageId);
+        return alertRepository.save(alert);
+    }
+
+    private Alert dispatchAsText(Alert alert) {
+        long messageId;
+        try {
+            messageId = notificationChannel.sendAlert(alert.eventId(), messageRenderer.render(alert, alert.createdAt()));
+        } catch (RuntimeException e) {
+            // Left Pending for the next tick; rolling back the batch would re-send the ones already out.
+            log.warn("Could not dispatch {}", alert.eventId().eventId(), e);
+            return alert;
+        }
+        alert.dispatch(messageId, false, clock.instant().plus(escalationPolicy.window()));
         return alertRepository.save(alert);
     }
 }

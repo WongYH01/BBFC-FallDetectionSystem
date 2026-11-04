@@ -283,6 +283,52 @@ class DispatchFlowTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void aRefusedAnimationDispatchesTheTextAlertAtOnceAndKeepsTheClipStored() throws Exception {
+        postEvent();
+        advance(Duration.ofSeconds(10));
+        telegram.stubFor(WireMock.post(urlEqualTo(ANIMATION)).willReturn(aResponse().withStatus(400)));
+
+        uploadClip().andExpect(status().isAccepted()).andExpect(jsonPath("$.sentToTelegram").value(false));
+
+        telegram.verify(1, postRequestedFor(urlEqualTo(SEND)));
+        storage.verify(WireMock.putRequestedFor(urlEqualTo(OBJECT)));
+        Alert dispatched = reload();
+        assertThat(dispatched.state()).isEqualTo(AlertState.DISPATCHED);
+        assertThat(dispatched.dispatchMessageId()).contains(501L);
+        assertThat(dispatched.dispatchCarriesClip()).isFalse();
+        assertThat(dispatched.clip()).isPresent();
+
+        passTheDeadlineAndTick();
+        telegram.verify(1, postRequestedFor(urlEqualTo(SEND)));
+    }
+
+    @Test
+    void whenTheTextIsRefusedTooTheAlertStaysPendingForTheTick() throws Exception {
+        postEvent();
+        telegram.stubFor(WireMock.post(urlEqualTo(ANIMATION)).willReturn(aResponse().withStatus(400)));
+        telegram.stubFor(WireMock.post(urlEqualTo(SEND)).willReturn(aResponse().withStatus(500)));
+
+        uploadClip().andExpect(status().isAccepted()).andExpect(jsonPath("$.sentToTelegram").value(false));
+        assertThat(reload().state()).isEqualTo(AlertState.PENDING);
+
+        stubSend(0);
+        passTheDeadlineAndTick();
+        assertThat(reload().state()).isEqualTo(AlertState.DISPATCHED);
+    }
+
+    @Test
+    void aClipAfterATextDispatchIsStoredButNotPosted() throws Exception {
+        postEvent();
+        passTheDeadlineAndTick();
+
+        uploadClip().andExpect(status().isAccepted()).andExpect(jsonPath("$.sentToTelegram").value(false));
+
+        telegram.verify(0, postRequestedFor(urlEqualTo(ANIMATION)));
+        storage.verify(WireMock.putRequestedFor(urlEqualTo(OBJECT)));
+        assertThat(reload().clip()).isPresent();
+    }
+
+    @Test
     void aPendingAlertLeftOverFromBeforeARestartIsDispatchedByTheFirstTick() {
         alertRepository.save(Alert.receive(
                 new EventId(EVENT_ID), new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92),
@@ -329,9 +375,7 @@ class DispatchFlowTest extends AbstractIntegrationTest {
         tick.get(10, TimeUnit.SECONDS);
 
         telegram.verify(1, postRequestedFor(urlEqualTo(SEND)));
-        // Until #49 the late clip still goes out, but as a reply to the text dispatch, not a second dispatch.
-        telegram.verify(1, postRequestedFor(urlEqualTo(ANIMATION))
-                .withRequestBodyPart(aMultipart().withName("reply_to_message_id").withBody(equalTo("501")).build()));
+        telegram.verify(0, postRequestedFor(urlEqualTo(ANIMATION)));
         Alert dispatched = reload();
         assertThat(dispatched.dispatchMessageId()).contains(501L);
         assertThat(dispatched.dispatchCarriesClip()).isFalse();

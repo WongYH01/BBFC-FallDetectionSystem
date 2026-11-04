@@ -56,31 +56,6 @@ class TelegramBotClientTest {
     }
 
     @Test
-    void sendsTheClipAsAnAnimationReplyingToTheAlertMessage() {
-        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse()
-                .withStatus(200)
-                .withHeader("Content-Type", "application/json")
-                .withBody("{\"ok\":true,\"result\":{\"message_id\":601,"
-                        + "\"animation\":{\"file_id\":\"file-abc\"}}}")));
-
-        Optional<ClipDelivery> delivery = client.sendClipReply(501L, clip());
-
-        assertThat(delivery).isPresent();
-        assertThat(delivery.orElseThrow().fileId()).isEqualTo("file-abc");
-        assertThat(delivery.orElseThrow().messageId()).isEqualTo(601L);
-
-        wireMock.verify(postRequestedFor(urlEqualTo(ANIMATION))
-                .withRequestBodyPart(aMultipart().withName("chat_id")
-                        .withBody(equalTo("12345")).build())
-                .withRequestBodyPart(aMultipart().withName("reply_to_message_id")
-                        .withBody(equalTo("501")).build())
-                .withRequestBodyPart(aMultipart().withName("allow_sending_without_reply")
-                        .withBody(equalTo("true")).build())
-                .withRequestBodyPart(aMultipart().withName("animation")
-                        .withBody(binaryEqualTo(CLIP_BYTES)).build()));
-    }
-
-    @Test
     void fallsBackToTheDocumentFileIdWhenTelegramDoesNotTreatItAsAnAnimation() {
         wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse()
                 .withStatus(200)
@@ -88,14 +63,7 @@ class TelegramBotClientTest {
                 .withBody("{\"ok\":true,\"result\":{\"message_id\":602,"
                         + "\"document\":{\"file_id\":\"doc-xyz\"}}}")));
 
-        assertThat(client.sendClipReply(501L, clip()).orElseThrow().fileId()).isEqualTo("doc-xyz");
-    }
-
-    @Test
-    void clipSendIsBestEffortAndReturnsEmptyOnFailure() {
-        wireMock.stubFor(post(urlEqualTo(ANIMATION)).willReturn(aResponse().withStatus(500)));
-
-        assertThat(client.sendClipReply(501L, clip())).isEmpty();
+        assertThat(client.sendAlertWithClip(new EventId("FE-1"), "Fall", clip()).orElseThrow().fileId()).isEqualTo("doc-xyz");
     }
 
     @Test
@@ -105,7 +73,7 @@ class TelegramBotClientTest {
                 .withHeader("Content-Type", "application/json")
                 .withBody("{\"ok\":false}")));
 
-        assertThat(client.sendClipReply(501L, clip())).isEmpty();
+        assertThat(client.sendAlertWithClip(new EventId("FE-1"), "Fall", clip())).isEmpty();
     }
 
     @Test

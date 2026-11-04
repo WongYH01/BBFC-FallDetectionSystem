@@ -35,11 +35,4 @@ public interface NotificationChannel {
      * Never throws — a spinning button must not cost us the acknowledgement it was recording.
      */
     void answerCallback(String callbackQueryId, String text);
-
-    /**
-     * Best effort: posts the clip as a reply to the alert message. Never throws — the text alert
-     * has already been delivered and a clip failure must not undo it. Empty means Telegram
-     * refused it.
-     */
-    Optional<ClipDelivery> sendClipReply(long replyToMessageId, ClipContent content);
 }

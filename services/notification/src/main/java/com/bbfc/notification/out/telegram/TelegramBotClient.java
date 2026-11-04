@@ -123,16 +123,6 @@ public class TelegramBotClient implements NotificationChannel {
         }
     }
 
-    @Override
-    public Optional<ClipDelivery> sendClipReply(long replyToMessageId, ClipContent content) {
-        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
-        parts.add("chat_id", chatGroupId);
-        parts.add("reply_to_message_id", String.valueOf(replyToMessageId));
-        // The alert message may have been deleted; the clip is still worth sending.
-        parts.add("allow_sending_without_reply", "true");
-        return sendAnimation(parts, content, "Could not send clip as a reply to message " + replyToMessageId);
-    }
-
     private Optional<ClipDelivery> sendAnimation(
             MultiValueMap<String, Object> parts, ClipContent content, String failureMessage) {
         try {
