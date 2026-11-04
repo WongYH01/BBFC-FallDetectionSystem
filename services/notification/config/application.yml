@@ -25,7 +25,10 @@ telegram:
 
   # Placeholders: {ordinal} {roomName}. Sent as a keyboardless reply to the alert message on
   # each escalation; {ordinal} is the count (1st, 2nd, 3rd...). Same validation as above.
-  escalation-template: "⚠️ <b>{ordinal} escalation</b> · {roomName} · not yet acknowledged"
+  escalation-template: "
+      ⚠️ <b>{ordinal} escalation</b>\n
+      {roomName}
+  "
 
   # Receives button taps via getUpdates. Telegram allows one long-poller per bot token,
   # so a second running instance gets 409 Conflict.

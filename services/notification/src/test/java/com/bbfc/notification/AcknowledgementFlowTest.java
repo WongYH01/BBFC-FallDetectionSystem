@@ -223,7 +223,7 @@ class AcknowledgementFlowTest extends AbstractIntegrationTest {
         return """
                 {
                   "chat_id": "-1000000000000",
-                  "text": "⚠️ <b>%s escalation</b> · Block A - Room 12 · not yet acknowledged",
+                  "text": " ⚠️ <b>%s escalation</b>\\n Block A - Room 12 ",
                   "parse_mode": "HTML",
                   "reply_to_message_id": 501,
                   "allow_sending_without_reply": true
