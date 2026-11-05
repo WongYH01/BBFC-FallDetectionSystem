@@ -86,36 +86,37 @@ with read scope, no other auth path. `--check` verifies local files without one.
 
 ## Run locally
 
-The local Docker deployment runs the same images as GKE: the ones CI pushes
-to Artifact Registry on every merge to main, with the weights and the promoted
-camera head baked in. Compose pulls them on every start and builds nothing. It
+The local Docker deployment builds notification and detection from the
+checkout; GKE runs the images CI pushes to Artifact Registry on every merge to
+main, and never reads `docker-compose.yml`. The detection build bakes in the
+weights and camera head that `services/detection/scripts/fetch_weights.py`
+pins, so on an up-to-date main it runs the same promoted head as GKE. It
 runs the `local` profile (local Postgres and Supabase storage), so an Alert
 raised locally never reaches the GCS bucket: the local deployment is not
 training data, and the weekly Refit learns from GKE's Alerts alone. Only one of
 the two deployments runs at a time.
 
-Once, with the [gcloud CLI](https://cloud.google.com/sdk/docs/install) and an
-account that can read the registry (`roles/artifactregistry.reader`):
+Once:
 
 ```
-gcloud auth login
-gcloud auth configure-docker asia-southeast1-docker.pkg.dev    # Docker pulls through gcloud
 copy .env.example.local .env                                   # Postgres, Supabase, Telegram
-copy services\detection\.env.example services\detection\.env   # ROOM_*, MEDIAMTX_*, stream login
+copy services\detection\.env.example services\detection\.env   # ROOM_*, MEDIAMTX_*, FALL_WEIGHTS_TOKEN
 ```
 
 Then:
 
 ```
-docker compose up -d                  # pulls notification and detection :latest
+docker compose up -d --build          # builds notification and detection from the checkout
 docker compose logs -f detection
 ```
 
-A running container never updates itself (Docker restarting it does not pull),
-so a deployment left up for weeks pulls once a week instead.
-[`infra/local/update-detection.ps1`](infra/local/update-detection.ps1) pulls the
-newest detection image, swaps the container onto it, and fails unless it comes
-back healthy (log in `%LOCALAPPDATA%\bbfc\update-detection.log`; `-WhatIf` says
+A Promotion is a commit on main that repins `fetch_weights.py`, so `git pull`
+and `docker compose up -d --build` pick it up; with the pin unchanged the build
+reuses its cache and downloads nothing. A deployment left up for weeks does
+that once a week instead.
+[`infra/local/update-detection.ps1`](infra/local/update-detection.ps1) pulls
+main (it refuses any other branch), rebuilds the detection image, swaps the
+container onto it, and fails unless it comes back healthy (log in `%LOCALAPPDATA%\bbfc\update-detection.log`; `-WhatIf` says
 what it would do). Register it once, from the repo root in PowerShell:
 
 ```powershell
@@ -126,17 +127,13 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
 Register-ScheduledTask -TaskName "bbfc update detection" -Action $action -Trigger $trigger -Settings $settings
 ```
 
-It runs as you, while you are logged on, because Docker Desktop and the gcloud
-credential helper are yours. `Start-ScheduledTask "bbfc update detection"` runs
-it now; the last run result in Task Scheduler is 0 when it succeeded.
+It runs as you, while you are logged on, because Docker Desktop and your git
+credentials are yours. `Start-ScheduledTask "bbfc update detection"` runs it
+now; the last run result in Task Scheduler is 0 when it succeeded.
 
-To run code that is not on main yet, build it under the same name and start
-without pulling; the next pull puts main's image back:
-
-```
-docker build --secret id=detection_env,src=services/detection/.env -t asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection:latest services/detection
-docker compose up -d --pull never detection
-```
+To run code that is not on main yet, check out its branch and
+`docker compose up -d --build`; the weekly task fails until you switch back to
+main.
 
 ## Three things worth knowing
 

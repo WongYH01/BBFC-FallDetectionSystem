@@ -1,11 +1,13 @@
-# Pull the newest detection image from Artifact Registry and swap the local
-# container onto it, then wait for it to report healthy.
+# Pull main into the checkout, rebuild the detection image from it and swap the
+# local container onto it, then wait for it to report healthy.
 #
 # Meant for a weekly Windows scheduled task (README, "Run locally"), so a local
-# deployment that stays up for weeks still picks up Promotions. Only detection
-# is touched; notification keeps running. Exits non-zero, which Task Scheduler
-# shows as the last run result, if the pull, the swap or the health check fails.
-# A failed pull leaves the running container as it was.
+# deployment that stays up for weeks still picks up Promotions: a Promotion is a
+# commit on main that repins scripts/fetch_weights.py, and the rebuild fetches
+# the new head. Only detection is touched; notification keeps running. Exits
+# non-zero, which Task Scheduler shows as the last run result, if the git pull,
+# the build, the swap or the health check fails. A failed pull or build leaves
+# the running container as it was.
 #
 #   powershell -NoProfile -File infra\local\update-detection.ps1           # .env, the local profile
 #   powershell -NoProfile -File infra\local\update-detection.ps1 -WhatIf   # say what it would do
@@ -28,6 +30,12 @@ function Invoke-Compose {
     $ErrorActionPreference = "Continue"
     & docker compose --env-file $EnvFile @args 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { throw "docker compose $args failed (exit $LASTEXITCODE)" }
+}
+
+function Invoke-Git {
+    $ErrorActionPreference = "Continue"
+    & git @args 2>&1 | ForEach-Object { "$_" }
+    if ($LASTEXITCODE -ne 0) { throw "git $args failed (exit $LASTEXITCODE)" }
 }
 
 # Queries keep stderr apart, so a compose warning never reads as a value.
@@ -72,11 +80,16 @@ try {
     $old = Get-ContainerImage
     Write-Output "running image: $(if ($old) { $old } else { 'none' })"
 
-    if ($PSCmdlet.ShouldProcess($service, "pull the newest image and recreate the container")) {
-        Invoke-Compose pull $service
-        # The pull already happened; --pull never keeps up from contacting the
-        # registry again. Only a changed image recreates the container.
-        Invoke-Compose up -d --no-deps --pull never $service
+    # Promotions land on main; a checkout on any other branch would keep
+    # rebuilding a head that has fallen behind.
+    $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+    if ($branch -ne "main") { throw "checkout is on '$branch', not main: git switch main" }
+
+    if ($PSCmdlet.ShouldProcess($service, "pull main, rebuild the image and recreate the container")) {
+        Invoke-Git pull --ff-only
+        Invoke-Compose build $service
+        # Only a changed image recreates the container.
+        Invoke-Compose up -d --no-deps $service
 
         $new = Get-ContainerImage
         if (-not $new) { throw $notRunning }
@@ -84,7 +97,7 @@ try {
         Wait-Healthy
         Write-Output "$service is healthy"
 
-        # The old image is untagged now; remove it so weekly pulls do not fill
+        # The old image is untagged now; remove it so weekly builds do not fill
         # the disk. Best effort: another container may still use it.
         if ($old -and $new -ne $old) {
             $ErrorActionPreference = "Continue"
