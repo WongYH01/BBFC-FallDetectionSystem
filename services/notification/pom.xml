@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.1.1</version>
+		<version>4.1.2</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.bbfc</groupId>
@@ -42,7 +42,7 @@
 			<dependency>
 				<groupId>com.google.cloud</groupId>
 				<artifactId>libraries-bom</artifactId>
-				<version>26.90.0</version>
+				<version>26.91.0</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -112,7 +112,7 @@
 		<dependency>
 			<groupId>com.google.cloud.sql</groupId>
 			<artifactId>postgres-socket-factory</artifactId>
-			<version>1.30.0</version>
+			<version>1.30.2</version>
 			<scope>runtime</scope>
 		</dependency>
 
@@ -170,7 +170,7 @@
 			<plugin>
 				<groupId>org.jacoco</groupId>
 				<artifactId>jacoco-maven-plugin</artifactId>
-				<version>0.8.15</version>
+				<version>0.8.16</version>
 				<configuration>
 					<excludes>
 						<exclude>**/config/**</exclude>
