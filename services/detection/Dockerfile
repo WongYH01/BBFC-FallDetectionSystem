@@ -76,7 +76,7 @@ COPY service /app/service
 ENV YOLO_CONFIG_DIR=/tmp/Ultralytics \
     MPLCONFIGDIR=/tmp/matplotlib
 RUN useradd -r -m -d /home/appuser -s /usr/sbin/nologin appuser \
-    && mkdir -p /app/v2/fall_clips /app/v2/videos /data/outbox \
+    && mkdir -p /app/v2/fall_clips /data/outbox \
     && chown -R appuser:appuser /app/v2 /data /home/appuser
 USER appuser
 

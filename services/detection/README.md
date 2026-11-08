@@ -33,9 +33,8 @@ camera -> MediaMTX (Pi) --RTSP--> detection service --POST /events-----------> n
   labelled training example. Format: `fallcore/keypoint_file.py`;
   `FALL_KEYPOINTS_ENABLED=0` turns it off.
 - The service does **not** keep footage: the local clip and keypoint file are
-  deleted after the upload (`KEEP_UPLOADED_CLIPS=0`), and the manual Record
-  button -- the one path that writes raw camera video -- is refused with
-  `ALLOW_MANUAL_RECORDING=0`.
+  deleted after the upload (`KEEP_UPLOADED_CLIPS=0`), and there is no manual
+  recording, so nothing writes raw camera video.
 
 ## Run
 
@@ -80,6 +79,12 @@ deployment must set; every other setting has a working default, in
 `service/config.py` for the service and in `v2/README.md` for the stream, pose
 and fall-decision variables. The required three are `ROOM_ID`, `ROOM_NAME` and
 `MEDIAMTX_HOST`.
+
+`MEDIAMTX_BROWSER_HOST` is the MediaMTX host the page's WebRTC view and
+fallback links use; it defaults to `MEDIAMTX_HOST`. Set it when the service
+reaches the camera under a name your browser cannot, as in the cluster:
+`MEDIAMTX_HOST=pi-mediamtx` resolves only in-cluster, so the browser gets the
+Pi's tailnet name, and the WebRTC view works only from a device on the tailnet.
 
 The startup guard refuses to run with `FALL_CLIPS_ENABLED=0`: with no viewer
 attached the capture watchdog would drop the RTSP connection after

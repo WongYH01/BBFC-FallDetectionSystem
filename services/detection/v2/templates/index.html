@@ -66,8 +66,11 @@
       grid-template-columns: 1fr 1fr 280px;
       gap: 0;
     }
+    /* WebRTC pane hidden (the default): the pose feed takes both columns */
+    main.webrtc-off { grid-template-columns: 1fr 280px; }
 
     .video-pane + .video-pane { border-left: 1px solid #222220; }
+    .video-pane[hidden] { display: none; }
 
     #pose-feed {
       width: 100%;
@@ -174,23 +177,14 @@
       margin-top: 4px;
     }
     .connect-btn:hover { background: #3a8a3a; }
-    .connect-btn:disabled { background: #333; color: #666; cursor: default; }
-
-    .record-btn {
-      width: 100%;
-      padding: 10px;
-      font-size: 13px;
-      font-weight: 500;
-      background: #7a2d2d;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.15s;
+    /* On: the button now turns the view off, so it steps back to an outline */
+    .connect-btn[aria-pressed="true"] {
+      background: transparent;
+      color: #ccc;
+      box-shadow: inset 0 0 0 1px #3a3a36;
     }
-    .record-btn:hover { background: #a83a3a; }
-    .record-btn.recording { background: #ef5350; }
-    .record-btn.recording:hover { background: #f06462; }
+    .connect-btn[aria-pressed="true"]:hover { background: #222220; }
+    .connect-btn:focus-visible { outline: 2px solid #81c784; outline-offset: 2px; }
 
     .rec-info { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.5; }
     .rec-info .rec-file { color: #aaa; font-family: monospace; word-break: break-all; }
@@ -254,7 +248,7 @@
     .fallback-link span { display: block; font-size: 10px; color: #444; margin-top: 2px; }
 
     @media (max-width: 700px) {
-      main { grid-template-columns: 1fr; }
+      main, main.webrtc-off { grid-template-columns: 1fr; }
       .sidebar { border-left: none; border-top: 1px solid #222220; }
     }
   </style>
@@ -276,13 +270,21 @@
   <div class="nav-right">
     <span>
       <span class="status-dot" id="status-dot"></span>
-      <span class="status-text" id="status-text">Disconnected</span>
+      <span class="status-text" id="status-text">WebRTC off</span>
     </span>
   </div>
 </nav>
 
-<main>
-  <div class="video-pane">
+<main class="webrtc-off" id="main">
+  <div class="video-pane" id="pose-pane">
+    <div class="video-overlay">
+      <span class="pill pill-ai">AI · Pose</span>
+      <span class="pill pill-webrtc">RTSP</span>
+    </div>
+    <img id="pose-feed" src="/video_feed" alt="YOLO pose tracking feed">
+  </div>
+
+  <div class="video-pane" id="webrtc-pane" hidden>
     <div class="video-overlay" id="video-overlay" style="display:none">
       <span class="pill pill-live">Live</span>
       <span class="pill pill-webrtc">WebRTC</span>
@@ -293,18 +295,10 @@
         <rect x="2" y="7" width="20" height="15" rx="2"/>
         <polyline points="17 2 12 7 7 2"/>
       </svg>
-      <p>Press Connect to start the stream</p>
+      <p>Connecting to the camera…</p>
     </div>
 
     <video id="stream-video" autoplay playsinline muted></video>
-  </div>
-
-  <div class="video-pane" id="pose-pane">
-    <div class="video-overlay">
-      <span class="pill pill-ai">AI · Pose</span>
-      <span class="pill pill-webrtc">RTSP</span>
-    </div>
-    <img id="pose-feed" src="/video_feed" alt="YOLO pose tracking feed">
   </div>
 
   <div class="sidebar">
@@ -325,10 +319,11 @@
       </div>
       <div class="stat-row">
         <span class="stat-label">State</span>
-        <span class="stat-value" id="info-state">Idle</span>
+        <span class="stat-value" id="info-state">Off</span>
       </div>
 
-      <button class="connect-btn" id="connect-btn" onclick="toggleStream()">Connect</button>
+      <button class="connect-btn" id="connect-btn" aria-pressed="false"
+              aria-controls="webrtc-pane" onclick="toggleStream()">Show WebRTC view</button>
       <div class="error-box" id="error-box"></div>
     </div>
 
@@ -381,12 +376,6 @@
     </div>
 
     <div class="sidebar-section">
-      <div class="sidebar-label">Recording</div>
-      <button class="record-btn" id="record-btn" onclick="toggleRecording()">● Record</button>
-      <div class="rec-info" id="rec-info"></div>
-    </div>
-
-    <div class="sidebar-section">
       <div class="sidebar-label">Stream stats</div>
       <div class="stat-row">
         <span class="stat-label">Video</span>
@@ -425,16 +414,11 @@
   const STREAM_AUTH_HEADER = "{{ stream_username }}" ? "Basic " + btoa("{{ stream_username }}" + ":" + "{{ stream_password }}") : null;
 
   let pc = null;
-  let connected = false;
   let uptimeStart = null;
   let uptimeTimer = null;
 
-  let recording = false;
-  let recStart = null;
-  let recTimer = null;
-
   function setStatus(state, dotClass) {
-    document.getElementById("status-text").textContent = state;
+    document.getElementById("status-text").textContent = "WebRTC " + state.toLowerCase();
     const dot = document.getElementById("status-dot");
     dot.className = "status-dot" + (dotClass ? " " + dotClass : "");
     document.getElementById("info-state").textContent = state;
@@ -450,19 +434,30 @@
     document.getElementById("error-box").style.display = "none";
   }
 
+  // The WebRTC pane is shown exactly while a connection is wanted: showing it
+  // connects, hiding it disconnects, and a failed or dropped stream hides it.
+  function setView(on) {
+    document.getElementById("webrtc-pane").hidden = !on;
+    document.getElementById("main").classList.toggle("webrtc-off", !on);
+    const btn = document.getElementById("connect-btn");
+    btn.setAttribute("aria-pressed", String(on));
+    btn.textContent = on ? "Hide WebRTC view" : "Show WebRTC view";
+  }
+
   async function startStream() {
     clearError();
+    setView(true);
     setStatus("Connecting…", "");
-    document.getElementById("connect-btn").disabled = true;
-    document.getElementById("connect-btn").textContent = "Connecting…";
 
-    pc = new RTCPeerConnection();
+    // `conn` outlives a Hide clicked mid-handshake; once pc moves on, its
+    // late events and errors are ignored instead of reported.
+    const conn = pc = new RTCPeerConnection();
 
     // Receive video track
-    pc.addTransceiver("video", { direction: "recvonly" });
-    pc.addTransceiver("audio", { direction: "recvonly" });
+    conn.addTransceiver("video", { direction: "recvonly" });
+    conn.addTransceiver("audio", { direction: "recvonly" });
 
-    pc.ontrack = (evt) => {
+    conn.ontrack = (evt) => {
       if (evt.track.kind === "video") {
         const video = document.getElementById("stream-video");
         video.srcObject = evt.streams[0];
@@ -479,25 +474,26 @@
       }
     };
 
-    pc.oniceconnectionstatechange = () => {
-      const s = pc.iceConnectionState;
+    conn.oniceconnectionstatechange = () => {
+      if (conn !== pc) return;
+      const s = conn.iceConnectionState;
       if (s === "connected" || s === "completed") {
         setStatus("Live", "live");
-        connected = true;
-        uptimeStart = Date.now();
-        uptimeTimer = setInterval(updateUptime, 1000);
-        document.getElementById("connect-btn").disabled = false;
-        document.getElementById("connect-btn").textContent = "Disconnect";
+        if (!uptimeStart) {  // "connected" then "completed" both land here
+          uptimeStart = Date.now();
+          uptimeTimer = setInterval(updateUptime, 1000);
+        }
       } else if (s === "failed" || s === "disconnected" || s === "closed") {
-        setStatus("Disconnected", "error");
         stopStream();
+        showError("The WebRTC stream dropped. Show the view again to reconnect.");
+        setStatus("Error", "error");
       }
     };
 
     try {
       // Create SDP offer
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      const offer = await conn.createOffer();
+      await conn.setLocalDescription(offer);
 
       // Send to MediaMTX WHEP endpoint
       const headers = { "Content-Type": "application/sdp" };
@@ -514,21 +510,22 @@
       }
 
       const answerSdp = await resp.text();
-      await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+      await conn.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
     } catch (err) {
-      showError(err.message);
+      if (conn !== pc) return;
+      stopStream();
+      // fetch throws a bare TypeError ("Failed to fetch") when nothing answers
+      showError(err instanceof TypeError
+        ? "Can't reach MediaMTX at {{ mediamtx_host }}:{{ webrtc_port }}. Is it running?"
+        : err.message);
       setStatus("Error", "error");
-      document.getElementById("connect-btn").disabled = false;
-      document.getElementById("connect-btn").textContent = "Retry";
-      if (pc) { pc.close(); pc = null; }
     }
   }
 
   function stopStream() {
     if (pc) { pc.close(); pc = null; }
     clearInterval(uptimeTimer);
-    connected = false;
     uptimeStart = null;
 
     const video = document.getElementById("stream-video");
@@ -540,13 +537,12 @@
     document.getElementById("stat-res").textContent = "—";
     document.getElementById("stat-video").textContent = "—";
     document.getElementById("stat-uptime").textContent = "—";
-    document.getElementById("connect-btn").disabled = false;
-    document.getElementById("connect-btn").textContent = "Connect";
-    setStatus("Disconnected", "");
+    setView(false);
+    setStatus("Off", "");
   }
 
   function toggleStream() {
-    if (connected || pc) {
+    if (pc) {
       stopStream();
     } else {
       startStream();
@@ -571,64 +567,6 @@
       link.childNodes[0].textContent = "Copied!";
       setTimeout(() => { link.childNodes[0].textContent = orig; }, 1500);
     });
-  }
-
-  // A recording writes the side-by-side plus a skeleton companion; name both.
-  function setRecordingUI(isRecording, data) {
-    data = data || {};
-    const btn    = document.getElementById("record-btn");
-    const info   = document.getElementById("rec-info");
-    recording = isRecording;
-
-    btn.classList.remove("recording");
-    if (isRecording) {
-      btn.textContent = "■ Stop";
-      btn.classList.add("recording");
-      info.innerHTML = 'Recording… <span id="rec-elapsed">0s</span>';
-      return;
-    }
-
-    btn.textContent = "● Record";
-    if (data.filename) {
-      let html = 'Saved: <span class="rec-file">videos/' + data.filename + '</span>';
-      if (data.filename_skeleton) {
-        html += '<br><span class="rec-file">videos/' + data.filename_skeleton + '</span>';
-      }
-      info.innerHTML = html;
-    } else {
-      info.innerHTML = "";
-    }
-  }
-
-  function updateRecElapsed() {
-    if (!recStart) return;
-    const s = Math.floor((Date.now() - recStart) / 1000);
-    const el = document.getElementById("rec-elapsed");
-    if (el) el.textContent = s + "s";
-  }
-
-  async function toggleRecording() {
-    const btn = document.getElementById("record-btn");
-    btn.disabled = true;
-    try {
-      if (recording) {
-        const resp = await fetch("/record/stop", { method: "POST" });
-        const data = await resp.json();
-        clearInterval(recTimer);
-        recStart = null;
-        setRecordingUI(false, data);
-      } else {
-        const resp = await fetch("/record/start", { method: "POST" });
-        const data = await resp.json();
-        recStart = Date.now();
-        recTimer = setInterval(updateRecElapsed, 1000);
-        setRecordingUI(true, data);
-      }
-    } catch (err) {
-      console.error("Recording toggle failed:", err);
-    } finally {
-      btn.disabled = false;
-    }
   }
 
   // ---------------------------------------------------------------------
@@ -701,9 +639,8 @@
   setInterval(pollFall, 500);
 
   // ---------------------------------------------------------------------
-  // Automatic fall-clip capture (fall_recorder.py) — separate from the
-  // manual Record button above. Polled at the same 500ms cadence as the
-  // fall alert so "Recording" / "Cooldown Xs" track the backend closely.
+  // Automatic fall-clip capture (fall_recorder.py), skeleton-only. Polled
+  // at the same 500ms cadence as the fall alert so "Recording" / "Cooldown Xs" track the backend closely.
   // ---------------------------------------------------------------------
   function paintFallClip(d) {
     const state = document.getElementById("clip-state");
@@ -761,23 +698,6 @@
   }
   pollFallClip();
   setInterval(pollFallClip, 500);
-
-  // Sync recording button state on load in case a recording is already
-  // running from a previous page load.
-  (async function syncRecordingStatus() {
-    try {
-      const resp = await fetch("/record/status");
-      const data = await resp.json();
-      if (data.recording) {
-        recStart = Date.now() - (data.elapsed_sec || 0) * 1000;
-        recTimer = setInterval(updateRecElapsed, 1000);
-      }
-      setRecordingUI(data.recording, data);
-      if (data.recording) updateRecElapsed();
-    } catch (err) {
-      console.error("Could not fetch recording status:", err);
-    }
-  })();
 </script>
 
 </body>

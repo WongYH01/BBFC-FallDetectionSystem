@@ -1,7 +1,7 @@
 # v2 — ONNX pose + calibrated fall detection
 
-A Flask app on the MediaMTX RTSP feed: live MJPEG with skeletons, manual
-recording, automatic pre-buffered fall clips, and a measurement mode. v2 keeps
+A Flask app on the MediaMTX RTSP feed: live MJPEG with skeletons and
+automatic pre-buffered fall clips. v2 keeps
 v1's camera plumbing and replaces the fall decision.
 
 | | v1 | v2 |
@@ -19,10 +19,8 @@ v1's camera plumbing and replaces the fall decision.
   frames as numbers -- every tracked person's keypoints, and the alarm and
   score -- which the detection service uploads after the clip as training data
   (format: `fallcore/keypoint_file.py`; `FALL_KEYPOINTS_ENABLED=0` stops it).
-- The **manual Record button** is the one path that writes raw camera footage
-  (`v2/videos/pose_<ts>.mp4` is a side-by-side of the camera image and the
-  annotated frame). Set `ALLOW_MANUAL_RECORDING=0` to refuse it with a 403;
-  the detection service ships with it off.
+- Nothing else is written. There is no manual recording: no path in v2 stores
+  camera pixels.
 
 ## How the alarm is decided
 
@@ -165,10 +163,9 @@ deployment changes.
 | `FALL_SUBJECTS` | `tracked` | `tracked` decides every tracked person separately; `largest` the largest box alone |
 | `FALL_RECONNECT_SEC` / `FALL_RECONNECT_DIST` | `2.0` / `0.35` | a new tracker id continues a person lost at most this long ago and this far from its box centre (fractions of the frame); `0` never joins |
 | `POSE_TRACKER` | `bytetrack.yaml` | the Ultralytics tracker that supplies the ids |
-| `ALLOW_MANUAL_RECORDING` | `1` | `0` refuses the raw-footage Record button (403); automatic clips stay skeleton-only |
 | `VID_STRIDE` / `STREAM_FRAME_STRIDE` | `1` / `2` | decode-and-score one frame in N, then rows per window sample. Their product must keep rows ~67 ms apart (see below) |
 | `STREAM_STALL_SEC` / `STREAM_CONNECT_SEC` | `8` / `24` | force a reconnect when frames stop or never start |
-| `IDLE_STOP_SEC` | `30` | drop the RTSP connection this long after the last viewer (ignored while clips or a recording run) |
+| `IDLE_STOP_SEC` | `30` | drop the RTSP connection this long after the last viewer (ignored while fall clips are enabled) |
 | `FALL_DEBUG` | `0` | draw each box's w/h ratio (the v1 rule, debug only) |
 
 **Row spacing is the setting that matters.** Training rows are 2 frames apart at
@@ -234,9 +231,9 @@ and the watchdog that restarts it when the hardware encoder wedges.
 ## Files
 
 ```
-app.py            Flask routes: /, /video_feed, /stream/status, /record/*,
+app.py            Flask routes: /, /video_feed, /stream/status,
                   /fall/status, /fall_clips/status; reloader off by design
-detector.py       RTSP -> ONNX pose -> calibrated model -> MJPEG / status / recorder
+detector.py       RTSP -> ONNX pose -> calibrated model -> MJPEG / status / fall clips
 fall_recorder.py  pre-buffered skeleton-only fall clips and their keypoint files;
                   publishes clip_started / clip_ready events (pop_events) for
                   the detection service, and only ever names a file

@@ -68,8 +68,8 @@ demo-tele/         the earlier Telegram bench for the alert wording
 The detection service ([`services/detection`](services/detection/README.md))
 runs v2 headless against the same models, POSTs an alert to the notification
 service the moment a fall latches, and uploads the **skeleton-only** clip when
-it is complete. Raw camera footage is never stored: the manual Record button is
-refused (`ALLOW_MANUAL_RECORDING=0`) and the local clip is deleted after upload.
+it is complete. Raw camera footage is never stored: there is no manual recording,
+and the local clip is deleted after upload.
 
 ## Setup
 
