@@ -458,6 +458,7 @@
     conn.addTransceiver("audio", { direction: "recvonly" });
 
     conn.ontrack = (evt) => {
+      if (conn !== pc) return;
       if (evt.track.kind === "video") {
         const video = document.getElementById("stream-video");
         video.srcObject = evt.streams[0];

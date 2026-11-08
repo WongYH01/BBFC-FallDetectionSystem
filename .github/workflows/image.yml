@@ -34,6 +34,10 @@ jobs:
           secret-files: detection_env=${{ runner.temp }}/detection.env
           load: true
           tags: ${{ env.LOCAL }}
+          # Re-runs the notification image's apt upgrade on every build (see its
+          # Dockerfile). Detection does not declare it: its apt layer sits before
+          # the torch install, which would then rebuild every run.
+          build-args: APT_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ inputs.service }}
           cache-to: type=gha,mode=max,scope=${{ inputs.service }}
 
