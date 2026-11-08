@@ -34,6 +34,10 @@ jobs:
           secret-files: detection_env=${{ runner.temp }}/detection.env
           load: true
           tags: ${{ env.LOCAL }}
+          # Re-runs each image's apt upgrade on every build instead of reusing
+          # a cached layer from before the latest security fixes (see the
+          # APT_REFRESH comment in each Dockerfile).
+          build-args: APT_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=${{ inputs.service }}
           cache-to: type=gha,mode=max,scope=${{ inputs.service }}
 

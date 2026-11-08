@@ -22,6 +22,10 @@ RUN java -Djarmode=tools -jar application.jar extract --layers --destination ext
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
+# CI passes a new APT_REFRESH every run. A changed ARG misses the build cache
+# on the RUN below, so the upgrade really runs instead of reusing a cached layer
+# from before the latest Ubuntu security fixes (which Trivy then fails on).
+ARG APT_REFRESH
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # (optional) run as non-root

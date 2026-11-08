@@ -30,10 +30,8 @@ The v1 box width/height rule still runs, but only as a debug overlay
 Quick-and-dirty: models load once at import, one shared capture thread.
 """
 import os
-import queue
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -78,10 +76,7 @@ IMGSZ = POSE.imgsz
 # 18.2 fps on two threads and 24.8 on four (Ryzen 7 9800X3D).
 POSE_THREADS = int(os.environ.get("POSE_THREADS", "4"))
 
-VIDEOS_DIR = os.path.join(os.path.dirname(__file__), "videos")
-RECORD_FPS = int(os.environ.get("RECORD_FPS", "10"))  # nominal, not measured
-
-# Background of the skeleton-only companion recording. Black by default because
+# Background of the skeleton-only fall clip. Black by default because
 # the COCO keypoint palette is bright and reads best on a dark field; white is
 # there for slides and printed reports, which usually want the opposite.
 SKELETON_BG = os.environ.get("SKELETON_BG", "black")  # "black" | "white"
@@ -182,8 +177,8 @@ STREAM_CONNECT_SEC = float(os.environ.get("STREAM_CONNECT_SEC",
                                           str(STREAM_STALL_SEC * 3)))
 
 # Seconds after the last viewer leaves before the RTSP connection is dropped.
-# Ignored while fall clips are enabled or a recording is running -- detection is
-# the point, a browser being open is not.
+# Ignored while fall clips are enabled -- detection is the point, a browser
+# being open is not.
 IDLE_STOP_SEC = float(os.environ.get("IDLE_STOP_SEC", "30"))
 
 # Debug only: the v1 box width/height ratio, drawn next to each box when
@@ -192,109 +187,8 @@ FALL_RATIO = float(os.environ.get("FALL_RATIO", "1.0"))
 FALL_DEBUG = os.environ.get("FALL_DEBUG", "") not in ("", "0")
 
 # ---------------------------------------------------------------------------
-# Recording state (side-by-side raw + annotated), shared with gen_frames()
-# ---------------------------------------------------------------------------
-_lock = threading.Lock()
-_recording = False
-# Actual cv2.VideoWriter.write() calls happen on background threads, fed
-# through these queues -- see _writer_worker(). A slow encode must never
-# block gen_frames()'s frame-reading loop: that loop is also what's
-# draining the RTSP source, so stalling it can back up the connection all
-# the way to the camera/Pi. (This project briefly used H.264 here, which
-# was heavy enough in software to cause exactly that -- back to mp4v; see
-# the fourcc comment below.)
-_write_queue: "queue.Queue | None" = None
-_filename = None
-_filepath = None
-_start_time = None
-
-# Skeleton-only companion file: the same frames with the pose drawn on a blank
-# canvas instead of the camera image. Written alongside the side-by-side, never
-# in place of it.
-_write_queue_skel: "queue.Queue | None" = None
-_filename_skel = None
-_filepath_skel = None
-
-
-def _writer_worker(writer: "cv2.VideoWriter", q: "queue.Queue") -> None:
-    """Runs on its own thread for the life of one recording.
-
-    Pulls frames off `q` and writes them -- this is where the (possibly
-    slow) encode actually happens, off the frame-reading thread. A `None`
-    on the queue is the signal that recording stopped: drain, then release.
-    """
-    while True:
-        frame = q.get()
-        if frame is None:
-            break
-        writer.write(frame)
-    writer.release()
-
-def start_recording() -> dict:
-    """Start a recording: the side-by-side mp4 and its skeleton companion."""
-    global _recording, _write_queue, _filename, _filepath, _start_time
-    global _write_queue_skel, _filename_skel, _filepath_skel
-    with _lock:
-        if _recording:
-            return {"recording": True, "filename": _filename,
-                    "filename_skeleton": _filename_skel}
-
-        os.makedirs(VIDEOS_DIR, exist_ok=True)
-        # One now() for both names. Two calls could straddle a second boundary
-        # and give the pair different timestamps, which is the one thing that
-        # makes them not obviously a pair.
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _filename = f"pose_{ts}.mp4"
-        _filepath = os.path.join(VIDEOS_DIR, _filename)
-        _filename_skel = f"pose_{ts}_skeleton.mp4"
-        _filepath_skel = os.path.join(VIDEOS_DIR, _filename_skel)
-        # Both opened lazily in gen_frames() once frame sizes are known — they
-        # differ (2560x720 side-by-side vs 1280x720 skeleton).
-        _write_queue = None
-        _write_queue_skel = None
-        _start_time = time.time()
-        _recording = True
-        return {"recording": True, "filename": _filename,
-                "filename_skeleton": _filename_skel}
-
-
-def stop_recording() -> dict:
-    """Stop the recording; the encoders finish its two files in the background."""
-    global _recording, _write_queue, _filename, _start_time, _write_queue_skel, _filename_skel
-    with _lock:
-        duration = round(time.time() - _start_time, 1) if _start_time else 0
-        # Signal the worker threads rather than releasing here directly: the
-        # queues may still hold unwritten frames, and encoding those (then
-        # calling release()) can take a moment -- doing it inline here would
-        # block this Flask request thread, not the frame-reading loop, but
-        # it's still better kept off any hot path. Finishes in the
-        # background; the files are complete once each worker exits.
-        if _write_queue is not None:
-            _write_queue.put(None)
-            _write_queue = None
-        if _write_queue_skel is not None:
-            _write_queue_skel.put(None)
-            _write_queue_skel = None
-        _recording = False
-        filename, filename_skel = _filename, _filename_skel
-        _start_time = None
-
-    return {"recording": False, "filename": filename,
-            "filename_skeleton": filename_skel, "duration_sec": duration}
-
-
-def get_status() -> dict:
-    with _lock:
-        elapsed = round(time.time() - _start_time, 1) if _recording and _start_time else 0
-        return {"recording": _recording,
-                "filename": _filename, "filename_skeleton": _filename_skel,
-                "elapsed_sec": elapsed}
-
-
-# ---------------------------------------------------------------------------
 # Fall state, shared between gen_frames() (writer) and /fall/status (reader).
-# Its own lock, not the recording one — different lifetime, and the Flask status
-# thread reads this while the inference thread writes it.
+# The Flask status thread reads this while the inference thread writes it.
 # ---------------------------------------------------------------------------
 _fall_lock = threading.Lock()
 _people: list = []              # this frame's boxes, for the debug overlay
@@ -762,7 +656,7 @@ def _watchdog_loop() -> None:
             continue
 
         # Never hang up on work in progress.
-        if fall_recorder.ENABLED or _recording:
+        if fall_recorder.ENABLED:
             continue
         zero_since = _viewers_zero_since
         if _viewers == 0 and zero_since and now - zero_since > IDLE_STOP_SEC:
@@ -775,12 +669,11 @@ def _capture_loop() -> None:
     """The one thread that talks to the camera. Reconnects on anything.
 
     Everything v2 needs per frame happens here: the pose pass, the ensemble
-    decision, the drawings, the recorder queues and the publish into the viewer
+    decision, the drawings, the fall-clip feed and the publish into the viewer
     slot. This thread is also what drains the RTSP socket, so nothing slow may
-    run inline -- the encoders stay on their own worker threads (see
-    _writer_worker).
+    run inline -- the clip encoder stays on its own worker thread (see
+    fall_recorder._writer_worker).
     """
-    global _write_queue, _write_queue_skel
     rtsp_url = _rtsp_url()
     device = POSE_DEVICE or ("cpu" if POSE_BACKEND == "onnx" else None)
     track_kwargs = {"device": device} if device else {}
@@ -817,18 +710,14 @@ def _capture_loop() -> None:
                 # latch the alert in ~1.5 frames instead of 3. Hold the result.
                 people, tracked = _update_falls(result)
 
-                # Before the recording branch, so a saved clip captures the
-                # alert. plot() deep-copies orig_img, so drawing here cannot
-                # reach the raw half of the hstack below.
+                # plot() deep-copies orig_img, so drawing here never touches
+                # the source image the skeleton canvas is built beside.
                 _draw_falls(frame, people, _last_state)
 
-                # need_skel: build the skeleton canvas only when something will
-                # actually use it. Set FALL_CLIPS_ENABLED=0 in .env to drop the
-                # auto-capture side of this if the stream is struggling — that
-                # removes an extra full result.plot() call from every frame
-                # instead of only the ones being manually recorded.
-                need_skel = _recording or fall_recorder.ENABLED
-                if need_skel:
+                # The skeleton canvas is only built for the fall clip. Set
+                # FALL_CLIPS_ENABLED=0 in .env if the stream is struggling --
+                # that removes an extra full result.plot() call from every frame.
+                if fall_recorder.ENABLED:
                     # Same annotations, blank canvas. plot() draws onto whatever
                     # `img` it is handed (it deep-copies it first, so `blank` is
                     # untouched), and boxes/labels/conf off leaves only the pose.
@@ -839,77 +728,19 @@ def _capture_loop() -> None:
                                        conf=False)
                     _draw_falls(skel, people, _last_state)  # second canvas
 
-                    # Computed every frame (not just while manually recording)
-                    # because fall_recorder needs a continuous skeleton feed to
-                    # keep its rolling pre-event buffer current — see
-                    # fall_recorder.py for the automatic capture logic.
-                    if fall_recorder.ENABLED:
-                        # The rolling mean is the score the decision actually
-                        # latched on; it rides the clip_started event so the
-                        # detection service can put it in the alert. The
-                        # tracked people become the clip's keypoint file, and
-                        # the lead subject (the alarmed one) is who the
-                        # Alert's Outcome will be about.
-                        fall_recorder.push_frame(
-                            skel, bool(_last_state.get("alarm")),
-                            confidence=float(_last_state.get("rolling_mean", 0.0)),
-                            people=tracked, aspect=_stream.aspect,
-                            lead=_last_state.get("subject"))
-
-                    if _recording:
-                        combined = np.hstack([result.orig_img, frame])
-                        with _lock:
-                            if _recording:  # re-check inside the lock
-                                # "mp4v" -- back from H.264, which was heavy
-                                # enough in software to be part of why the
-                                # camera stream was freezing during a
-                                # recording. mp4v plays fine in VLC but not
-                                # Telegram (frozen first frame); the plan is
-                                # to convert a finished clip separately
-                                # instead of encoding it live.
-                                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                                if _write_queue is None:
-                                    h, w = combined.shape[:2]
-                                    writer = cv2.VideoWriter(
-                                        _filepath, fourcc, RECORD_FPS, (w, h)
-                                    )
-                                    if not writer.isOpened():
-                                        print(f"[detector] WARNING: could not "
-                                              f"open a video writer for "
-                                              f"{_filepath} -- no video "
-                                              f"will be written for this "
-                                              f"recording.")
-                                    _write_queue = queue.Queue()
-                                    threading.Thread(
-                                        target=_writer_worker,
-                                        args=(writer, _write_queue),
-                                        daemon=True,
-                                    ).start()
-                                if _write_queue_skel is None:
-                                    h, w = skel.shape[:2]
-                                    writer_skel = cv2.VideoWriter(
-                                        _filepath_skel, fourcc, RECORD_FPS, (w, h)
-                                    )
-                                    if not writer_skel.isOpened():
-                                        print(f"[detector] WARNING: could not "
-                                              f"open a video writer for "
-                                              f"{_filepath_skel} -- no video "
-                                              f"will be written for this "
-                                              f"recording.")
-                                    _write_queue_skel = queue.Queue()
-                                    threading.Thread(
-                                        target=_writer_worker,
-                                        args=(writer_skel, _write_queue_skel),
-                                        daemon=True,
-                                    ).start()
-                                # Both frames queued in the one locked block,
-                                # so the two files always receive the same
-                                # frames and stay aligned frame-for-frame --
-                                # the actual (possibly slow) encode happens
-                                # later, on each queue's own worker thread,
-                                # never blocking this loop.
-                                _write_queue.put(combined)
-                                _write_queue_skel.put(skel)
+                    # Every frame, because fall_recorder needs a continuous
+                    # skeleton feed to keep its rolling pre-event buffer
+                    # current. The rolling mean is the score the decision
+                    # actually latched on; it rides the clip_started event so
+                    # the detection service can put it in the alert. The
+                    # tracked people become the clip's keypoint file, and the
+                    # lead subject (the alarmed one) is who the Alert's
+                    # Outcome will be about.
+                    fall_recorder.push_frame(
+                        skel, bool(_last_state.get("alarm")),
+                        confidence=float(_last_state.get("rolling_mean", 0.0)),
+                        people=tracked, aspect=_stream.aspect,
+                        lead=_last_state.get("subject"))
 
                 ok, buf = cv2.imencode(".jpg", frame, jpeg_params)
                 if not ok:

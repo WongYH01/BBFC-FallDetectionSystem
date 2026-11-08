@@ -33,29 +33,27 @@ camera -> MediaMTX (Pi) --RTSP--> detection service --POST /events-----------> n
   labelled training example. Format: `fallcore/keypoint_file.py`;
   `FALL_KEYPOINTS_ENABLED=0` turns it off.
 - The service does **not** keep footage: the local clip and keypoint file are
-  deleted after the upload (`KEEP_UPLOADED_CLIPS=0`), and the manual Record
-  button -- the one path that writes raw camera video -- is refused with
-  `ALLOW_MANUAL_RECORDING=0`.
+  deleted after the upload (`KEEP_UPLOADED_CLIPS=0`), and there is no manual
+  recording, so nothing writes raw camera video.
 
 ## Run
 
-Compose runs the image CI pushed to Artifact Registry on the last merge to
-main (`bbfc-registry/detection:latest`) and pulls it on every start; the root
-README's "Run locally" has the registry login, the `local` profile and the
-weekly pull-and-restart task.
+Compose builds this image from the checkout (GKE runs the one CI pushed to
+Artifact Registry instead); the root README's "Run locally" has the `local`
+profile and the weekly pull-and-rebuild task.
 
 ```
-copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*
+copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*, FALL_WEIGHTS_TOKEN
 copy ..\..\.env.example.local ..\..\.env              # notification settings
-docker compose up -d                                  # from the repo root
+docker compose up -d --build                          # from the repo root
 ```
 
 The image fetches its own weights during the build (`scripts/fetch_weights.py`
 in a build stage), so nothing has to be on the host. The build reads
 `FALL_WEIGHTS_TOKEN` from `.env` as a build secret: the token is not in any
-layer of the image, and the running container gets it blanked. Only a local
-build needs the token (the Dockerfile header has the command); the weights
-stage is cached, so rebuilding for a code change does not download again.
+layer of the image, and the running container gets it blanked. The weights
+stage is cached, so rebuilding for a code change does not download again; a
+Promotion repins `fetch_weights.py`, which is what invalidates it.
 
 The image holds one pose backbone, yolo26m (INT8, 384x640), and the camera
 head fitted on its keypoints. They are one choice, not settings: the detector
@@ -81,6 +79,12 @@ deployment must set; every other setting has a working default, in
 `service/config.py` for the service and in `v2/README.md` for the stream, pose
 and fall-decision variables. The required three are `ROOM_ID`, `ROOM_NAME` and
 `MEDIAMTX_HOST`.
+
+`MEDIAMTX_BROWSER_HOST` is the MediaMTX host the page's WebRTC view and
+fallback links use; it defaults to `MEDIAMTX_HOST`. Set it when the service
+reaches the camera under a name your browser cannot, as in the cluster:
+`MEDIAMTX_HOST=pi-mediamtx` resolves only in-cluster, so the browser gets the
+Pi's tailnet name, and the WebRTC view works only from a device on the tailnet.
 
 The startup guard refuses to run with `FALL_CLIPS_ENABLED=0`: with no viewer
 attached the capture watchdog would drop the RTSP connection after
