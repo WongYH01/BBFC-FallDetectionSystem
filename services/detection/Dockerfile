@@ -63,6 +63,14 @@ COPY fallcore /app/fallcore
 COPY v2 /app/v2
 COPY service /app/service
 
+# Debian security fixes. CI passes a new APT_REFRESH every run, and a changed
+# ARG misses the build cache on the RUN below, so the upgrade really runs
+# instead of reusing a layer from before the latest fixes (which Trivy then
+# fails on). It sits after the torch install and the weights so only this and
+# the layers below rebuild each run.
+ARG APT_REFRESH
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 # The app runs as a non-root user; the clip directory and the spool live on
 # volumes. Every volume mountpoint must EXIST in the image and be owned by that
 # user: Docker copies ownership from the image path when it initialises an empty
