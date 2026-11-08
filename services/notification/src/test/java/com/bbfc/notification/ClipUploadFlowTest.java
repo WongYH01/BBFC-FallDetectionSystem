@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import static com.github.tomakehurst.wiremock.client.WireMock.aMultipart;
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static com.github.tomakehurst.wiremock.client.WireMock.binaryEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.containing;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.exactly;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
@@ -119,7 +120,7 @@ class ClipUploadFlowTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void clipIsStoredAndPostedAsAReplyToTheAlert() throws Exception {
+    void clipIsStoredAndDispatchedWithTheAlert() throws Exception {
         ingestEvent();
         stubStorageOk();
         stubTelegramClipOk();
@@ -133,10 +134,11 @@ class ClipUploadFlowTest extends AbstractIntegrationTest {
         storage.verify(putRequestedFor(urlEqualTo(OBJECT))
                 .withRequestBody(binaryEqualTo(CLIP_BYTES)));
         telegram.verify(postRequestedFor(urlEqualTo(ANIMATION))
-                .withRequestBodyPart(aMultipart().withName("reply_to_message_id")
-                        .withBody(equalTo("501")).build())
+                .withRequestBodyPart(aMultipart().withName("caption")
+                        .withBody(containing("Block A - Room 12")).build())
                 .withRequestBodyPart(aMultipart().withName("animation")
                         .withBody(binaryEqualTo(CLIP_BYTES)).build()));
+        telegram.verify(exactly(0), postRequestedFor(urlEqualTo(SEND)));
 
         SkeletonClip clip = reloadClip();
         assertThat(clip.storageKey()).isEqualTo("room-12/" + EVENT_ID + ".mp4");

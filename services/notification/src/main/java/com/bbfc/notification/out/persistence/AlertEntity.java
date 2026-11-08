@@ -39,7 +39,9 @@ public class AlertEntity {
     private int repeatCount;
     private Instant nextEscalationAt;
 
+    private Instant dispatchDeadline;
     private Long dispatchMessageId;
+    private boolean dispatchCarriesClip;
 
     @JdbcTypeCode(SqlTypes.ARRAY)
     private Long[] escalationMessageIds;
@@ -61,7 +63,8 @@ public class AlertEntity {
             double confidence, Instant createdAt, AlertState state, String acknowledgedBy,
             Instant acknowledgedAt, Instant escalatedAt, Outcome outcome,
             Instant outcomeAt, int repeatCount, Instant nextEscalationAt,
-            Long dispatchMessageId, Long[] escalationMessageIds, Long followUpMessageId,
+            Instant dispatchDeadline, Long dispatchMessageId, boolean dispatchCarriesClip,
+            Long[] escalationMessageIds, Long followUpMessageId,
             String clipStorageKey, Instant clipStoredAt, String clipTelegramFileId,
             Long clipMessageId, String keypointsStorageKey, Instant keypointsStoredAt) {
         this.eventId = eventId;
@@ -77,7 +80,9 @@ public class AlertEntity {
         this.outcomeAt = outcomeAt;
         this.repeatCount = repeatCount;
         this.nextEscalationAt = nextEscalationAt;
+        this.dispatchDeadline = dispatchDeadline;
         this.dispatchMessageId = dispatchMessageId;
+        this.dispatchCarriesClip = dispatchCarriesClip;
         this.escalationMessageIds = escalationMessageIds;
         this.followUpMessageId = followUpMessageId;
         this.clipStorageKey = clipStorageKey;
@@ -138,6 +143,14 @@ public class AlertEntity {
 
     public Instant getNextEscalationAt() {
         return nextEscalationAt;
+    }
+
+    public Instant getDispatchDeadline() {
+        return dispatchDeadline;
+    }
+
+    public boolean isDispatchCarriesClip() {
+        return dispatchCarriesClip;
     }
 
     public Long getDispatchMessageId() {

@@ -64,7 +64,8 @@ TOKEN_VAR = "FALL_WEIGHTS_TOKEN"
 DEFAULT_REPO = "junyuu/fall-detection-bbfc"
 #: The commit the SHA-256s below were taken from -- the one that added the
 #: yolo26m INT8 backbone and its head beside yolo26n. Move it forward only
-#: when the model card in the repo is updated with new hashes.
+#: when the model card in the repo is updated with new hashes, or by a
+#: Refit Promotion (`promote_head.py`), which moves it and the head's hash.
 DEFAULT_REVISION = "ee8ac04aac99454e9b134ec4258e606556610641"
 
 #: remote path in the repo -> (path under the target root, sha256)

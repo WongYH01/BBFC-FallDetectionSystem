@@ -4,7 +4,7 @@ import java.time.Clock;
 
 import org.springframework.stereotype.Service;
 
-import com.bbfc.notification.config.ClipConfig;
+import com.bbfc.notification.core.domain.UploadLimit;
 import com.bbfc.notification.core.domain.Alert;
 import com.bbfc.notification.core.domain.EventId;
 import com.bbfc.notification.core.domain.KeypointsAlreadyAttachedException;
@@ -20,16 +20,16 @@ public class AttachKeypointsService {
     private final AlertRepository alertRepository;
     private final KeypointStore keypointStore;
     private final KeypointsRecorder keypointsRecorder;
-    private final ClipConfig clipConfig;
+    private final UploadLimit uploadLimit;
     private final Clock clock;
 
     public AttachKeypointsService(
             AlertRepository alertRepository, KeypointStore keypointStore, KeypointsRecorder keypointsRecorder,
-            ClipConfig clipConfig, Clock clock) {
+            UploadLimit uploadLimit, Clock clock) {
         this.alertRepository = alertRepository;
         this.keypointStore = keypointStore;
         this.keypointsRecorder = keypointsRecorder;
-        this.clipConfig = clipConfig;
+        this.uploadLimit = uploadLimit;
         this.clock = clock;
     }
 
@@ -41,8 +41,8 @@ public class AttachKeypointsService {
         if (alert.keypoints().isPresent()) {
             throw new KeypointsAlreadyAttachedException(eventId);
         }
-        if (content.sizeBytes() > clipConfig.maxBytes()) {
-            throw new ClipTooLargeException(content.sizeBytes(), clipConfig.maxBytes());
+        if (content.sizeBytes() > uploadLimit.maxBytes()) {
+            throw new ClipTooLargeException(content.sizeBytes(), uploadLimit.maxBytes());
         }
 
         String key = keypointStore.storeKeypoints(alert.room().roomId(), eventId, alert.outcome(), content);

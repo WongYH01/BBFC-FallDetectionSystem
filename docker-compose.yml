@@ -1,16 +1,17 @@
 # Whole system: db + storage + notification + detection.
 #
-#   docker compose --env-file .env.cloud up -d  cloud: Cloud SQL + GCS, no db/storage; the
-#                                               local deployment runs this, so its Alerts
-#                                               land in the bucket the Refit reads
-#   docker compose up -d                        local profile (default via COMPOSE_PROFILES in .env)
-#   docker compose up -d db storage             infra only, for running Spring from the IDE
+#   docker compose up -d --build                        local profile (default via COMPOSE_PROFILES
+#                                                       in .env); the local deployment runs this, so
+#                                                       its Alerts stay out of the bucket the Refit reads
+#   docker compose --env-file .env.cloud up -d --build  cloud: Cloud SQL + GCS, no db/storage
+#   docker compose up -d db storage                     infra only, for running Spring from the IDE
 #
 # Needs .env.cloud (copy .env.example.cloud) or .env (copy .env.example.local),
 # and services/detection/.env (copy its .env.example). notification and
-# detection are the images CI pushes to Artifact Registry, pulled on every
-# start, so nothing is built here; Docker has to be logged in to the registry
-# (README, "Run locally").
+# detection are built here from the checkout; GKE runs CI's images instead and
+# never reads this file. The detection build fetches the weights pinned in
+# scripts/fetch_weights.py with the FALL_WEIGHTS_TOKEN in that .env, so a
+# Promotion reaches this deployment with a git pull and a rebuild.
 name: bbfc
 
 services:
@@ -51,10 +52,7 @@ services:
 
   notification:
     profiles: ["local", "cloud"]
-    # :latest on purpose, against "pin every version": a deployment follows
-    # what main's CI pushed, and rollback is reverting the change on main.
-    image: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/notification:latest
-    pull_policy: always
+    build: services/notification
     depends_on:
       db:
         condition: service_healthy
@@ -82,12 +80,12 @@ services:
 
   detection:
     profiles: ["local", "cloud"]
-    # The image main's CI pushed last, weights and camera head baked in, so a
-    # start (or infra/local/update-detection.ps1) runs the newest promoted head.
-    # :latest on purpose: Promotions ship this way (ADR 0003) and roll back by
-    # reverting their pull request, and a pinned digest would freeze them.
-    image: asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry/detection:latest
-    pull_policy: always
+    build:
+      context: services/detection
+      # The build fetches the weights into the image; this hands it the
+      # Hugging Face token as a secret, so it never lands in a layer.
+      secrets:
+        - detection_env
     restart: unless-stopped
     depends_on:
       # The outbox retries until the API answers, so this only saves a burst
@@ -115,3 +113,7 @@ volumes:
   clip-data: {}
   clips: {}
   spool: {}
+
+secrets:
+  detection_env:
+    file: ./services/detection/.env

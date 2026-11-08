@@ -2,6 +2,7 @@ package com.bbfc.notification.core.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -56,15 +57,20 @@ class AcknowledgeAlertServiceTest {
         eventId = new EventId("FE-1");
     }
 
+    private Alert dispatchedAlert(boolean carriesClip) {
+        Alert alert = Alert.receive(
+                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED, DETECTED);
+        alert.dispatch(501L, carriesClip, null);
+        return alert;
+    }
+
     private Alert dispatchedAlert() {
-        return Alert.dispatch(
-                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED);
+        return dispatchedAlert(false);
     }
 
     @Test
-    void acknowledgesClosesEveryMessageAndPublishes() {
+    void acknowledgesClosesOnlyTheDispatchMessageAndPublishes() {
         Alert alert = dispatchedAlert();
-        alert.recordDispatchMessage(501L);
         alert.recordEscalationMessage(502L);
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
         given(messageRenderer.renderAcknowledged(alert)).willReturn("HANDLED");
@@ -76,8 +82,8 @@ class AcknowledgeAlertServiceTest {
         assertThat(alert.nextEscalationAt()).isEmpty();
         verify(alertRepository).save(alert);
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Acknowledged");
-        verify(notificationChannel).closeMessage(501L, "HANDLED");
-        verify(notificationChannel).closeMessage(502L, "HANDLED");
+        verify(notificationChannel).closeMessage(501L, "HANDLED", false);
+        verify(notificationChannel, never()).closeMessage(eq(502L), any(), anyBoolean());
         verify(eventPublisher).publishEvent(new AlertAcknowledgedEvent(eventId, "@nurse_lim", TAPPED));
     }
 
@@ -87,7 +93,6 @@ class AcknowledgeAlertServiceTest {
         alert.escalate(DETECTED);
         alert.exhaust(DETECTED);
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
-        given(messageRenderer.renderAcknowledged(alert)).willReturn("HANDLED");
 
         service.acknowledge(CALLBACK_ID, eventId, "@nurse_lim", TAPPED);
 
@@ -106,7 +111,32 @@ class AcknowledgeAlertServiceTest {
         assertThat(alert.acknowledgedBy()).contains("@nurse_lim");
         verify(notificationChannel).answerCallback(CALLBACK_ID, "Already handled by @nurse_lim");
         verify(alertRepository, never()).save(any());
-        verify(notificationChannel, never()).closeMessage(anyLong(), any());
+        verify(notificationChannel, never()).closeMessage(anyLong(), any(), anyBoolean());
+        verify(eventPublisher, never()).publishEvent(any(AlertAcknowledgedEvent.class));
+    }
+
+    @Test
+    void aClipDispatchIsClosedThroughItsCaption() {
+        Alert alert = dispatchedAlert(true);
+        given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
+        given(messageRenderer.renderAcknowledged(alert)).willReturn("HANDLED");
+
+        service.acknowledge(CALLBACK_ID, eventId, "@nurse_lim", TAPPED);
+
+        verify(notificationChannel).closeMessage(501L, "HANDLED", true);
+    }
+
+    @Test
+    void aPendingAlertIsAnsweredButNotAcknowledged() {
+        Alert alert = Alert.receive(
+                eventId, new RoomRef("room-12", "Block A - Room 12"), new Confidence(0.92), DETECTED, DETECTED);
+        given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
+
+        service.acknowledge(CALLBACK_ID, eventId, "@nurse_lim", TAPPED);
+
+        assertThat(alert.state()).isEqualTo(AlertState.PENDING);
+        verify(notificationChannel).answerCallback(eq(CALLBACK_ID), any());
+        verify(alertRepository, never()).save(any());
         verify(eventPublisher, never()).publishEvent(any(AlertAcknowledgedEvent.class));
     }
 
@@ -124,7 +154,6 @@ class AcknowledgeAlertServiceTest {
     @Test
     void answersBeforeEditingSoTheSpinnerClearsFirst() {
         Alert alert = dispatchedAlert();
-        alert.recordDispatchMessage(501L);
         given(alertRepository.findByEventIdForUpdate(eventId)).willReturn(Optional.of(alert));
         given(messageRenderer.renderAcknowledged(alert)).willReturn("HANDLED");
 
@@ -132,6 +161,6 @@ class AcknowledgeAlertServiceTest {
 
         var inOrder = org.mockito.Mockito.inOrder(notificationChannel);
         inOrder.verify(notificationChannel).answerCallback(eq(CALLBACK_ID), any());
-        inOrder.verify(notificationChannel).closeMessage(anyLong(), any());
+        inOrder.verify(notificationChannel).closeMessage(anyLong(), any(), anyBoolean());
     }
 }

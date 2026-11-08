@@ -3,6 +3,11 @@ name: refit
 # The weekly Refit (ADR 0003). Keypoint Files are downloaded into the runner's
 # temp folder, used and discarded: never uploaded as an artifact or cached,
 # and no step logs an Alert's object name (ADR 0002).
+#
+# On a Promotion the Candidate Head is uploaded to the weights repository and
+# the GitHub App opens a PR repinning it in fetch_weights.py, set to merge
+# itself once `gate` is green. Secrets: FALL_WEIGHTS_TOKEN (HF read and
+# write), REFIT_APP_ID and REFIT_APP_PRIVATE_KEY.
 
 on:
   schedule:
@@ -10,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Stop before uploading anything (every run does for now)
+        description: Stop before uploading anything, even on a Promotion
         type: boolean
         default: true
 
@@ -40,6 +45,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          # The Promotion pushes as the App, since GITHUB_TOKEN's PRs trigger no CI.
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -52,7 +60,7 @@ jobs:
         run: pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 torchvision==0.28.0
 
       - name: Install requirements
-        run: pip install -r requirements.txt scikit-learn==1.9.1
+        run: pip install -r requirements.txt scikit-learn==1.9.1 huggingface_hub==1.29.0  # fetch_weights.py; the Dockerfile pins it too
 
       - name: Authenticate to GCP
         uses: 'google-github-actions/auth@v3'
@@ -90,8 +98,67 @@ jobs:
           python scripts/fetch_weights.py --env-file "$RUNNER_TEMP/detection.env"
 
       - name: Run the Refit
+        id: refit
         env:
           PYTHONPATH: .
+          DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
-          echo "Dry run: nothing is uploaded." >> "$GITHUB_STEP_SUMMARY"
-          python scripts/run_refit.py "$RUNNER_TEMP/refit"
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run: nothing is uploaded." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          python scripts/run_refit.py "$RUNNER_TEMP/refit" --promote-dir "$RUNNER_TEMP/promote"
+
+      # Schedule runs have no inputs: a null dry_run is a real run.
+      # Minted first, so a broken App fails the run before anything is uploaded.
+      - name: Mint the App token
+        id: app
+        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.REFIT_APP_ID }}
+          private-key: ${{ secrets.REFIT_APP_PRIVATE_KEY }}
+
+      - name: Upload the Candidate Head
+        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
+        env:
+          # The read token has write scope too, so one secret serves both.
+          HF_WRITE_TOKEN: ${{ secrets.FALL_WEIGHTS_TOKEN }}
+          PYTHONPATH: .
+        run: |
+          # The PR goes to main, so it must branch from main to change one file.
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::a Promotion runs only from main"; exit 1
+          fi
+          # The attempt too, so re-running a red run does not hit its branch.
+          python scripts/promote_head.py "$RUNNER_TEMP/promote/head.npz" "refit-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+
+      - name: Verify the new pin
+        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
+        run: python scripts/fetch_weights.py --force --root "$RUNNER_TEMP/verify" --env-file "$RUNNER_TEMP/detection.env"
+
+      - name: Open the Promotion PR
+        if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          file=services/detection/scripts/fetch_weights.py
+          branch="refit/promote-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          id=$(gh api "/users/$SLUG[bot]" --jq .id)
+          git config user.name "$SLUG[bot]"
+          git config user.email "$id+$SLUG[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git -C "$GITHUB_WORKSPACE" add "$file"
+          git commit -m "Promote the Refit's Candidate Head"
+          # The PR may change the pinned revision and the head's hash, nothing else.
+          numstat=$(git diff --numstat HEAD~1 HEAD)
+          if [ "$numstat" != "$(printf '2\t2\t%s' "$file")" ]; then
+            echo "::error::the Promotion commit changes more than the two pins: $numstat"; exit 1
+          fi
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$branch"
+          url=$(gh pr create --base main --head "$branch" \
+            --title "Promote the Refit's Candidate Head" \
+            --body-file "$RUNNER_TEMP/promote/report.md")
+          gh pr merge "$url" --auto --squash
+          echo "Promotion PR: $url" >> "$GITHUB_STEP_SUMMARY"

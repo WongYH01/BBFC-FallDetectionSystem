@@ -15,6 +15,10 @@ public class MutableClock extends Clock {
         this.zone = zone;
     }
 
+    public void set(Instant instant) {
+        this.instant = instant;
+    }
+
     public void advance(Duration duration) {
         this.instant = this.instant.plus(duration);
     }

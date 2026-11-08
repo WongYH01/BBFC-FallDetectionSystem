@@ -1,6 +1,6 @@
 # Camera pixels are never stored or sent off the detection host
 
-The system watches people in a room where they live or are cared for, so it is built to be privacy-preserving: everything after the Pose Backbone runs on keypoints, and the only video that leaves the detection host is a Skeleton Clip, which is the pose drawn on a black background. The detection service does not keep footage. It deletes uploaded clips (`KEEP_UPLOADED_CLIPS=0`) and refuses the manual Record button, which is the one path that writes raw camera video (`ALLOW_MANUAL_RECORDING=0`). The notification service's storage bucket holds skeleton clips only.
+The system watches people in a room where they live or are cared for, so it is built to be privacy-preserving: everything after the Pose Backbone runs on keypoints, and the only video that leaves the detection host is a Skeleton Clip, which is the pose drawn on a black background. The detection service does not keep footage. It deletes uploaded clips (`KEEP_UPLOADED_CLIPS=0`), and it has no manual recording: the Record button that wrote raw camera video was removed. The notification service's storage bucket holds skeleton clips only.
 
 ## Consequences
 

@@ -11,7 +11,8 @@ public record TelegramConfig(
         @NotBlank String chatGroupId,
         String baseUrl,
         @NotBlank String messageTemplate,
-        @NotBlank String triageQuestionTemplate
+        @NotBlank String triageQuestionTemplate,
+        @NotBlank String escalationTemplate
 ) {
     public TelegramConfig {
         if (baseUrl == null || baseUrl.isBlank()){

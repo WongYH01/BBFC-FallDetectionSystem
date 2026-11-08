@@ -4,6 +4,7 @@ metadata:
   name: pi-mediamtx
   annotations:
     tailscale.com/tailnet-fqdn: wyhrp3.taila04e86.ts.net
+    tailscale.com/proxy-group: egress-pg
 spec:
   type: ExternalName
   externalName: placeholder

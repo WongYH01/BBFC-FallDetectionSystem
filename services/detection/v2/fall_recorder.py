@@ -3,12 +3,10 @@
 **Skeleton only.** The clips this module writes contain no camera imagery:
 the frames handed to push_frame() are the skeleton canvas detector.py builds
 (`result.plot(img=zeros, boxes=False, labels=False, conf=False)`), i.e. pose
-drawn on a black or white background. Nothing here ever sees `orig_img`. The
-manual Record button in detector.py is the one path that stores raw camera
-footage (the side-by-side mp4), which is why the detection service sets
-`ALLOW_MANUAL_RECORDING=0`.
+drawn on a black or white background. Nothing here ever sees `orig_img`, and
+nothing else in v2 writes video to disk.
 
-Independent of that manual recorder. push_frame() is called once per frame
+push_frame() is called once per frame
 from gen_frames()'s single inference loop -- so it has to be cheap. Encoding a
 frame into an mp4 (cv2.VideoWriter.write()) is not always instant, and if that
 encode ran directly inside push_frame(), a slow one would stall the inference
@@ -61,8 +59,7 @@ writer: a clip whose writer never opened still leaves its keypoint file.
 FLOW
 ----
 Every frame, gen_frames() hands push_frame() the skeleton-only canvas (pose
-drawn on a blank background, no camera image -- same one detector.py already
-builds for the manual-recording companion file), whether anyone is currently
+drawn on a blank background, no camera image), whether anyone is currently
 latched as fallen, and the rolling decision score that latched it.
 
 While idle, frames just accumulate in a ring buffer holding the last
@@ -109,10 +106,7 @@ from fallcore import keypoint_file
 
 CLIPS_DIR = os.path.join(os.path.dirname(__file__), "fall_clips")
 
-# Same nominal FPS the manual recorder writes at (see RECORD_FPS in
-# detector.py) -- kept as its own env read rather than importing detector's
-# constant so this module has no import-order dependency on it.
-# Only the fallback now: clips are written at the rate frames are actually
+# Nominal FPS, and only the fallback: clips are written at the rate frames are actually
 # pushed (`_measured_fps`), because this constant is a guess and the real rate
 # depends on VID_STRIDE, the backbone and the machine.
 FPS = int(os.environ.get("RECORD_FPS", "10"))
@@ -123,11 +117,10 @@ FPS = int(os.environ.get("RECORD_FPS", "10"))
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 
 # --- the knobs you're most likely to want to adjust --------------------------
-# Set to "0" to disable automatic capture entirely (the manual Record button's
-# own skeleton file is unaffected). Useful when troubleshooting stream
-# performance: disabling this skips an extra full result.plot() call on every
-# single frame, not just while a clip is actually being written -- see the
-# `need_skel` check in detector.py's gen_frames().
+# Set to "0" to disable automatic capture entirely. Useful when troubleshooting
+# stream performance: disabling this skips an extra full result.plot() call on
+# every single frame, not just while a clip is actually being written -- see the
+# `fall_recorder.ENABLED` check in detector.py's _capture_loop().
 ENABLED = os.environ.get("FALL_CLIPS_ENABLED", "1") not in ("0", "")
 
 # Set to "0" to stop writing the keypoint file beside each clip (see KEYPOINT

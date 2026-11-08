@@ -108,6 +108,7 @@ class KeypointsUploadFlowTest extends AbstractIntegrationTest {
                                 """.formatted(EVENT_ID)))
                 .andExpect(status().isAccepted());
         Alert alert = reloadAlert();
+        alert.dispatch(501L, false, null);
         alert.acknowledge("@nurse_lim", Instant.now());
         alertRepository.save(alert);
     }

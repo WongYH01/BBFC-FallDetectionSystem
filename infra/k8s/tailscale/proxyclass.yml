@@ -1,0 +1,11 @@
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyClass
+metadata:
+  name: static-ep
+spec:
+  staticEndpoints:
+    nodePort:
+      ports:
+        - port: 31641
+      selector:
+        kubernetes.io/os: linux
