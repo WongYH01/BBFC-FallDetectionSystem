@@ -186,6 +186,9 @@
     .connect-btn[aria-pressed="true"]:hover { background: #222220; }
     .connect-btn:focus-visible { outline: 2px solid #81c784; outline-offset: 2px; }
 
+    /* Descent gate off: a lone yellow dot beside the pills */
+    .gate-dot { width: 8px; height: 8px; border-radius: 50%; background: #ffd54f; align-self: center; }
+
     .rec-info { font-size: 11px; color: #888; margin-top: 8px; line-height: 1.5; }
     .rec-info .rec-file { color: #aaa; font-family: monospace; word-break: break-all; }
     .rec-info .rec-note { color: #777; font-style: italic; }
@@ -280,6 +283,7 @@
     <div class="video-overlay">
       <span class="pill pill-ai">AI · Pose</span>
       <span class="pill pill-webrtc">RTSP</span>
+      <span class="gate-dot" id="gate-dot" role="img" aria-label="Descent gate off" hidden></span>
     </div>
     <img id="pose-feed" src="/video_feed" alt="YOLO pose tracking feed">
   </div>
@@ -586,6 +590,7 @@
     //           the MJPEG request).
     // Either way we don't know what's happening in the room, and a detector
     // that isn't running must never render as a safe room.
+    if (d) showGate(d.min_descent);
     if (!d || !d.live) {
       state.textContent = d ? "No feed" : "—";
       state.className = "stat-value";
@@ -638,6 +643,32 @@
   }
   pollFall();
   setInterval(pollFall, 500);
+
+  // ---------------------------------------------------------------------
+  // Descent gate: press G to toggle between 0.10 and off. Live only: a
+  // restart goes back to FALL_MIN_DESCENT. The yellow dot shows while the
+  // detector reports the gate off, so it follows what is actually running.
+  // ---------------------------------------------------------------------
+  let gateNow = null;
+
+  function showGate(v) {
+    if (typeof v !== "number") return;
+    gateNow = v;
+    document.getElementById("gate-dot").hidden = v > 0;
+  }
+
+  document.addEventListener("keydown", async (e) => {
+    if (e.key.toLowerCase() !== "g" || e.repeat || gateNow === null ||
+        e.ctrlKey || e.metaKey || e.altKey) return;
+    try {
+      const resp = await fetch("/fall/min_descent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: gateNow > 0 ? 0 : 0.10 }),
+      });
+      if (resp.ok) showGate((await resp.json()).min_descent);
+    } catch (err) { /* the next poll shows what is actually running */ }
+  });
 
   // ---------------------------------------------------------------------
   // Automatic fall-clip capture (fall_recorder.py), skeleton-only. Polled

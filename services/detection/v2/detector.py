@@ -346,6 +346,24 @@ def get_fall_status() -> dict:
         }
 
 
+def set_min_descent(value: float) -> float:
+    """Retune the descent gate on the running streams, live and every subject's.
+
+    Not persisted: a restart reads FALL_MIN_DESCENT again. Raises ValueError
+    for a value FallDecision refuses.
+    """
+    global DECISION
+    decision = DECISION.replace(min_descent=value)
+    with _fall_lock:
+        streams = ([_stream.template, *(s.stream for s in _stream.subjects)]
+                   if TRACKED else [_stream])
+        for s in streams:
+            s.min_descent = decision.min_descent
+        DECISION = decision
+    print(f"[detector] descent gate set to {decision.min_descent}")
+    return decision.min_descent
+
+
 def get_fall_clip_status() -> dict:
     """Status of the automatic pre-buffered fall-clip recorder (fall_recorder.py)."""
     return fall_recorder.get_status()
