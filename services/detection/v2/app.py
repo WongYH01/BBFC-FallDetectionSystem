@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, request
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,6 +9,7 @@ app = Flask(__name__)
 # Imported after load_dotenv() so the model + RTSP config read the .env values.
 from detector import (  # noqa: E402
     gen_frames, get_fall_status, get_fall_clip_status, get_stream_status,
+    set_min_descent,
 )
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,19 @@ def stream_status():
 def fall_status():
     """Current fall state — polled by the sidebar alert panel."""
     return jsonify(get_fall_status())
+
+@app.route("/fall/min_descent", methods=["POST"])
+def fall_min_descent():
+    """Set the descent gate (body lengths/s) live, from the page's slider.
+
+    Until restart only; FALL_MIN_DESCENT in .env is what survives one.
+    """
+    value = (request.get_json(silent=True) or {}).get("value")
+    # bool is an int in Python; NaN fails the range check.
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not 0.0 <= value <= 1.0):
+        return jsonify(error="value must be a number from 0 to 1"), 400
+    return jsonify(min_descent=set_min_descent(float(value)))
 
 @app.route("/fall_clips/status")
 def fall_clips_status():
