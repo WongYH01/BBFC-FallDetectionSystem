@@ -9,13 +9,28 @@ By the end of this page you have:
 - The Telegram bot token and the stream password rotated.
 - A link to the cluster teardown and rebuild steps, which keep Cloud SQL and the clip bucket.
 
-Needs: a working deployment, local ([Local deployment](../03-local/README.md)) or cloud ([Verify](../05-cloud/03-verify.md)). Do the section for your path. Run the cloud commands in bash (Git Bash on Windows), from the repo root.
+## Needs
 
-## Local
+A working deployment, local ([Local deployment](../03-local/README.md)) or cloud ([Verify](../05-cloud/03-verify.md)). Do the section for your path. Run the cloud commands in bash (Git Bash on Windows), from the repo root.
 
-### Update
+## Who
 
-Pull `main`, rebuild and start again:
+agent can run, and the human provides new secrets.
+
+- Human provides: the new Telegram bot token, new stream password, or new Tailscale OAuth client when you rotate. The agent never prints or commits them.
+- Human only: `/revoke` in BotFather, changing the password on the Pi, generating the OAuth client in the Tailscale console.
+- Ask first: registering the scheduled task (it is a persistent system change), `git push origin main`, rollouts that restart a workload, and rotating any secret.
+
+Shell: Local section: bash, and PowerShell where marked. Cloud section: bash (Git Bash on Windows), from the repo root.
+
+## Do
+
+### Local
+
+#### Update
+
+Pull `main`, rebuild and start again. If you are on another branch or have uncommitted changes, stop and ask the operator first: `git switch main` can lose work.
+
 
 ```bash
 git switch main
@@ -44,7 +59,7 @@ Get-Content "$env:LOCALAPPDATA\bbfc\update-detection.log" -Tail 20
 
 The log ends with `detection is healthy`. In Task Scheduler the last run result is `0`.
 
-### Restart
+#### Restart
 
 ```bash
 docker compose restart detection
@@ -58,7 +73,7 @@ docker compose logs -f detection
 docker compose logs -f notification
 ```
 
-### Rotate secrets
+#### Rotate secrets
 
 The Telegram bot token: in BotFather send `/revoke` and choose the bot to get a new token. Put it in `TELEGRAM_BOT_TOKEN` in `.env` in the repo root, then:
 
@@ -74,7 +89,7 @@ docker compose up -d detection
 
 Check that the stream is back: `http://localhost:5005/stream/status` shows `fps` above `0`.
 
-### Stop and start
+#### Stop and start
 
 ```bash
 docker compose down
@@ -83,7 +98,7 @@ docker compose up -d
 
 `down` keeps the database and the clips. `down -v` deletes them with no undo.
 
-## Cloud
+### Cloud
 
 Two things run on the cluster: the `notification` Deployment and the `detection` StatefulSet, both in the `bbfc` namespace. Connect first:
 
@@ -91,7 +106,7 @@ Two things run on the cluster: the `notification` Deployment and the `detection`
 gcloud container clusters get-credentials bbfc --zone <GCP_ZONE> --dns-endpoint
 ```
 
-### Update
+#### Update
 
 Push to `main`. The pipeline does the rest:
 
@@ -127,7 +142,7 @@ Both pods are `1/1 Running` and `bbfc-apps` is `True`. A `ci` run on the merge c
 
 A change under `infra/k8s` is applied by Flux when it lands on `main`, within 10 minutes, or at once with `flux reconcile kustomization bbfc-apps --with-source`.
 
-### Change a setting
+#### Change a setting
 
 The two ConfigMaps come from the gitignored `config.env` files. Edit `infra/k8s/notification/config.env` or `infra/k8s/detection/config.env`, then apply and restart:
 
@@ -138,7 +153,7 @@ kubectl -n bbfc rollout restart deploy/notification
 kubectl -n bbfc rollout restart sts/detection
 ```
 
-### Restart
+#### Restart
 
 ```bash
 kubectl -n bbfc rollout restart deploy/notification
@@ -163,7 +178,7 @@ kubectl -n tailscale get pods
 
 `egress-pg-0` is `Running` again after a minute.
 
-### Rotate the Telegram bot token
+#### Rotate the Telegram bot token
 
 In BotFather send `/revoke` and choose the bot to get a new token. Add it as a new version of the secret:
 
@@ -184,7 +199,7 @@ Then restart, so the pod reads it:
 kubectl -n bbfc rollout restart deploy/notification
 ```
 
-### Rotate the stream password
+#### Rotate the stream password
 
 Change the password on the Pi first, in `mediamtx.yml` as in [Configure MediaMTX](../02-pi-camera/README.md#6-configure-mediamtx), and restart MediaMTX there. Then add it to Secret Manager:
 
@@ -207,7 +222,7 @@ kubectl -n bbfc rollout restart sts/detection
 
 Check: `kubectl -n bbfc port-forward pod/detection-0 5005`, then in another terminal `curl http://localhost:5005/stream/status` shows `fps` above `0`. Stop the port-forward with Ctrl+C.
 
-### Rotate the Tailscale OAuth client
+#### Rotate the Tailscale OAuth client
 
 In the Tailscale admin console open Settings, Trust credentials, and generate a new OAuth client as in [step 3 of Kubernetes and Tailscale](../05-cloud/02-k8s-and-tailscale.md#3-create-the-oauth-client). Delete the old client. Store the new one and reinstall the operator with it:
 
@@ -228,6 +243,30 @@ helm upgrade --install tailscale-operator tailscale/tailscale-operator \
   --wait
 ```
 
-### Tear the cluster down and bring it back
+#### Tear the cluster down and bring it back
 
 See [Tear down and bring back the cluster](teardown.md). The data in Cloud SQL and the clip bucket is kept.
+
+## Done when
+
+Read-only. Local:
+
+```bash
+docker compose ps
+curl http://localhost:5005/stream/status
+```
+
+Cloud:
+
+```bash
+kubectl -n bbfc get pods
+flux get kustomizations
+```
+
+On a first bring-up of the local path, skip this: step 3 already ran it. Expected: containers `running` (`notification` `healthy`) and `fps` above `0`, or both pods `1/1 Running` and `bbfc-apps` `True`.
+
+## If it fails
+
+- [Camera stream stops on the cluster](../troubleshooting.md#camera-stream-stops-on-the-cluster)
+- [Kubernetes Secret holds the old value](../troubleshooting.md#kubernetes-secret-holds-the-old-value)
+- [Flux does not see the new tag](../troubleshooting.md#flux-does-not-see-the-new-tag)

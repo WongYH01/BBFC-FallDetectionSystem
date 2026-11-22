@@ -87,9 +87,31 @@ Cloud path only. Set them in the repo under Settings, Secrets and variables, Act
 | `FALL_WEIGHTS_TOKEN` | Secret | Hugging Face read token |
 | `GCP_PROJECT_ID` | Variable | Your GCP project ID |
 | `GCP_REGION` | Variable | Artifact Registry region, for example `asia-southeast1` |
-| `GCP_SERVICE_ACCOUNT` | Variable | Email of the service account CI impersonates |
-| `GCP_WIF_PROVIDER` | Variable | Full resource name of the Workload Identity provider |
+| `GCP_SERVICE_ACCOUNT` | Variable | `gha-pusher@<GCP_PROJECT_ID>.iam.gserviceaccount.com`, the service account CI impersonates |
+| `GCP_WIF_PROVIDER` | Variable | Full resource name of the Workload Identity provider: `projects/<project-number>/locations/global/workloadIdentityPools/github/providers/github` |
 | `REFIT_APP_ID`, `REFIT_APP_PRIVATE_KEY` | Secret, optional | ID and private key of the GitHub App for the refit workflow |
+
+## Fixed names and versions
+
+Names and versions that several pages repeat. Edit them here first. Each is also fixed in code or config, so a change needs the matching code change too.
+
+| Item | Value |
+|------|-------|
+| Artifact Registry repo | `bbfc-registry`, images at `<GCP_REGION>-docker.pkg.dev/<GCP_PROJECT_ID>/bbfc-registry/<service>` |
+| Service account for CI | `gha-pusher` |
+| Workload Identity pool and provider | both named `github` |
+| GKE cluster | `bbfc`, namespace `bbfc`, node pool `main`, one `e2-standard-4` node |
+| Cloud SQL instance | `bbfc-db` (PostgreSQL 15, private IP only) |
+| Secret Manager secrets | `telegram-bot-token`, `detection-stream-password`, `tailscale-operator-oauth` |
+| Flux path and branches | `infra/flux`, `main`, image updates on `flux-image-updates` |
+| Pi stream | RTSP port `8554`, path `cam`, 1280x720 at 15 fps |
+| Detection page and notification API ports | `5005` and `8081` |
+| MediaMTX | `v1.19.2` (`linux_arm64`) |
+| Tailscale operator chart | `~1.104.0` |
+| OpenTofu | 1.13 or newer |
+| Region | `GCP_REGION`, for example `asia-southeast1`. The registry and the cluster zone must be in it. |
+
+The upstream project name `fyp-elderly-detection` appears in the repo files that [Flux bootstrap](04-ci-cd-bootstrap/04-flux-bootstrap.md), [Provision](05-cloud/01-provision.md) and [Kubernetes and Tailscale](05-cloud/02-k8s-and-tailscale.md) tell you to replace.
 
 ## Next
 

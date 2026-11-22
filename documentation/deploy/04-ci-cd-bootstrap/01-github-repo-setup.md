@@ -9,9 +9,22 @@ By the end of this page you have:
 - Code scanning and the dependency graph available to the workflows.
 - The `FALL_WEIGHTS_TOKEN` secret set.
 
-Needs: a [GitHub account](../01-prerequisites/README.md#github) with admin rights on the fork, and the [Hugging Face token](../01-prerequisites/README.md#hugging-face).
+## Needs
 
-## 1. Fork the repo
+A [GitHub account](../01-prerequisites/README.md#github) with admin rights on the fork, and the [Hugging Face token](../01-prerequisites/README.md#hugging-face).
+
+## Who
+
+human only for the GitHub console steps, and human provides the Hugging Face token.
+
+- Human only: Fork, enable Actions, turn on the dependency graph (steps 1 to 3). These are clicks in the GitHub console.
+- Human provides: the GitHub username of the fork and `FALL_WEIGHTS_TOKEN`. The agent may set the secret with `gh secret set FALL_WEIGHTS_TOKEN --repo <your-username>/BBFC-FallDetectionSystem` and must not print the token.
+
+Shell: bash or PowerShell, the commands are the same.
+
+## Do
+
+### 1. Fork the repo
 
 1. Open the repo on GitHub and click Fork.
 2. Choose your own account as the owner. Keep the repo name.
@@ -27,7 +40,7 @@ The repo URL is written into the Flux config as `WongYH01/BBFC-FallDetectionSyst
 
 ![Fork button](../../images/04-images/github-fork.png)
 
-## 2. Enable GitHub Actions
+### 2. Enable GitHub Actions
 
 GitHub disables workflows on a new fork.
 
@@ -38,7 +51,7 @@ GitHub disables workflows on a new fork.
 
 You do not need to change Settings, Actions, General, Workflow permissions. Every workflow declares the permissions it needs. No workflow used in this guide opens pull requests, so leave "Allow GitHub Actions to create and approve pull requests" off.
 
-## 3. Check code scanning and the dependency graph
+### 3. Check code scanning and the dependency graph
 
 Two checks in the `ci` workflow fail without these:
 
@@ -51,13 +64,11 @@ Two checks in the `ci` workflow fail without these:
 ![Dependency graph setting under Settings, Advanced Security](../../images/04-images/dependency-graph.jpg)
 3. Next to Dependency graph, click Enable if it is not already on.
 
-## 4. Set the secret
+### 4. Set the secret
 
 Open Settings, Secrets and variables, Actions, and add:
 
-| Name | Type | Value |
-|------|------|-------|
-| `FALL_WEIGHTS_TOKEN` | Secret | Your [Hugging Face read token](../01-prerequisites/README.md#hugging-face) |
+Add `FALL_WEIGHTS_TOKEN` as a secret. Its value is your [Hugging Face read token](../01-prerequisites/README.md#hugging-face). See [GitHub secrets and variables](../env-vars.md#github-secrets-and-variables).
 
 Click New repository secret on the Secrets tab, enter the name and value, and click Add secret.
 
@@ -65,13 +76,28 @@ Click New repository secret on the Secrets tab, enter the name and value, and cl
 
 The image build uses it to download the model weights.
 
-The four `GCP_*` variables are listed in [GitHub secrets and variables](../01-prerequisites/README.md#github-secrets-and-variables-cloud-path-only). Do not set them yet: two of them, `GCP_SERVICE_ACCOUNT` and `GCP_WIF_PROVIDER`, do not exist until [GCP auth and registry](02-gcp-auth-and-registry.md).
+The four `GCP_*` variables are listed in [GitHub secrets and variables](../env-vars.md#github-secrets-and-variables). Do not set them yet: two of them, `GCP_SERVICE_ACCOUNT` and `GCP_WIF_PROVIDER`, do not exist until [GCP auth and registry](02-gcp-auth-and-registry.md).
 
-## What you do not do here
+### What you do not do here
 
 - Do not create the `flux-image-updates` branch. Flux creates it when it pushes the first image tag update. You merge that branch into `main` yourself.
 - Do not create a deploy key. `flux bootstrap` creates it.
 - Do not turn on branch protection on `main` yet. Flux bootstrap pushes to `main`. If you want protection later, require only the `ci / gate` check.
+
+## Done when
+
+Read-only:
+
+```bash
+gh repo view <your-username>/BBFC-FallDetectionSystem --json isFork,viewerPermission
+gh secret list --repo <your-username>/BBFC-FallDetectionSystem
+```
+
+Expected: `"isFork":true` and `"viewerPermission":"ADMIN"`, and the secret list includes `FALL_WEIGHTS_TOKEN`.
+
+## If it fails
+
+- [Code scanning or dependency review fails](../troubleshooting.md#code-scanning-or-dependency-review-fails)
 
 ## Next
 

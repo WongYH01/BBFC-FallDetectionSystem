@@ -10,9 +10,23 @@ By the end of this page you have:
 - The database user `notification@<GCP_PROJECT_ID>.iam` allowed to create its schema.
 - The `cluster` root applied: GKE cluster `bbfc` with one node.
 
-Needs: the finished [GCP auth and registry](../04-ci-cd-bootstrap/02-gcp-auth-and-registry.md) page (the registry `bbfc-registry` and the service account `gha-pusher` must exist), the [cloud tools](../01-prerequisites/README.md#cloud-only), and the Telegram bot token from the [prerequisites](../01-prerequisites/README.md#telegram). Run the commands in bash (Git Bash on Windows), from the repo root.
+## Needs
 
-## 1. Set the shell variables
+The finished [GCP auth and registry](../04-ci-cd-bootstrap/02-gcp-auth-and-registry.md) page (the registry `bbfc-registry` and the service account `gha-pusher` must exist), the [cloud tools](../01-prerequisites/README.md#cloud-only), and the Telegram bot token from the [prerequisites](../01-prerequisites/README.md#telegram). Run the commands in bash (Git Bash on Windows), from the repo root.
+
+## Who
+
+human provides values and approves every apply, and the agent continues.
+
+- Human only: `gcloud auth login` and `gcloud auth application-default login` (browser), and the `GRANT` in Cloud SQL Studio (step 6, a console action).
+- Human provides: `<GCP_PROJECT_ID>`, `<GCP_REGION>`, `<GCP_ZONE>`, `TELEGRAM_BOT_TOKEN`, `STREAM_PASSWORD` and `<POSTGRES_ADMIN_PASSWORD>`. The agent never prints or commits them.
+- Confirm first: every `tofu apply` (steps 4 and 7). Show the `tofu plan` and wait for a yes. A plan with a destroy is a stop.
+
+Shell: bash (Git Bash on Windows), from the repo root.
+
+## Do
+
+### 1. Set the shell variables
 
 ```bash
 gcloud auth login
@@ -27,7 +41,7 @@ export PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(p
 
 `application-default login` gives OpenTofu its credentials.
 
-## 2. Enable the APIs
+### 2. Enable the APIs
 
 ```bash
 gcloud services enable \
@@ -35,7 +49,7 @@ gcloud services enable \
   secretmanager.googleapis.com compute.googleapis.com cloudresourcemanager.googleapis.com
 ```
 
-## 3. Create the state bucket
+### 3. Create the state bucket
 
 OpenTofu cannot create the bucket that holds its own state. Both roots use this bucket.
 
@@ -60,7 +74,7 @@ git commit -m "chore(infra): use my OpenTofu state bucket"
 git push origin main
 ```
 
-## 4. Apply the `base` root
+### 4. Apply the `base` root
 
 Create `infra/tofu/base/terraform.tfvars`. Git ignores it. `clip_bucket_name` is the name of the new clip bucket. Bucket names are global, so pick one nobody has: `<GCP_PROJECT_ID>-clips` is a good choice.
 
@@ -115,7 +129,7 @@ Open Security, Secret Manager. The three secrets are listed.
 
 ![Secret Manager with the three secrets](../../images/05-images/gcp-secrets.png)
 
-## 5. Store the secret values
+### 5. Store the secret values
 
 OpenTofu creates the secrets empty, so the values never enter its state. Add them by hand. `<STREAM_PASSWORD>` is the password you set on the Pi's MediaMTX in [Configure MediaMTX](../02-pi-camera/README.md#6-configure-mediamtx).
 
@@ -128,7 +142,7 @@ Each command prints `Created version [1] of the secret`. `printf` adds no traili
 
 `tailscale-operator-oauth` is filled in [Kubernetes and Tailscale](02-k8s-and-tailscale.md).
 
-## 6. Let the database user create its schema
+### 6. Let the database user create its schema
 
 The notification service creates the `alerts` schema at startup, logged in as the IAM database user. That user needs permission on the database. Set a password for the built-in `postgres` user, which you use once:
 
@@ -144,7 +158,7 @@ GRANT CREATE ON DATABASE postgres TO "notification@<GCP_PROJECT_ID>.iam";
 
 Studio reports the statement as run without an error. Replace `<GCP_PROJECT_ID>` with your project ID.
 
-## 7. Apply the `cluster` root
+### 7. Apply the `cluster` root
 
 This root needs no `terraform.tfvars`: it reads the outputs of `base` from the state bucket.
 
@@ -170,6 +184,23 @@ One node shows `Ready`.
 In the console, open Kubernetes Engine, Clusters. `bbfc` shows a green tick, 1 node, 4 vCPUs and 16 GB.
 
 ![GKE cluster bbfc](../../images/05-images/gcp-gke-cluster.png)
+
+## Done when
+
+Read-only:
+
+```bash
+cd infra/tofu/base && tofu output && tofu plan; cd ../../..
+gcloud container clusters get-credentials bbfc --zone "$ZONE" --dns-endpoint
+kubectl get nodes
+```
+
+Expected: `tofu plan` ends with `No changes.`, and one node shows `Ready`. `gcloud secrets versions list telegram-bot-token` and `gcloud secrets versions list detection-stream-password` each list version `1`.
+
+## If it fails
+
+- [bbfc-apps is not True](../troubleshooting.md#bbfc-apps-is-not-true)
+- [kubectl points at the wrong cluster](../troubleshooting.md#kubectl-points-at-the-wrong-cluster)
 
 ## Next
 

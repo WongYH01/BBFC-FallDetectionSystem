@@ -8,9 +8,23 @@ By the end of this page you have:
 - Flux installed in the `bbfc` cluster, syncing your fork.
 - The image reflector and image automation controllers running.
 
-Needs: the finished [Workflows](03-workflows.md), and the `bbfc` cluster. Create the cluster first in [Provision](../05-cloud/01-provision.md), then come back here. You also need [flux](../01-prerequisites/README.md#cloud-only) and kubectl installed.
+## Needs
 
-## 1. Point the files at your registry
+The finished [Workflows](03-workflows.md), and the `bbfc` cluster. Create the cluster first in [Provision](../05-cloud/01-provision.md), then come back here. You also need [flux](../01-prerequisites/README.md#cloud-only) and kubectl installed.
+
+## Who
+
+human only creates the token, human provides it, and the agent continues.
+
+- Human only: create the fine-grained GitHub token in the GitHub console (step 3).
+- Human provides: the token, and `<GCP_ZONE>`. The agent puts it in `GITHUB_TOKEN` for the one shell, never prints or commits it, and unsets it after bootstrap.
+- Ask first: `git push origin main` and `flux bootstrap`, which commits to `main`.
+
+Shell: bash, with PowerShell variants noted in steps 3 and 4.
+
+## Do
+
+### 1. Point the files at your registry
 
 The Flux and Kubernetes files name the upstream project's registry. In your fork, replace `asia-southeast1-docker.pkg.dev/fyp-elderly-detection/bbfc-registry` with `<GCP_REGION>-docker.pkg.dev/<GCP_PROJECT_ID>/bbfc-registry` in these files:
 
@@ -36,7 +50,7 @@ git commit -m "chore(infra): point Flux at my registry"
 git push origin main
 ```
 
-## 2. Connect kubectl to the cluster
+### 2. Connect kubectl to the cluster
 
 ```bash
 gcloud container clusters get-credentials bbfc --zone <GCP_ZONE> --dns-endpoint
@@ -45,7 +59,7 @@ kubectl get nodes
 
 `<GCP_ZONE>` is the zone of the cluster, for example `asia-southeast1-a`. One node must show `Ready`.
 
-## 3. Create a GitHub token for Flux
+### 3. Create a GitHub token for Flux
 
 Flux bootstrap creates a deploy key in your fork, so it needs a token with admin rights on it.
 
@@ -64,7 +78,7 @@ export GITHUB_TOKEN=<your-token>
 
 On PowerShell: `$env:GITHUB_TOKEN = "<your-token>"`.
 
-## 4. Bootstrap Flux
+### 4. Bootstrap Flux
 
 ```bash
 flux check --pre
@@ -92,7 +106,9 @@ You can unset the token now:
 unset GITHUB_TOKEN
 ```
 
-## 5. Check Flux
+On PowerShell: `Remove-Item Env:GITHUB_TOKEN`.
+
+### 5. Check Flux
 
 ```bash
 flux check
@@ -100,6 +116,24 @@ kubectl -n flux-system get pods
 ```
 
 `flux check` ends with `all checks passed`. The pods include `image-reflector-controller` and `image-automation-controller`, all `Running`.
+
+## Done when
+
+Read-only:
+
+```bash
+flux check
+kubectl -n flux-system get pods
+git grep -n "fyp-elderly-detection" -- infra/flux infra/k8s/kustomization.yml
+```
+
+Expected: `flux check` ends with `all checks passed`. The pods include `image-reflector-controller` and `image-automation-controller`, all `Running`. `git grep` prints nothing.
+
+## If it fails
+
+- [Flux deploy key stops working](../troubleshooting.md#flux-deploy-key-stops-working)
+- [bbfc-apps is not True](../troubleshooting.md#bbfc-apps-is-not-true)
+- [kubectl points at the wrong cluster](../troubleshooting.md#kubectl-points-at-the-wrong-cluster)
 
 ## Next
 

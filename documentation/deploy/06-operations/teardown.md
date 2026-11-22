@@ -9,9 +9,23 @@ By the end of this page you have:
 - Optionally, Cloud SQL stopped while the cluster is down.
 - The cluster built again, with `notification` and `detection` running and the stream connected.
 
-Needs: a running cloud deployment ([Verify](../05-cloud/03-verify.md)), and the `config.env` files in `infra/k8s/notification` and `infra/k8s/detection`. They are gitignored: keep them. Run the commands in bash (Git Bash on Windows), from the repo root.
+## Needs
 
-## 1. Point kubectl at the cluster
+A running cloud deployment ([Verify](../05-cloud/03-verify.md)), and the `config.env` files in `infra/k8s/notification` and `infra/k8s/detection`. They are gitignored: keep them. Run the commands in bash (Git Bash on Windows), from the repo root.
+
+## Who
+
+confirm first. The agent must get an explicit yes from the human before step 4 and again before step 5.
+
+- Human only: remove the offline `tailscale-operator` in the Tailscale console (step 6), create the GitHub token (step 12).
+- Human provides: `<GCP_PROJECT_ID>`, `<GCP_ZONE>`, `<your-username>`, and the GitHub token. The agent never prints or commits the token.
+- Agent can run: steps 1 to 3 and the checks. Never `tofu destroy` in `infra/tofu/base`.
+
+Shell: bash (Git Bash on Windows), from the repo root.
+
+## Do
+
+### 1. Point kubectl at the cluster
 
 Docker Desktop can switch the kubectl context. Switch it back:
 
@@ -22,7 +36,7 @@ kubectl get nodes
 
 One node shows `Ready`.
 
-## 2. Check the outbox is empty
+### 2. Check the outbox is empty
 
 Detection keeps alerts it has not delivered yet on the cluster's disk. Destroying the cluster loses them. The command must print `0`:
 
@@ -32,7 +46,7 @@ kubectl -n bbfc exec detection-0 -- python -c "from service.spool import Outbox;
 
 If it prints another number, wait and run it again. An error such as `pod not running` is not `0`: the outbox is unchecked, so fix that first.
 
-## 3. Suspend Flux
+### 3. Suspend Flux
 
 Flux recreates what you delete, so suspend it:
 
@@ -44,7 +58,7 @@ flux get kustomizations
 
 `bbfc-apps` shows `SUSPENDED True`. If it does not, also run `flux suspend kustomization flux-system`.
 
-## 4. Delete the workloads
+### 4. Delete the workloads
 
 ```bash
 kubectl delete -k infra/k8s
@@ -60,7 +74,7 @@ This deletes the `bbfc` namespace, with:
 
 Continue only when `kubectl get pv` prints `No resources found` and the `tailscale` namespace has only the operator pod left.
 
-## 5. Destroy the cluster
+### 5. Destroy the cluster
 
 ```bash
 cd infra/tofu/cluster
@@ -75,11 +89,11 @@ Never run `tofu destroy` in `infra/tofu/base`: it deletes Cloud SQL with all ale
 
 In the console, open Kubernetes Engine, Clusters. `bbfc` is gone. Open SQL: `bbfc-db` still shows a green tick.
 
-## 6. Clean up Tailscale
+### 6. Clean up Tailscale
 
 In the Tailscale admin console, open Machines and remove the offline `tailscale-operator`.
 
-## 7. Optional: stop Cloud SQL
+### 7. Optional: stop Cloud SQL
 
 While the cluster is down nothing uses the database. Stopping it saves the instance cost. Storage is still billed.
 
@@ -87,7 +101,7 @@ While the cluster is down nothing uses the database. Stopping it saves the insta
 gcloud sql instances patch bbfc-db --activation-policy=NEVER --project <GCP_PROJECT_ID>
 ```
 
-## 8. Bring the cluster back: start Cloud SQL
+### 8. Bring the cluster back: start Cloud SQL
 
 Skip this step if you did not stop Cloud SQL.
 
@@ -95,7 +109,7 @@ Skip this step if you did not stop Cloud SQL.
 gcloud sql instances patch bbfc-db --activation-policy=ALWAYS --project <GCP_PROJECT_ID>
 ```
 
-## 9. Create the cluster
+### 9. Create the cluster
 
 ```bash
 cd infra/tofu/cluster
@@ -108,13 +122,13 @@ kubectl get nodes
 
 The apply takes about 10 minutes. One node shows `Ready`.
 
-## 10. Install the Tailscale operator
+### 10. Install the Tailscale operator
 
 The OAuth client is still in Secret Manager. Install the operator as in [step 4 of Kubernetes and Tailscale](../05-cloud/02-k8s-and-tailscale.md#4-install-the-tailscale-operator). Its first block ends with `--wait`: run it all.
 
 In the Tailscale admin console, Machines lists `tailscale-operator` with the tag `tag:k8s-operator`.
 
-## 11. Create the namespace and the ConfigMaps
+### 11. Create the namespace and the ConfigMaps
 
 ```bash
 kubectl apply -f infra/k8s/namespace.yml
@@ -122,7 +136,7 @@ kubectl -n bbfc create configmap notification --from-env-file=infra/k8s/notifica
 kubectl -n bbfc create configmap detection --from-env-file=infra/k8s/detection/config.env --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-## 12. Install Flux
+### 12. Install Flux
 
 Create a GitHub token as in [Flux bootstrap](../04-ci-cd-bootstrap/04-flux-bootstrap.md#3-create-a-github-token-for-flux). The old token must not be expired: the deploy key stops working with it.
 
@@ -148,7 +162,7 @@ If `bbfc-apps` fails with `no matches for kind "SecretSync"`, Flux retries every
 flux reconcile kustomization bbfc-apps --with-source
 ```
 
-## 13. Check
+### 13. Check
 
 ```bash
 flux get kustomizations
@@ -161,6 +175,28 @@ kubectl get --raw "/api/v1/namespaces/bbfc/pods/detection-0:5005/proxy/stream/st
 The kustomizations are `True`, both rollouts finish, and the stream status shows `"connected":true`.
 
 Then run the alert check in [Verify](../05-cloud/03-verify.md#4-check-that-an-alert-reaches-telegram). Earlier alerts are still in Cloud SQL and their clips are still in the bucket.
+
+## Done when
+
+Read-only. After the cluster is back:
+
+```bash
+flux get kustomizations
+flux get image policy
+kubectl -n bbfc rollout status deploy/notification
+kubectl -n bbfc rollout status sts/detection
+kubectl get --raw "/api/v1/namespaces/bbfc/pods/detection-0:5005/proxy/stream/status"
+```
+
+Expected: the kustomizations are `True`, both rollouts finish, and the stream status shows `"connected":true`. Cloud SQL is still there: `gcloud sql instances describe bbfc-db --format='value(state)'` prints `RUNNABLE`.
+
+## If it fails
+
+- [Outbox check does not print 0](../troubleshooting.md#outbox-check-does-not-print-0)
+- [Disk left after teardown](../troubleshooting.md#disk-left-after-teardown)
+- [SecretSync kind missing](../troubleshooting.md#secretsync-kind-missing)
+- [kubectl points at the wrong cluster](../troubleshooting.md#kubectl-points-at-the-wrong-cluster)
+- [Flux deploy key stops working](../troubleshooting.md#flux-deploy-key-stops-working)
 
 ## Next
 

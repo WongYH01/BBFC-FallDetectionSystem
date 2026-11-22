@@ -9,9 +9,23 @@ By the end of this page you have:
 - MediaMTX starting on every boot.
 - The Pi reachable over SSH from any network through Tailscale (cloud path only).
 
-Needs: the [Raspberry Pi kit](../01-prerequisites/README.md#raspberry-pi-kit) and the [Tailscale account](../01-prerequisites/README.md#tailscale-cloud-only) for the cloud path.
+## Needs
 
-## 1. Flash the OS
+The [Raspberry Pi kit](../01-prerequisites/README.md#raspberry-pi-kit) and the [Tailscale account](../01-prerequisites/README.md#tailscale-cloud-only) for the cloud path.
+
+## Who
+
+human provides values and does the physical steps, and the agent continues over SSH.
+
+- Human only: flash the microSD card (step 1), connect the camera cable and power the Pi (steps 1 and 2), sign in at the Tailscale login URL (step 4, cloud path).
+- Human provides: the Pi username and hostname or IP address, and the `STREAM_USERNAME` and `STREAM_PASSWORD` to set on MediaMTX. The agent must not print or commit the password.
+- Agent can run: steps 3 to 7 over SSH, and step 8 from your computer.
+
+Steps 3 to 7 run on the Pi, which is Linux (Raspberry Pi OS, arm64). Do not run them on your computer. Step 8 runs on your computer.
+
+## Do
+
+### 1. Flash the OS
 
 You need the microSD card, a card reader and [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Flashing erases everything on the card. For screenshots of each Imager screen, see [Raspberry Pi's getting started guide](https://www.raspberrypi.com/documentation/computers/getting-started.html#imager-install).
 
@@ -41,17 +55,17 @@ ssh <username>@<hostname>.local
 
 If `<hostname>.local` does not resolve, find the Pi's IP address on your router's device list and use `ssh <username>@<ip-address>`.
 
-Keep this SSH session open. Every command from step 3 on runs on the Pi.
+Keep this SSH session open. The commands in steps 3 to 7 run on the Pi. Step 8 runs on your computer.
 
 <!-- ![Raspberry Pi Imager settings](../../images/pi-imager.png) -->
 
-## 2. Connect the camera
+### 2. Connect the camera
 
 Power the Pi off, then follow [Getting started with the Camera Module](https://projects.raspberrypi.org/en/projects/getting-started-with-picamera/2) to connect the camera.
 
 <!-- ![Camera cable in the CSI port](../../images/pi-camera-connected.png) -->
 
-## 3. Check the camera works
+### 3. Check the camera works
 
 Boot the Pi and SSH in. Then run:
 
@@ -63,7 +77,7 @@ rpicam-hello -t 0
 - `--list-cameras` prints the cameras the Pi found, numbered from `0`. The list must not be empty before you go on.
 - `-t 0` opens a live preview until you stop it. It needs a screen on the Pi. Over SSH only the first command is useful.
 
-## 4. Reach the Pi from any network
+### 4. Reach the Pi from any network
 
 Cloud path: required. The GKE cluster reaches the Pi through Tailscale.
 Local path: optional. Your machine and the Pi share a LAN, so the LAN address is enough.
@@ -92,7 +106,7 @@ Use this address as `MEDIAMTX_HOST` on the cloud path.
 
 <!-- ![Pi in the Tailscale machine list](../../images/tailscale-machines.png) -->
 
-## 5. Install MediaMTX
+### 5. Install MediaMTX
 
 ```bash
 cd ~
@@ -107,7 +121,7 @@ For more detail, see [Streaming with MediaMTX](https://www.raspberrypi.com/docum
 
 ![MediaMTX release assets, with the linux_arm64 file circled](../../images/02-images/mediamtx-release-assets.jpg)
 
-## 6. Configure MediaMTX
+### 6. Configure MediaMTX
 
 Edit the config:
 
@@ -153,7 +167,7 @@ authInternalUsers:
 
 Choose your own username and password. Do not commit them anywhere.
 
-## 7. Start MediaMTX on boot
+### 7. Start MediaMTX on boot
 
 Create the service file:
 
@@ -198,7 +212,7 @@ sudo journalctl -u mediamtx.service -f
 
 <!-- ![systemctl status showing active](../../images/mediamtx-status.png) -->
 
-## 8. Confirm the stream works
+### 8. Confirm the stream works
 
 Reboot the Pi so you also test the start on boot:
 
@@ -212,7 +226,24 @@ Wait about a minute. Then, from your computer, read the stream. `<pi-address>` i
 ffprobe rtsp://<STREAM_USERNAME>:<STREAM_PASSWORD>@<pi-address>:8554/cam
 ```
 
-The page works when `ffprobe` lists a `Video: h264` stream at `1280x720`. To see the picture, open the same URL in VLC (Media > Open Network Stream).
+`ffprobe` puts the password on the command line, so it can land in shell history. Do not paste the output anywhere. The page works when `ffprobe` lists a `Video: h264` stream at `1280x720`. To see the picture, open the same URL in VLC (Media > Open Network Stream).
+
+## Done when
+
+Read-only. Run on your computer, in bash or PowerShell:
+
+```bash
+ffprobe rtsp://<STREAM_USERNAME>:<STREAM_PASSWORD>@<pi-address>:8554/cam
+```
+
+Expected: a `Video: h264` stream at `1280x720`. On the Pi (Linux), `sudo systemctl status mediamtx` shows `active (running)` and `systemctl is-enabled mediamtx` prints `enabled`. Cloud path: `tailscale ip -4` on the Pi prints a `100.x.x.x` address.
+
+## If it fails
+
+- [Camera list is empty](../troubleshooting.md#camera-list-is-empty)
+- [Pi hostname does not resolve](../troubleshooting.md#pi-hostname-does-not-resolve)
+- [MediaMTX is not running](../troubleshooting.md#mediamtx-is-not-running)
+- [ffprobe cannot read the stream](../troubleshooting.md#ffprobe-cannot-read-the-stream)
 
 ## Next
 

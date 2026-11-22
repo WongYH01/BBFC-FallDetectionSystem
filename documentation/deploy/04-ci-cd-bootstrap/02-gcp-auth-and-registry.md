@@ -9,9 +9,23 @@ By the end of this page you have:
 - A Workload Identity pool and provider that let only your fork authenticate as `gha-pusher`.
 - The four `GCP_*` variables set on your fork.
 
-Needs: the finished [GitHub repo setup](01-github-repo-setup.md), a [GCP project](../01-prerequisites/README.md#gcp-cloud-only) with billing enabled, and [gcloud](../01-prerequisites/README.md#cloud-only) installed.
+## Needs
 
-## 1. Log in and pick the project
+The finished [GitHub repo setup](01-github-repo-setup.md), a [GCP project](../01-prerequisites/README.md#gcp-cloud-only) with billing enabled, and [gcloud](../01-prerequisites/README.md#cloud-only) installed.
+
+## Who
+
+agent can run the `gcloud` commands, after the human signs in.
+
+- Human only: `gcloud auth login` opens a browser.
+- Human provides: `<GCP_PROJECT_ID>`, `<GCP_REGION>` and the GitHub username of the fork. See [Names and versions](../env-vars.md#fixed-names-and-versions).
+- Ask first before setting repository variables.
+
+Shell: bash. On PowerShell use the variant noted in step 1.
+
+## Do
+
+### 1. Log in and pick the project
 
 ```bash
 gcloud auth login
@@ -29,13 +43,13 @@ export PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(p
 
 On PowerShell, set them with `$env:PROJECT_ID = "..."` and write `$env:PROJECT_ID` where the commands below write `$PROJECT_ID`.
 
-## 2. Enable the APIs
+### 2. Enable the APIs
 
 ```bash
 gcloud services enable artifactregistry.googleapis.com iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com
 ```
 
-## 3. Create the registry
+### 3. Create the registry
 
 The name must be `bbfc-registry`. The workflow and the Flux config both use it.
 
@@ -51,7 +65,7 @@ In the console, open Artifact Registry, Repositories. `bbfc-registry` is listed 
 
 The OpenTofu `base` root in the [Cloud pages](../05-cloud/01-provision.md) imports this repo and adds its cleanup policy. Do not add a cleanup policy here.
 
-## 4. Create the service account
+### 4. Create the service account
 
 The name must be `gha-pusher`. The OpenTofu `base` root refers to it by this name.
 
@@ -68,7 +82,7 @@ In the console, open IAM & Admin, Service Accounts. `gha-pusher` is listed and e
 
 ![Service accounts list](../../images/04-images/gcp-service-accounts.jpg)
 
-## 5. Create the Workload Identity pool and provider
+### 5. Create the Workload Identity pool and provider
 
 The attribute condition lets only your fork authenticate.
 
@@ -98,7 +112,7 @@ In the console, open IAM & Admin, Workload Identity Federation. The pool `github
 
 ![Workload Identity pools](../../images/04-images/gcp-wif-pool.jpg)
 
-## 6. Set the GitHub variables
+### 6. Set the GitHub variables
 
 Print the provider's full resource name:
 
@@ -111,12 +125,7 @@ gcloud iam workload-identity-pools providers describe github \
 
 Open your fork, then Settings, Secrets and variables, Actions, the Variables tab, and add four repository variables:
 
-| Name | Value |
-|------|-------|
-| `GCP_PROJECT_ID` | `<GCP_PROJECT_ID>` |
-| `GCP_REGION` | `<GCP_REGION>` |
-| `GCP_SERVICE_ACCOUNT` | `gha-pusher@<GCP_PROJECT_ID>.iam.gserviceaccount.com` |
-| `GCP_WIF_PROVIDER` | The output of the previous command, of the form `projects/<project-number>/locations/global/workloadIdentityPools/github/providers/github` |
+Set `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_SERVICE_ACCOUNT` and `GCP_WIF_PROVIDER`, with the values in [GitHub secrets and variables](../env-vars.md#github-secrets-and-variables). `GCP_WIF_PROVIDER` is the output of the previous command.
 
 These are variables, not secrets. Click New repository variable on the Variables tab, enter a name and value, and click Add variable. Repeat for each row.
 
@@ -130,6 +139,22 @@ gh variable set GCP_REGION --repo "$GITHUB_REPO" --body "$REGION"
 gh variable set GCP_SERVICE_ACCOUNT --repo "$GITHUB_REPO" --body "gha-pusher@$PROJECT_ID.iam.gserviceaccount.com"
 gh variable set GCP_WIF_PROVIDER --repo "$GITHUB_REPO" --body "projects/$PROJECT_NUMBER/locations/global/workloadIdentityPools/github/providers/github"
 ```
+
+## Done when
+
+Read-only:
+
+```bash
+gcloud artifacts repositories describe bbfc-registry --location="$REGION" --format='value(format)'
+gcloud iam workload-identity-pools providers describe github --location=global --workload-identity-pool=github --format='value(state)'
+gh variable list --repo "$GITHUB_REPO"
+```
+
+Expected: `DOCKER`, then `ACTIVE`, then a list of the four `GCP_*` variables. On PowerShell write `$env:REGION` and `$env:GITHUB_REPO`.
+
+## If it fails
+
+- [Troubleshooting index](../troubleshooting.md)
 
 ## Next
 

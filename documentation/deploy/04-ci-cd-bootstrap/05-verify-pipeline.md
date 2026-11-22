@@ -8,9 +8,22 @@ By the end of this page you have:
 - Flux syncing your fork and reading both image repositories.
 - The image tags in `infra/k8s/kustomization.yml` updated on `main` by Flux's commit.
 
-Needs: the finished [Flux bootstrap](04-flux-bootstrap.md), and the first `ci` run from [Workflows](03-workflows.md) green.
+## Needs
 
-## 1. Check the registry
+The finished [Flux bootstrap](04-flux-bootstrap.md), and the first `ci` run from [Workflows](03-workflows.md) green.
+
+## Who
+
+agent can run.
+
+- Ask first: `git push origin main` after the merge in step 3.
+- Human provides nothing.
+
+Shell: bash.
+
+## Do
+
+### 1. Check the registry
 
 ```bash
 gcloud artifacts docker images list <GCP_REGION>-docker.pkg.dev/<GCP_PROJECT_ID>/bbfc-registry --include-tags
@@ -22,7 +35,7 @@ In the console, open Artifact Registry, `bbfc-registry`, then `detection`. The n
 
 ![Image tags of detection in Artifact Registry](../../images/04-images/gcp-image-tags.jpg)
 
-## 2. Check that Flux reads the registry
+### 2. Check that Flux reads the registry
 
 ```bash
 flux get sources git
@@ -43,7 +56,7 @@ flux reconcile image repository detection
 flux reconcile image repository notification
 ```
 
-## 3. Merge Flux's tag update
+### 3. Merge Flux's tag update
 
 When the policy picks a tag that differs from the `newTag` lines, Flux commits the new tags to a branch named `flux-image-updates` in your fork. Flux creates the branch. Check that it exists:
 
@@ -66,7 +79,7 @@ git push origin main
 
 The push starts a `ci` run. It builds no image, because only `infra/` changed.
 
-## 4. Confirm the sync
+### 4. Confirm the sync
 
 ```bash
 git grep -n "newTag" infra/k8s/kustomization.yml
@@ -77,6 +90,25 @@ flux get kustomizations
 Both `newTag` lines name `main-...` tags that exist in your registry. `flux-system` shows `True` and `Applied revision: main@sha1:...` for your latest commit.
 
 `bbfc-apps` becomes `True` only after the [Cloud pages](../05-cloud/01-provision.md) are done: it needs the Kubernetes secrets and the Tailscale setup. The pipeline is complete when steps 1 to 4 above hold.
+
+## Done when
+
+Read-only:
+
+```bash
+gcloud artifacts docker images list <GCP_REGION>-docker.pkg.dev/<GCP_PROJECT_ID>/bbfc-registry --include-tags
+flux get image policy
+flux get kustomizations
+git grep -n "newTag" infra/k8s/kustomization.yml
+```
+
+Expected: `detection` and `notification` are listed with a `main-...` tag. Both image policies are `True`. `flux-system` is `True`. Both `newTag` lines name `main-...` tags that exist in the registry.
+
+## If it fails
+
+- [Flux does not see the new tag](../troubleshooting.md#flux-does-not-see-the-new-tag)
+- [CI builds no image](../troubleshooting.md#ci-builds-no-image)
+- [bbfc-apps is not True](../troubleshooting.md#bbfc-apps-is-not-true)
 
 ## Next
 

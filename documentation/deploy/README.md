@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This guide takes an operator from an empty Raspberry Pi to a running fall-detection system that sends alerts to Telegram. It has two paths: local (docker-compose on your computer) and cloud (GKE, deployed by CI and Flux). Work through the pages in the order below.
+This guide takes an operator from an empty Raspberry Pi to a running fall-detection system that sends alerts to Telegram. It has two paths: local (docker-compose on your computer) and cloud (GKE, deployed by CI and Flux). Work through the pages in the order below. Each step page has the sections Needs, Who, Do, Done when and If it fails.
 
 By the end of this guide you have:
 
@@ -39,12 +39,13 @@ Steps 1, 2 and 6 apply to both paths.
 
 ## Reference
 
-- [Environment variables](env-vars.md): every variable in the deployment `.env` and config examples.
+- [Environment variables](env-vars.md): every variable in the deployment `.env` and config examples, plus the fixed names and versions.
+- [Troubleshooting](troubleshooting.md): symptom, cause, check and fix.
 
 ## Further reading
 
 - [`CONTEXT.md`](../../CONTEXT.md): the project glossary.
-- [`CLAUDE.md`](../../CLAUDE.md): project instructions for coding agents.
+- [`AGENTS.md`](../../AGENTS.md): instructions for coding agents following this guide.
 - Decision records: [0001](../../docs/adr/0001-no-camera-pixels-leave-the-detection-host.md), [0002](../../docs/adr/0002-alert-keypoints-are-kept-for-training.md), [0003](../../docs/adr/0003-camera-heads-are-promoted-without-human-review.md).
 
 ## Next
