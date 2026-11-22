@@ -24,9 +24,8 @@ cd BBFC-FallDetectionSystem
 
 The repo URL is written into the Flux config as `WongYH01/BBFC-FallDetectionSystem` (`infra/flux/flux-system/gotk-sync.yaml`). You do not edit it. `flux bootstrap` rewrites it with your fork's URL in [Flux bootstrap](04-flux-bootstrap.md).
 
-TODO: confirm a fork is the route you want to offer, or also offer a new empty repo.
 
-![Fork button](../../images/github-fork.png)
+![Fork button](../../images/04-images/github-fork.png)
 
 ## 2. Enable GitHub Actions
 
@@ -35,7 +34,7 @@ GitHub disables workflows on a new fork.
 1. Open the Actions tab of your fork.
 2. Click "I understand my workflows, go ahead and enable them".
 
-![Enable Actions on the fork](../../images/actions-enable.png)
+![Enable Actions on the fork](../../images/04-images/actions-enable.png)
 
 You do not need to change Settings, Actions, General, Workflow permissions. Every workflow declares the permissions it needs. No workflow opens pull requests, so leave "Allow GitHub Actions to create and approve pull requests" off.
 

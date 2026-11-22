@@ -29,7 +29,7 @@ Pick one. Sections marked "local only" or "cloud only" apply to that path alone.
 
 Used: Raspberry Pi 3. Any Pi with a CSI camera port and a hardware H.264 encoder works.
 
-![Raspberry Pi](../../images/pi-board.avif)
+![Raspberry Pi](../../images/01-images/pi-board.avif)
 
 [Buy](https://www.aliexpress.com/item/32621745026.html?spm=a2g0o.productlist.main.9.7b3c42bdhrKdmx&algo_pvid=be5f88ee-a522-48b4-be04-07881eed7cf0&algo_exp_id=be5f88ee-a522-48b4-be04-07881eed7cf0-8&pdp_ext_f=%7B%22order%22%3A%22105%22%2C%22eval%22%3A%221%22%2C%22fromPage%22%3A%22search%22%7D&pdp_npi=6%40dis%21SGD%21234.79%2160.34%21%21%21175.66%2145.14%21%402140ec2d17934180310293152e1069%2159357095308%21sea%21SG%210%21ABX%211%210%21n_tag%3A-29910%3Bd%3A229c8260%3Bm03_new_user%3A-29895%3BpisId%3A5000000220781513&curPageLogUid=USluZf8CrMHE&utparam-url=scene%3Asearch%7Cquery_from%3A%7Cx_object_id%3A32621745026%7C_p_origin_prod%3A)
 
@@ -37,7 +37,7 @@ Used: Raspberry Pi 3. Any Pi with a CSI camera port and a hardware H.264 encoder
 
 Used: IR-CUT camera module. Any CSI camera supported by `rpicamera` works.
 
-![Camera module](../../images/pi-camera.avif)
+![Camera module](../../images/01-images/pi-camera.avif)
 
 [Buy](https://www.aliexpress.com/item/1005004646469525.html?src=google&src=google&albch=shopping&acnt=615-992-9880&isdl=y&slnk=&plac=&mtctp=&albbt=Google_7_shopping&aff_platform=google&aff_short_key=_oFgTQeV&gclsrc=aw.ds&albagn=888888&ds_e_adid=&ds_e_matchtype=&ds_e_device=c&ds_e_network=x&ds_e_product_group_id=&ds_e_product_id=en1005004646469525&ds_e_product_merchant_id=5853250165&ds_e_product_country=SG&ds_e_product_language=en&ds_e_product_channel=online&ds_e_product_store_id=&ds_url_v=2&albcp=23852500233&albag=&isSmbAutoCall=false&needSmbHouyi=false&gad_source=1&gad_campaignid=23857815578&gbraid=0AAAAA_TvRHrcETw6ijqTZyZSOvfc9EeUg&gclid=CjwKCAjwgJHXBhBGEiwAHohJq1M3JjQvFf-zXR9FS4cX3PLYgE6IODys3BzRDtYxqjOp4tgnk_OawxoCuREQAvD_BwE)
 
@@ -53,8 +53,8 @@ Requirements:
 
 - OS: Windows 11, macOS or Linux.
 - CPU and RAM:
-  - Local path: 4 CPU cores and 8 GB RAM. This matches the cloud sizing for the same workload (`e2-standard-4`: detection is requested at 1 CPU and 2 GiB, limit 4 GiB; notification is requested at 512 MiB, limit 1 GiB; Postgres and Supabase storage run beside them).
-  - Cloud path: any machine that runs the admin tools.
+  - Local path: at least 4 CPU cores and 8 GB RAM
+  - Cloud path: any machine that runs the admin tools and services. We recommend and use the `c3-standard-4`
 - Free disk: 20 GB for the local path (Docker images and volumes). This is an estimate, not a measured figure.
 - Network: must reach the Pi on port 8554. Same LAN for the local path, Tailscale for the cloud path.
 
@@ -84,7 +84,7 @@ Create a bot with BotFather and copy its token. Follow the video up to 1:47: [he
 2. Click the group.
 3. Copy the number at the end of the URL in the address bar.
 
-![Chat group ID in the URL](../../images/telegram-group-id.png)
+![Chat group ID in the URL](../../images/01-images/telegram-group-id.png)
 
 
 ### Supabase
@@ -131,7 +131,11 @@ Only if you run services outside Docker:
 ### Cloud only
 
 - [gcloud](https://cloud.google.com/sdk/docs/install)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- kubectl and the GKE auth plugin, installed through gcloud:
+
+  ```
+  gcloud components install kubectl gke-gcloud-auth-plugin
+  ```
 - [flux](https://fluxcd.io/flux/installation/)
 - [OpenTofu](https://opentofu.org/docs/intro/install/) 1.13 or newer
 - [Tailscale client](https://tailscale.com/download)

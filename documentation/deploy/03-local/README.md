@@ -70,7 +70,7 @@ All four must show `running`. `notification` must also show `healthy`: `detectio
 If you use Docker Desktop, open the Containers tab. The `bbfc` group lists the same four services as shown below:
 
 
-![Docker Desktop Containers tab](../../images/docker-desktop-containers.png)
+![Docker Desktop Containers tab](../../images/03-images/docker-desktop-containers.png)
 
 ## 5. Open the detection page
 
@@ -80,7 +80,7 @@ This page is for developers only. It is not the view for normal users or caregiv
 
 The page has no login. Compose publishes it on `127.0.0.1` only, so only your own computer reaches it.
 
-![Detection page showing the live feed](../../images/detection-ui.png)
+![Detection page showing the live feed](../../images/03-images/detection-ui.png)
 
 TODO: describe what the page shows (status, skeleton overlay).
 
@@ -107,7 +107,7 @@ Send a test alert to the notification service with [Postman](https://www.postman
 - Status `200` with `"status": "duplicate"` means the `eventId` was already used. Change `eventId` (for example `test-002`) and send again.
 - Status `400` means a field is missing or empty, or `confidence` is outside 0 to 1.
 
-![Telegram fall alert](../../images/telegram-alert.png)
+![Telegram fall alert](../../images/03-images/telegram-alert.png)
 
 ## Daily use
 
