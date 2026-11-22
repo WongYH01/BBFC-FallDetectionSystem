@@ -1,6 +1,25 @@
 # Prerequisites
 
+Everything you need before the first setup step: hardware, accounts, tools, and the secrets and `.env` values that later pages ask for.
+
+By the end of this page you have:
+
+- Chosen the local or the cloud path.
+- Every piece of hardware, every account and every tool for that path.
+- The values for the `.env` files and GitHub secrets, ready to paste.
+
 ## Which path are you on?
+
+Both paths use the same Pi and camera. They differ in where detection and notification run.
+
+| | Local | Cloud |
+|---|---|---|
+| Detection and notification run on | Your computer, in Docker (`docker compose`) | GKE, deployed by CI and Flux |
+| Database and clip storage | Postgres and Supabase storage containers on your computer | Cloud SQL and Cloud Storage |
+| Pi reached over | Same LAN | Tailscale |
+| Needs | Docker, a computer that stays on | GCP project with billing, Tailscale, GitHub repo admin |
+
+Pick one. Sections marked "local only" or "cloud only" apply to that path alone. Everything else applies to both.
 
 ## Hardware
 
@@ -22,14 +41,6 @@ Used: IR-CUT camera module. Any CSI camera supported by `rpicamera` works.
 
 [Buy](https://www.aliexpress.com/item/1005004646469525.html?src=google&src=google&albch=shopping&acnt=615-992-9880&isdl=y&slnk=&plac=&mtctp=&albbt=Google_7_shopping&aff_platform=google&aff_short_key=_oFgTQeV&gclsrc=aw.ds&albagn=888888&ds_e_adid=&ds_e_matchtype=&ds_e_device=c&ds_e_network=x&ds_e_product_group_id=&ds_e_product_id=en1005004646469525&ds_e_product_merchant_id=5853250165&ds_e_product_country=SG&ds_e_product_language=en&ds_e_product_channel=online&ds_e_product_store_id=&ds_url_v=2&albcp=23852500233&albag=&isSmbAutoCall=false&needSmbHouyi=false&gad_source=1&gad_campaignid=23857815578&gbraid=0AAAAA_TvRHrcETw6ijqTZyZSOvfc9EeUg&gclid=CjwKCAjwgJHXBhBGEiwAHohJq1M3JjQvFf-zXR9FS4cX3PLYgE6IODys3BzRDtYxqjOp4tgnk_OawxoCuREQAvD_BwE)
 
-#### Power supply
-
-Use the official supply for your Pi model. An undervolted Pi causes encoder errors.
-
-#### microSD card
-
-To store and flash the OS for the Raspberry Pi
-
 
 ### Your computer
 
@@ -41,7 +52,10 @@ Any machine that runs Docker.
 Requirements:
 
 - OS: Windows 11, macOS or Linux.
-- CPU, RAM and free disk: TODO (YOLO inference plus Postgres and Supabase containers).
+- CPU and RAM:
+  - Local path: 4 CPU cores and 8 GB RAM. This matches the cloud sizing for the same workload (`e2-standard-4`: detection is requested at 1 CPU and 2 GiB, limit 4 GiB; notification is requested at 512 MiB, limit 1 GiB; Postgres and Supabase storage run beside them).
+  - Cloud path: any machine that runs the admin tools.
+- Free disk: 20 GB for the local path (Docker images and volumes). This is an estimate, not a measured figure.
 - Network: must reach the Pi on port 8554. Same LAN for the local path, Tailscale for the cloud path.
 
 ## Accounts
@@ -137,6 +151,8 @@ Set them in the repo under Settings, Secrets and variables, Actions. The image w
 | `GCP_SERVICE_ACCOUNT` | Variable | Email of the service account CI impersonates |
 | `GCP_WIF_PROVIDER` | Variable | Full resource name of the Workload Identity provider |
 
+The weekly refit workflow (`refit.yml`) also reads two optional secrets: `REFIT_APP_ID` and `REFIT_APP_PRIVATE_KEY`, the ID and private key of a GitHub App that opens the repin PR. Skip them if you do not run the refit.
+
 The images are pushed to `<GCP_REGION>-docker.pkg.dev/<GCP_PROJECT_ID>/bbfc-registry/<service>`. The Artifact Registry repo must be named `bbfc-registry`.
 
 `GCP_SERVICE_ACCOUNT` and `GCP_WIF_PROVIDER` do not exist yet on a fresh project. Create them in [GCP auth and registry](../04-ci-cd-bootstrap/02-gcp-auth-and-registry.md), then come back and set them.
@@ -171,7 +187,6 @@ Copy `services/detection/.env.example` to `.env`.
 | `MEDIAMTX_HOST` | IP address of the Pi |
 | `STREAM_USERNAME`, `STREAM_PASSWORD` | Credentials set on the Pi's MediaMTX in [Pi camera](../02-pi-camera/README.md) |
 | `FALL_WEIGHTS_TOKEN` | [Hugging Face read token](#hugging-face) |
-| `ALLOW_MANUAL_RECORDING` | Keep `0` |
 | `VID_STRIDE`, `STREAM_FRAME_STRIDE`, `BUFFER_LEN`, `FALL_CLEAR_WINDOWS`, `EVENT_COOLDOWN_SEC` | Keep the defaults. They are tuned for a 15 fps camera. |
 
 Every other detection setting has a working default.
