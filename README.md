@@ -2,7 +2,6 @@
 
 [![ci](https://github.com/WongYH01/BBFC-FallDetectionSystem/actions/workflows/ci.yml/badge.svg)](https://github.com/WongYH01/BBFC-FallDetectionSystem/actions/workflows/ci.yml)
 [![codeql](https://github.com/WongYH01/BBFC-FallDetectionSystem/actions/workflows/codeql.yml/badge.svg)](https://github.com/WongYH01/BBFC-FallDetectionSystem/actions/workflows/codeql.yml)
-[![notification](https://github.com/WongYH01/BBFC-FallDetectionSystem/actions/workflows/notification.yml/badge.svg)](https://github.com/WongYH01/BBFC-FallDetectionSystem/actions/workflows/notification.yml)
 
 Real-time fall detection from one RTSP camera, with Telegram alerts. A frozen
 **YOLO26-Pose** backbone extracts 17 keypoints per frame; a compact Transformer
