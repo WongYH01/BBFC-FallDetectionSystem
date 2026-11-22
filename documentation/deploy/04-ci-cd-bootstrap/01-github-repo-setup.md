@@ -36,18 +36,20 @@ GitHub disables workflows on a new fork.
 
 ![Enable Actions on the fork](../../images/04-images/actions-enable.png)
 
-You do not need to change Settings, Actions, General, Workflow permissions. Every workflow declares the permissions it needs. No workflow opens pull requests, so leave "Allow GitHub Actions to create and approve pull requests" off.
+You do not need to change Settings, Actions, General, Workflow permissions. Every workflow declares the permissions it needs. No workflow used in this guide opens pull requests, so leave "Allow GitHub Actions to create and approve pull requests" off.
 
 ## 3. Check code scanning and the dependency graph
 
 Two checks in the `ci` workflow fail without these:
 
 - CodeQL and the Trivy image scan upload their results to code scanning. Code scanning is free on a public repo. A private repo needs GitHub Advanced Security.
-- `dependency-review` needs the dependency graph. Open Settings, Advanced Security, and make sure Dependency graph is on.
+- `dependency-review`, which runs on pull requests, needs the dependency graph. Turn the dependency graph on as below.
 
-<!-- ![Dependency graph setting](../../images/dependency-graph.png) -->
+1. Open the Settings tab of your fork.
+2. Click Advanced Security in the sidebar (it sits under the Security section).
 
-TODO: confirm the current menu names under Settings, Advanced Security.
+![Dependency graph setting under Settings, Advanced Security](../../images/04-images/dependency-graph.jpg)
+3. Next to Dependency graph, click Enable if it is not already on.
 
 ## 4. Set the secret
 
@@ -57,25 +59,19 @@ Open Settings, Secrets and variables, Actions, and add:
 |------|------|-------|
 | `FALL_WEIGHTS_TOKEN` | Secret | Your [Hugging Face read token](../01-prerequisites/README.md#hugging-face) |
 
+Click New repository secret on the Secrets tab, enter the name and value, and click Add secret.
+
+![New secret form](../../images/04-images/new-secret.jpg)
+
 The image build uses it to download the model weights.
 
 The four `GCP_*` variables are listed in [GitHub secrets and variables](../01-prerequisites/README.md#github-secrets-and-variables-cloud-path-only). Do not set them yet: two of them, `GCP_SERVICE_ACCOUNT` and `GCP_WIF_PROVIDER`, do not exist until [GCP auth and registry](02-gcp-auth-and-registry.md).
-
-<!-- ![Repository secrets](../../images/actions-secrets.png) -->
 
 ## What you do not do here
 
 - Do not create the `flux-image-updates` branch. Flux creates it when it pushes the first image tag update. You merge that branch into `main` yourself.
 - Do not create a deploy key. `flux bootstrap` creates it.
 - Do not turn on branch protection on `main` yet. Flux bootstrap pushes to `main`. If you want protection later, require only the `ci / gate` check.
-
-## Troubleshooting
-
-TODO:
-
-- The Actions tab shows no workflows: Actions is still disabled on the fork.
-- `upload-sarif` fails: code scanning is unavailable on a private repo without Advanced Security.
-- `dependency-review` fails: the dependency graph is off.
 
 ## Next
 
