@@ -13,7 +13,7 @@ Needs: the [Raspberry Pi kit](../01-prerequisites/README.md#raspberry-pi-kit) an
 
 ## 1. Flash the OS
 
-You need the microSD card, a card reader and [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Flashing erases everything on the card.
+You need the microSD card, a card reader and [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Flashing erases everything on the card. For screenshots of each Imager screen, see [Raspberry Pi's getting started guide](https://www.raspberrypi.com/documentation/computers/getting-started.html#imager-install).
 
 1. Put the microSD card in the card reader and plug it into your computer.
 2. Open Raspberry Pi Imager.
@@ -60,10 +60,8 @@ rpicam-hello --list-cameras
 rpicam-hello -t 0
 ```
 
-- `--list-cameras` prints the cameras the Pi found. An empty list means a loose cable or an unsupported module.
+- `--list-cameras` prints the cameras the Pi found, numbered from `0`. The list must not be empty before you go on.
 - `-t 0` opens a live preview until you stop it. It needs a screen on the Pi. Over SSH only the first command is useful.
-
-TODO: expected output of `--list-cameras`.
 
 ## 4. Reach the Pi from any network
 
@@ -105,6 +103,10 @@ wget -c https://github.com/bluenviron/mediamtx/releases/download/v1.19.2/mediamt
 
 This unpacks the `mediamtx` binary and a default `mediamtx.yml` into `~/mediamtx`.
 
+For more detail, see [Streaming with MediaMTX](https://www.raspberrypi.com/documentation/accessories/camera-software.html#streaming-with-mediamtx) in the Raspberry Pi documentation. To use a newer version, take the `linux_arm64` file from the [MediaMTX releases](https://github.com/bluenviron/mediamtx/releases) and replace the version in the URL above. This guide was tested with `v1.19.2`.
+
+![MediaMTX release assets, with the linux_arm64 file circled](../../images/02-images/mediamtx-release-assets.jpg)
+
 ## 6. Configure MediaMTX
 
 Edit the config:
@@ -113,7 +115,14 @@ Edit the config:
 sudo nano ~/mediamtx/mediamtx.yml
 ```
 
-Set the camera path and its video settings (All of these settings are preset in `mediamtx.yaml` and need to be found and edited):
+Set these top-level keys. Each one already exists in the default file, so find it and change its value:
+
+```yaml
+logLevel: info
+writeQueueSize: 2048
+```
+
+Set the camera path under `paths:`. Add it next to the existing entries and keep them:
 
 ```yaml
 paths:
@@ -121,9 +130,14 @@ paths:
     source: rpiCamera
     rpiCameraWidth: 1280
     rpiCameraHeight: 720
+    rpiCameraFPS: 15
+    rpiCameraBitrate: 2000000
+    rpiCameraIDRPeriod: 30
 ```
 
-Add a user that may read the stream. These are the `STREAM_USERNAME` and `STREAM_PASSWORD` that [`services/detection/.env`](../01-prerequisites/README.md#servicesdetectionenv) needs:
+Do not lower `rpiCameraBitrate` below `1000000`: an under-fed encoder is what wedges it. The detection service is tuned for 15 fps.
+
+Add a user that may read the stream to the existing `authInternalUsers:` list. These are the `STREAM_USERNAME` and `STREAM_PASSWORD` that [`services/detection/.env`](../01-prerequisites/README.md#servicesdetectionenv) needs:
 
 ```yaml
 authInternalUsers:
@@ -184,14 +198,21 @@ sudo journalctl -u mediamtx.service -f
 
 <!-- ![systemctl status showing active](../../images/mediamtx-status.png) -->
 
-## Troubleshooting
+## 8. Confirm the stream works
 
-TODO:
+Reboot the Pi so you also test the start on boot:
 
-- `rpicam-hello --list-cameras` shows nothing.
-- `reader is too slow, discarding N frames`.
-- `ioctl(VIDIOC_QBUF) failed`.
-- A throttled or undervolted Pi: `vcgencmd get_throttled` must print `0x0`.
+```bash
+sudo reboot
+```
+
+Wait about a minute. Then, from your computer, read the stream. `<pi-address>` is the Pi's LAN address on the local path, or its `100.x.x.x` Tailscale address on the cloud path (your computer must be on the same tailnet):
+
+```bash
+ffprobe rtsp://<STREAM_USERNAME>:<STREAM_PASSWORD>@<pi-address>:8554/cam
+```
+
+The page works when `ffprobe` lists a `Video: h264` stream at `1280x720`. To see the picture, open the same URL in VLC (Media > Open Network Stream).
 
 ## Next
 
