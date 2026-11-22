@@ -139,6 +139,7 @@ Only if you run services outside Docker:
 - [flux](https://fluxcd.io/flux/installation/)
 - [OpenTofu](https://opentofu.org/docs/intro/install/) 1.13 or newer
 - [Tailscale client](https://tailscale.com/download)
+- [Helm](https://helm.sh/docs/intro/install/), to install the Tailscale operator.
 - [GitHub CLI](https://cli.github.com) (optional), to set secrets and variables from the terminal.
 
 ## Secrets and variables
