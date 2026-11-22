@@ -1,3 +1,5 @@
+IMPORTANT: Before performing any tasks, you must read and adhere to the agent instructions and guardrails in [AGENTS.md](AGENTS.md).
+
 ## Agent skills
 
 ### Issue tracker

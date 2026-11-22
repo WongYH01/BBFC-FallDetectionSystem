@@ -128,3 +128,7 @@ services/notification/**/.env*
 # Local launcher scripts tend to hardcode passwords. Keep them out.
 services/notification/**/*.bat
 services/notification/.claude/
+
+# draw.io backups
+*.bkp
+.$*
