@@ -1,6 +1,6 @@
 # Environment Variables
 
-Every variable in the `.env` and config examples, with the file it lives in and what to set. The setup pages tell you when to fill each file in. This page is the lookup.
+Every variable in the deployment `.env` and config examples (not the `demos/` ones), with the file it lives in and what to set. The setup pages tell you when to fill each file in. This page is the lookup.
 
 By the end of this page you know:
 
@@ -17,7 +17,7 @@ Needs: nothing. Use it beside [Local deployment](03-local/README.md) or [Kuberne
 | `services/detection/.env` | Local | `services/detection/.env.example` | `detection` |
 | `infra/k8s/notification/config.env` | Cloud | `infra/k8s/notification/config.env.example` | ConfigMap `notification` |
 | `infra/k8s/detection/config.env` | Cloud | `infra/k8s/detection/config.env.example` | ConfigMap `detection` |
-| `.env.cloud` | Compose in cloud mode, not part of this guide | `.env.example.cloud` | Compose |
+| `.env.cloud` | Compose in cloud mode. The guide's cloud path uses GKE instead, so you only need it to run the cloud profile by hand. | `.env.example.cloud` | Compose |
 
 Never commit a `.env` file. On the cloud path the Telegram bot token and the stream password are not in a file: they come from Secret Manager (see [Provision](05-cloud/01-provision.md#5-store-the-secret-values)).
 
@@ -44,9 +44,10 @@ Local: `.env` in the repo root. Cloud: `infra/k8s/notification/config.env`.
 | `CLIPS_STORE` | not set | `gcs` | Keep. |
 | `CLIPS_GCS_BUCKET` | not set | Required | The `clip_bucket_name` from `terraform.tfvars`, for example `<GCP_PROJECT_ID>-clips`. |
 | `CLIPS_ENSURE_BUCKET` | not set | `false` | Keep. |
+| `GCLOUD_ADC_PATH` | not used | `.env.cloud` only | Path to your Google application default credentials file. Not used on GKE. |
 | `JAVA_OPTS` | not set | `-XX:MaxRAMPercentage=75` | Keep. |
 
-"not set" means the variable is absent from the file and compose supplies its default.
+"not set" means the variable is absent from the example file. Compose or the service supplies a default, or the variable is not used on that path.
 
 ## Detection
 
@@ -89,3 +90,8 @@ Cloud path only. Set them in the repo under Settings, Secrets and variables, Act
 | `GCP_SERVICE_ACCOUNT` | Variable | Email of the service account CI impersonates |
 | `GCP_WIF_PROVIDER` | Variable | Full resource name of the Workload Identity provider |
 | `REFIT_APP_ID`, `REFIT_APP_PRIVATE_KEY` | Secret, optional | ID and private key of the GitHub App for the refit workflow |
+
+## Next
+
+- Local path: [Local deployment](03-local/README.md)
+- Cloud path: [Kubernetes and Tailscale](05-cloud/02-k8s-and-tailscale.md)

@@ -8,7 +8,7 @@ By the end of this guide you have:
 - Detection and notification running, on your computer or on GKE.
 - A `FALL DETECTED` alert, with its skeleton clip, delivered to your Telegram group.
 
-Needs: nothing yet. [Prerequisites](01-prerequisites/README.md) lists the hardware, accounts and tools.
+Needs: a Raspberry Pi kit and the accounts for your path. [Prerequisites](01-prerequisites/README.md) lists the hardware, accounts and tools.
 
 ## Pick a path
 
@@ -39,10 +39,14 @@ Steps 1, 2 and 6 apply to both paths.
 
 ## Reference
 
-- [Environment variables](env-vars.md): every variable in every `.env` and config example.
+- [Environment variables](env-vars.md): every variable in the deployment `.env` and config examples.
 
 ## Further reading
 
 - [`CONTEXT.md`](../../CONTEXT.md): the project glossary.
-- [`CLAUDE.md`](../../CLAUDE.md): conventions for working in the repo.
+- [`CLAUDE.md`](../../CLAUDE.md): project instructions for coding agents.
 - Decision records: [0001](../../docs/adr/0001-no-camera-pixels-leave-the-detection-host.md), [0002](../../docs/adr/0002-alert-keypoints-are-kept-for-training.md), [0003](../../docs/adr/0003-camera-heads-are-promoted-without-human-review.md).
+
+## Next
+
+[Prerequisites](01-prerequisites/README.md)
