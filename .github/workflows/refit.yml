@@ -6,8 +6,9 @@ name: refit
 #
 # On a Promotion the Candidate Head is uploaded to the weights repository and
 # the GitHub App opens a PR repinning it in fetch_weights.py, set to merge
-# itself once `gate` is green. Secrets: FALL_WEIGHTS_TOKEN (HF read and
-# write), REFIT_APP_ID and REFIT_APP_PRIVATE_KEY.
+# itself once `gate` is green. Secrets: HF_WRITE_TOKEN (write access to the
+# weights repository, which is public to read), REFIT_APP_ID and
+# REFIT_APP_PRIVATE_KEY.
 
 on:
   schedule:
@@ -91,11 +92,7 @@ jobs:
           cp refit/pinned.sha256 "$RUNNER_TEMP/refit/pinned.sha256"
 
       - name: Fetch the deployed weights
-        env:
-          FALL_WEIGHTS_TOKEN: ${{ secrets.FALL_WEIGHTS_TOKEN }}
-        run: |
-          printf 'FALL_WEIGHTS_TOKEN=%s\n' "$FALL_WEIGHTS_TOKEN" > "$RUNNER_TEMP/detection.env"
-          python scripts/fetch_weights.py --env-file "$RUNNER_TEMP/detection.env"
+        run: python scripts/fetch_weights.py
 
       - name: Run the Refit
         id: refit
@@ -121,8 +118,7 @@ jobs:
       - name: Upload the Candidate Head
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
         env:
-          # The read token has write scope too, so one secret serves both.
-          HF_WRITE_TOKEN: ${{ secrets.FALL_WEIGHTS_TOKEN }}
+          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
           PYTHONPATH: .
         run: |
           # The PR goes to main, so it must branch from main to change one file.
@@ -134,7 +130,7 @@ jobs:
 
       - name: Verify the new pin
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true
-        run: python scripts/fetch_weights.py --force --root "$RUNNER_TEMP/verify" --env-file "$RUNNER_TEMP/detection.env"
+        run: python scripts/fetch_weights.py --force --root "$RUNNER_TEMP/verify"
 
       - name: Open the Promotion PR
         if: steps.refit.outputs.promoted == 'true' && inputs.dry_run != true

@@ -10,7 +10,7 @@ By the end of this page you have:
 
 ## Needs
 
-The finished [GCP auth and registry](02-gcp-auth-and-registry.md), so the `FALL_WEIGHTS_TOKEN` secret and the four `GCP_*` variables are set.
+The finished [GCP auth and registry](02-gcp-auth-and-registry.md), so the four `GCP_*` variables are set.
 
 ## Who
 

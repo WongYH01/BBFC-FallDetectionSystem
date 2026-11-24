@@ -2,22 +2,20 @@
 #
 # CI builds this and pushes it to Artifact Registry (.github/workflows/image.yml);
 # compose and GKE run that image. To build it yourself, from services/detection:
-#   docker build --secret id=detection_env,src=.env -t bbfc/detection .
+#   docker build -t bbfc/detection .
 #
 # The weights are baked in: the build fetches them itself, so nothing has to be
-# on the host. .env must hold FALL_WEIGHTS_TOKEN (see .env.example).
+# on the host. The weights repository is public, so the build needs no token.
 
 # The deployment files (both pose backbones, their camera heads and the
 # checkpoint), fetched by the same script a host run uses, so the
-# pinned revision and the SHA-256 checks live in one place. .env reaches this
-# step as a BuildKit secret: the token is never in a layer, the image history or
-# the final image. A rebuild for a code change reuses this stage's cache and
-# does not download again.
+# pinned revision and the SHA-256 checks live in one place. A rebuild for a
+# code change reuses this stage's cache and does not download again.
 FROM python:3.12-slim AS weights
 ENV PIP_NO_CACHE_DIR=1     PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN pip install huggingface_hub==1.29.0
 COPY scripts/fetch_weights.py /fetch/fetch_weights.py
-RUN --mount=type=secret,id=detection_env,required=true     python /fetch/fetch_weights.py --root /weights         --env-file /run/secrets/detection_env
+RUN python /fetch/fetch_weights.py --root /weights
 
 FROM python:3.12-slim
 

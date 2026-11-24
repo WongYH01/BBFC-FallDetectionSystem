@@ -30,20 +30,8 @@ Every file is checked against the SHA-256 recorded in the model card; a mismatch
 is an error, not a warning. The revision is pinned to the commit those hashes
 were taken from, so a deployment cannot silently change under you.
 
-The repo is private, so a Hugging Face **read** token is required, and it must
-come from services/detection/.env:
-
-    FALL_WEIGHTS_TOKEN=hf_xxx
-
-That file is already the deployment secrets file for the Flask app and is
-gitignored. Create the token at https://huggingface.co/settings/tokens (read
-scope), copy .env.example to .env if it does not exist yet,
-and add the line.
-
-There is no other auth path: no CLI flag, no process environment variable, no
-stored `hf auth login` session. The token is passed to the Hub call and never
-printed. `--env-file` changes which file is read; `--check` verifies the local
-files and needs no token at all.
+The repo is public, so no Hugging Face token or account is needed.
+`--check` verifies the local files and never touches the network.
 
     python scripts/fetch_weights.py                 # into this repo
     python scripts/fetch_weights.py --check         # verify present files only
@@ -57,9 +45,6 @@ import hashlib
 import shutil
 import sys
 from pathlib import Path
-
-#: The one variable the script reads; written into services/detection/.env by the operator.
-TOKEN_VAR = "FALL_WEIGHTS_TOKEN"
 
 DEFAULT_REPO = "junyuu/fall-detection-bbfc"
 #: The commit the SHA-256s below were taken from -- the one that added the
@@ -91,39 +76,8 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def read_token(env_file: Path) -> str:
-    """The read token from `env_file`, or a clear error explaining how to set it.
-
-    A deliberately small parser rather than python-dotenv: this script is the
-    bootstrap that runs before a demo venv is guaranteed to exist, so it should
-    not depend on anything outside the standard library. Handles blank lines,
-    `#` comments, an optional leading `export`, and surrounding quotes around
-    the value.
-    """
-    if not env_file.exists():
-        raise FileNotFoundError(
-            f"{env_file} not found -- copy .env.example to "
-            f".env and add {TOKEN_VAR}=hf_... (read token from "
-            f"https://huggingface.co/settings/tokens)")
-    for raw in env_file.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.lower().startswith("export "):
-            line = line[7:].lstrip()
-        key, sep, value = line.partition("=")
-        if sep and key.strip() == TOKEN_VAR:
-            token = value.strip().strip("'\"")
-            if token:
-                return token
-            break
-    raise ValueError(
-        f"{TOKEN_VAR} is not set in {env_file} -- add {TOKEN_VAR}=hf_... "
-        f"(read token from https://huggingface.co/settings/tokens)")
-
-
 def fetch_one(repo: str, revision: str, remote: str, root: Path,
-              force: bool, check: bool, token: str | None = None) -> str:
+              force: bool, check: bool) -> str:
     """Return 'ok' or 'downloaded'; raise on a hash mismatch or missing file."""
     rel, want = FILES[remote]
     target = root / rel
@@ -146,11 +100,10 @@ def fetch_one(repo: str, revision: str, remote: str, root: Path,
 
     try:
         cached = Path(hf_hub_download(repo_id=repo, filename=remote,
-                                      revision=revision, token=token))
+                                      revision=revision))
     except HfHubHTTPError as exc:
         raise RuntimeError(
-            f"cannot download {remote} from {repo}: {exc}. The repo is "
-            f"private: set {TOKEN_VAR} in services/detection/.env to a read token."
+            f"cannot download {remote} from {repo} @ {revision[:12]}: {exc}"
         ) from exc
 
     got = sha256(cached)
@@ -178,22 +131,15 @@ def main() -> int:
                     help="re-download even when a valid local file exists")
     ap.add_argument("--check", action="store_true",
                     help="verify the local files only; never download")
-    ap.add_argument("--env-file", default=str(
-        Path(__file__).resolve().parents[1] / ".env"),
-        help="secrets file holding FALL_WEIGHTS_TOKEN (default: services/detection/.env)")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
     print(f"{args.repo} @ {args.revision[:12]}  ->  {root}")
     results = {}
     try:
-        token = None
-        if not args.check:
-            token = read_token(Path(args.env_file))
-            print(f"auth: {TOKEN_VAR} from {args.env_file}")
         for remote in FILES:
             results[remote] = fetch_one(args.repo, args.revision, remote, root,
-                                        args.force, args.check, token)
+                                        args.force, args.check)
     except (RuntimeError, FileNotFoundError, ValueError) as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         return 1

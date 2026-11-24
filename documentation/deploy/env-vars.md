@@ -64,7 +64,6 @@ Local: `services/detection/.env`. Cloud: `infra/k8s/detection/config.env`.
 | `STREAM_USERNAME` | Required | Required | The user you set on the Pi's MediaMTX. |
 | `STREAM_PASSWORD` | Required | Secret Manager | The password of that user. |
 | `STREAM_PATH` | not set | `cam` | Keep. Must match the MediaMTX path. |
-| `FALL_WEIGHTS_TOKEN` | Required | not used | The [Hugging Face read token](01-prerequisites/README.md#hugging-face). On the cloud path it is the GitHub secret of the same name. |
 | `VID_STRIDE` | `1` | not used | Keep for a 15 fps camera. For a 30 fps camera set `2`. |
 | `STREAM_FRAME_STRIDE` | `1` | `1` | Keep for a 15 fps camera. |
 | `BUFFER_LEN` | `2` | `2` | Keep. |
@@ -84,12 +83,12 @@ Cloud path only. Set them in the repo under Settings, Secrets and variables, Act
 
 | Name | Type | Value |
 |------|------|-------|
-| `FALL_WEIGHTS_TOKEN` | Secret | Hugging Face read token |
 | `GCP_PROJECT_ID` | Variable | Your GCP project ID |
 | `GCP_REGION` | Variable | Artifact Registry region, for example `asia-southeast1` |
 | `GCP_SERVICE_ACCOUNT` | Variable | `gha-pusher@<GCP_PROJECT_ID>.iam.gserviceaccount.com`, the service account CI impersonates |
 | `GCP_WIF_PROVIDER` | Variable | Full resource name of the Workload Identity provider: `projects/<project-number>/locations/global/workloadIdentityPools/github/providers/github` |
 | `REFIT_APP_ID`, `REFIT_APP_PRIVATE_KEY` | Secret, optional | ID and private key of the GitHub App for the refit workflow |
+| `HF_WRITE_TOKEN` | Secret, optional | Hugging Face token with write access to the weights repo, for the refit workflow's Promotion upload. Downloads need no token |
 
 ## Fixed names and versions
 

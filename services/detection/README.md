@@ -43,16 +43,14 @@ Artifact Registry instead); the root README's "Run locally" has the `local`
 profile and the weekly pull-and-rebuild task.
 
 ```
-copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*, FALL_WEIGHTS_TOKEN
+copy .env.example .env                                # fill in ROOM_*, MEDIAMTX_*
 copy ..\..\.env.example.local ..\..\.env              # notification settings
 docker compose up -d --build                          # from the repo root
 ```
 
 The image fetches its own weights during the build (`scripts/fetch_weights.py`
-in a build stage), so nothing has to be on the host. The build reads
-`FALL_WEIGHTS_TOKEN` from `.env` as a build secret: the token is not in any
-layer of the image, and the running container gets it blanked. The weights
-stage is cached, so rebuilding for a code change does not download again; a
+in a build stage) from the public Hugging Face repo, so nothing has to be on
+the host and no token is needed. The weights stage is cached, so rebuilding for a code change does not download again; a
 Promotion repins `fetch_weights.py`, which is what invalidates it.
 
 The image holds one pose backbone, yolo26m (INT8, 384x640), and the camera

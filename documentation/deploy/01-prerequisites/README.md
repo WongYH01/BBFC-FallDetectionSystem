@@ -16,8 +16,8 @@ Nothing. This is the first page.
 
 human provides the path, accounts and secrets, and the agent continues.
 
-- Human only: create the accounts, buy the hardware, install tools that need a GUI installer, get the Hugging Face token from the repo owner, create the Telegram bot in BotFather.
-- Human provides: the chosen path (local or cloud), `FALL_WEIGHTS_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_GROUP_ID`, and for the local path `POSTGRES_PASSWORD`, `DB_PORT`, `STORAGE_PORT`, `ROOM_ID`, `ROOM_NAME`, the Pi address and the Pi login (see [Local `.env`](#local-env)), the GCP project ID, region and zone (cloud).
+- Human only: create the accounts, buy the hardware, install tools that need a GUI installer, create the Telegram bot in BotFather.
+- Human provides: the chosen path (local or cloud), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_GROUP_ID`, and for the local path `POSTGRES_PASSWORD`, `DB_PORT`, `STORAGE_PORT`, `ROOM_ID`, `ROOM_NAME`, the Pi address and the Pi login (see [Local `.env`](#local-env)), the GCP project ID, region and zone (cloud).
 - Agent can run: the tool checks in Done when, and writing the `.env` files once the values are given. Never print a secret back.
 
 ## Do
@@ -86,7 +86,7 @@ Needed for: repo access, CI/CD (cloud path). Repo admin rights are required to s
 
 #### Hugging Face
 
-No account needed. The model weights are in a private Hugging Face repo. Get the read token `FALL_WEIGHTS_TOKEN` from the repo owner. It goes in `services/detection/.env` as `FALL_WEIGHTS_TOKEN=hf_xxx`, and in the GitHub secret of the same name for the cloud path.
+No account or token needed. The model weights are in the public Hugging Face repo [junyuu/fall-detection-bbfc](https://huggingface.co/junyuu/fall-detection-bbfc). The detection image build downloads them.
 
 #### Telegram
 
