@@ -86,8 +86,8 @@ pip install -e . huggingface_hub
 python scripts/fetch_weights.py     # three files, pinned and SHA-256 verified
 ```
 
-`fetch_weights.py` reads `FALL_WEIGHTS_TOKEN=hf_…` (read scope) from
-`services/detection/.env`; `--check` verifies local files without one. To run
+`fetch_weights.py` downloads from the public Hugging Face repo
+[junyuu/fall-detection-bbfc](https://huggingface.co/junyuu/fall-detection-bbfc), so no token is needed; `--check` verifies local files offline. To run
 the whole stack in Docker, see the [local deployment step](documentation/deploy/03-local/README.md).
 
 ## Privacy

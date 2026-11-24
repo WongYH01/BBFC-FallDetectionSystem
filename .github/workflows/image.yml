@@ -22,16 +22,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Write build secret
-        env:
-          FALL_WEIGHTS_TOKEN: ${{ secrets.FALL_WEIGHTS_TOKEN }}
-        run: printf 'FALL_WEIGHTS_TOKEN=%s\n' "$FALL_WEIGHTS_TOKEN" > "$RUNNER_TEMP/detection.env"
-
       - name: Build
         uses: docker/build-push-action@v7
         with:
           context: services/${{ inputs.service }}
-          secret-files: detection_env=${{ runner.temp }}/detection.env
           load: true
           tags: ${{ env.LOCAL }}
           # Re-runs each image's apt upgrade on every build instead of reusing

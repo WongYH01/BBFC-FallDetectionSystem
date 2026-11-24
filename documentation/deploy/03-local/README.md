@@ -16,7 +16,7 @@ The finished [Pi camera](../02-pi-camera/README.md) page, and everything under [
 
 agent can run, after the human provides the `.env` values.
 
-- Human provides, once: `FALL_WEIGHTS_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_GROUP_ID`, `POSTGRES_PASSWORD`, `DB_PORT`, `STORAGE_PORT`, `ROOM_ID`, `ROOM_NAME`, the Pi's LAN address (`MEDIAMTX_HOST`) and the stream credentials. The agent may generate the three `SUPABASE_*` values itself, after asking. Details are in [Environment variables](../env-vars.md). See [Local `.env`](../01-prerequisites/README.md#local-env). Never print or commit them.
+- Human provides, once: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_GROUP_ID`, `POSTGRES_PASSWORD`, `DB_PORT`, `STORAGE_PORT`, `ROOM_ID`, `ROOM_NAME`, the Pi's LAN address (`MEDIAMTX_HOST`) and the stream credentials. The agent may generate the three `SUPABASE_*` values itself, after asking. Details are in [Environment variables](../env-vars.md). See [Local `.env`](../01-prerequisites/README.md#local-env). Never print or commit them.
 - Agent can run: everything on this page. Ask first before `docker compose down -v`: it deletes the database and the clips.
 - Human only: reading the Telegram group to confirm the alert arrived.
 
@@ -57,7 +57,7 @@ From the repo root:
 docker compose up -d --build
 ```
 
-The first build is slow. The detection image downloads the model weights from Hugging Face during the build, using `FALL_WEIGHTS_TOKEN` from `services/detection/.env`. You do not download the weights yourself.
+The first build is slow. The detection image downloads the model weights from the public Hugging Face repo during the build. You do not download the weights yourself.
 
 `COMPOSE_PROFILES=local` in `.env` makes compose start all four services. Check them:
 

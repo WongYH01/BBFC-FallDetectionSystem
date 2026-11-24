@@ -131,7 +131,7 @@ uv venv demo-cam/.venv
 uv pip install --python demo-cam/.venv/Scripts/python.exe -r demo-cam/requirements.txt
 uv pip install --python demo-cam/.venv/Scripts/python.exe -e services/detection
 cd services/detection
-copy .env.example .env                       # MediaMTX host/credentials, FALL_WEIGHTS_TOKEN
+copy .env.example .env                       # MediaMTX host/credentials
 ..\..\demo-cam\.venv\Scripts\python.exe scripts\fetch_weights.py
 ..\..\demo-cam\.venv\Scripts\python.exe v2\app.py
 ```

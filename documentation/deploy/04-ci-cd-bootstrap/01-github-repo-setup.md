@@ -7,18 +7,17 @@ By the end of this page you have:
 - Your own fork of the repo, cloned on your computer.
 - GitHub Actions enabled on the fork.
 - Code scanning and the dependency graph available to the workflows.
-- The `FALL_WEIGHTS_TOKEN` secret set.
 
 ## Needs
 
-A [GitHub account](../01-prerequisites/README.md#github) with admin rights on the fork, and the [Hugging Face token](../01-prerequisites/README.md#hugging-face).
+A [GitHub account](../01-prerequisites/README.md#github) with admin rights on the fork.
 
 ## Who
 
-human only for the GitHub console steps, and human provides the Hugging Face token.
+human only for the GitHub console steps, and human provides the fork's GitHub username.
 
 - Human only: Fork, enable Actions, turn on the dependency graph (steps 1 to 3). These are clicks in the GitHub console.
-- Human provides: the GitHub username of the fork and `FALL_WEIGHTS_TOKEN`. The agent may set the secret with `gh secret set FALL_WEIGHTS_TOKEN --repo <your-username>/BBFC-FallDetectionSystem` and must not print the token.
+- Human provides: the GitHub username of the fork.
 
 Shell: bash or PowerShell, the commands are the same.
 
@@ -64,17 +63,9 @@ Two checks in the `ci` workflow fail without these:
 ![Dependency graph setting under Settings, Advanced Security](../../images/04-images/dependency-graph.jpg)
 3. Next to Dependency graph, click Enable if it is not already on.
 
-### 4. Set the secret
+### 4. Secrets and variables
 
-Open Settings, Secrets and variables, Actions, and add:
-
-Add `FALL_WEIGHTS_TOKEN` as a secret. Its value is your [Hugging Face read token](../01-prerequisites/README.md#hugging-face). See [GitHub secrets and variables](../env-vars.md#github-secrets-and-variables).
-
-Click New repository secret on the Secrets tab, enter the name and value, and click Add secret.
-
-![New secret form](../../images/04-images/new-secret.jpg)
-
-The image build uses it to download the model weights.
+Nothing to set on this page. The image build downloads the model weights from the public [Hugging Face repo](../01-prerequisites/README.md#hugging-face), so it needs no secret.
 
 The four `GCP_*` variables are listed in [GitHub secrets and variables](../env-vars.md#github-secrets-and-variables). Do not set them yet: two of them, `GCP_SERVICE_ACCOUNT` and `GCP_WIF_PROVIDER`, do not exist until [GCP auth and registry](02-gcp-auth-and-registry.md).
 
@@ -90,10 +81,9 @@ Read-only:
 
 ```bash
 gh repo view <your-username>/BBFC-FallDetectionSystem --json isFork,viewerPermission
-gh secret list --repo <your-username>/BBFC-FallDetectionSystem
 ```
 
-Expected: `"isFork":true` and `"viewerPermission":"ADMIN"`, and the secret list includes `FALL_WEIGHTS_TOKEN`.
+Expected: `"isFork":true` and `"viewerPermission":"ADMIN"`.
 
 ## If it fails
 

@@ -10,7 +10,7 @@
 # and services/detection/.env (copy its .env.example). notification and
 # detection are built here from the checkout; GKE runs CI's images instead and
 # never reads this file. The detection build fetches the weights pinned in
-# scripts/fetch_weights.py with the FALL_WEIGHTS_TOKEN in that .env, so a
+# scripts/fetch_weights.py from the public weights repository, so a
 # Promotion reaches this deployment with a git pull and a rebuild.
 name: bbfc
 
@@ -82,10 +82,6 @@ services:
     profiles: ["local", "cloud"]
     build:
       context: services/detection
-      # The build fetches the weights into the image; this hands it the
-      # Hugging Face token as a secret, so it never lands in a layer.
-      secrets:
-        - detection_env
     restart: unless-stopped
     depends_on:
       # The outbox retries until the API answers, so this only saves a burst
@@ -100,8 +96,6 @@ services:
       SERVICE_UI_HOST: 0.0.0.0
       SPOOL_DIR: /data/outbox
       NOTIFICATION_BASE_URL: http://notification:8081/api/v1/notification
-      # The weights are already in the image; keep the token out of it.
-      FALL_WEIGHTS_TOKEN: ""
     volumes:
       - clips:/app/v2/fall_clips
       - spool:/data/outbox
@@ -113,7 +107,3 @@ volumes:
   clip-data: {}
   clips: {}
   spool: {}
-
-secrets:
-  detection_env:
-    file: ./services/detection/.env

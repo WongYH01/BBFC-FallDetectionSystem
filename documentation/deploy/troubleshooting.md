@@ -58,9 +58,9 @@ Rules that hold for every fix:
 
 ### First build is slow
 
-- Cause: the detection image downloads the model weights from Hugging Face during the build, using `FALL_WEIGHTS_TOKEN`.
+- Cause: the detection image downloads the model weights from the public Hugging Face repo during the build.
 - Check: `docker compose up -d --build` runs for many minutes.
-- Fix: wait. If the build fails on the download, check `FALL_WEIGHTS_TOKEN` in `services/detection/.env`.
+- Fix: wait. If the build fails on the download, check that the host can reach `huggingface.co`.
 
 ## GitHub and CI ([step 4](04-ci-cd-bootstrap/01-github-repo-setup.md))
 
